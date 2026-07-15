@@ -4,3 +4,7 @@
 *.db
 .beads-credential-key
 .beads/proxieddb/
+
+# Pi / ce-workflow runtime artifacts (added at init)
+.pi/
+.pi-subagents/
