@@ -8,3 +8,7 @@
 # Pi / ce-workflow runtime artifacts (added at init)
 .pi/
 .pi-subagents/
+
+node_modules/
+*.tgz
+npm-debug.log*
