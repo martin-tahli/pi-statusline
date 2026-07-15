@@ -15,8 +15,9 @@ output_format: md
 Ship a single-line, configurable **statusline footer** as a publishable pi
 package. It replaces pi's built-in footer with a compact, information-dense
 strip that shows — left to right — project, model, effort, context usage,
-(for subscription/cloud models) 5-hour and weekly session-usage bars, and
-throughput (↑/↓ tokens per second). Every segment self-hides when its data is
+(for subscription/cloud models) 5-hour and weekly session-usage bars,
+throughput (↑/↓ tokens per second), and time metrics (active working time).
+Every segment self-hides when its data is
 not applicable to the current provider/model, and every segment can be
 manually enabled/disabled. Works identically for local and cloud models.
 Published to npm as a scoped pi package installable with `pi install`.
@@ -59,13 +60,14 @@ Product Contract preservation: N/A — bootstrapped from user request; no prior 
 ### Requirements
 
 - **R1 — Single-line footer, fixed left→right order.** Segments render in order:
-  `project · model · effort · context · [session bars] · throughput`. Truncates to terminal width without wrapping.
+  `project · model · effort · context · [session bars] · throughput · time`. Truncates to terminal width without wrapping.
 - **R2 — Project segment.** Shows the project name (cwd basename; git branch appended only if the branch segment is enabled — default off).
 - **R3 — Model segment.** Shows active model id (and provider when it disambiguates).
 - **R4 — Effort segment.** Shows current thinking level (off/low/medium/high). Hidden when the model is non-reasoning (`getThinkingLevel()` is `"off"` and model `reasoning` is false).
 - **R5 — Context segment.** Shows `NN.N%/<window>` e.g. `55.0%/1.0M` from `getContextUsage().percent` and `.contextWindow` (never recomputed from raw tokens, never from `ctx.model`). Window formatted compactly (128K, 200K, 1.0M). Color escalates by threshold (dim → warn → error). **Hidden when `percent` is `null`** (e.g. right after compaction) — no `NaN`, no crash.
 - **R6 — Session bars (conditional).** For providers exposing unified session-limit headers (Anthropic subscription): render a **5-hour** bar and a **weekly** bar, each a fixed-width ASCII loading bar filled in **light green**, followed by a percent number (e.g. `23%`). Fill = used fraction of the window. Entirely hidden when the headers are absent (R3-key: local, API-key, or non-supporting providers).
 - **R7 — Throughput segment.** Shows `↑ <n> t/s` (input rate) and `↓ <n> t/s` (output rate), computed from the most recent turn's token usage and duration. Persists last value while idle; hidden until at least one turn has produced a measurement.
+- **R13 — Time segment.** Shows cumulative **active working time** — the sum of turn durations (agent actually processing), e.g. `⏱ 12m34s` — **on by default**. Two optional sub-metrics (default off, toggleable): **session-elapsed** wall-clock since the session started (this subsumes the old R12c extra), and **last-turn** duration. Active time accumulates across turns and persists while idle; hidden before the first turn completes. Durations formatted compactly: `45s`, `12m34s`, `1h02m`.
 - **R8 — Applicability self-hide.** Any segment whose underlying data is unavailable for the current provider/model renders nothing (no placeholder), and the layout recomposes without gaps.
 - **R9 — Manual enable/disable.** Each segment has an on/off setting. A `/statusline` command lists current state and toggles segments. Settings persist across sessions. Defaults: project, model, effort, context, session-bars, throughput = **on**; all optional extras = **off**.
 - **R10 — Local + cloud parity.** All settings and applicable segments behave identically regardless of provider; only data availability (not code paths) differs.
@@ -73,7 +75,7 @@ Product Contract preservation: N/A — bootstrapped from user request; no prior 
 - **R12 — Optional extras (default off), brainstormed additions:**
   - **R12a — Session cost `$`:** cumulative `usage.cost.total` for the session.
   - **R12b — Git branch + dirty flag:** branch name from `footerData.getGitBranch()`, optional `*` dirty marker.
-  - **R12c — Elapsed session time:** wall-clock since session start.
+  - **R12c — (promoted)** session-elapsed wall-clock is now an optional sub-metric of the R13 time segment, not a standalone extra.
   - **R12d — Queued/steering indicator:** small marker when `ctx.hasPendingMessages()`.
   (Explicitly deferred, cheap to add later; listed so scope is visible.)
 
@@ -86,9 +88,10 @@ Product Contract preservation: N/A — bootstrapped from user request; no prior 
 
 ### Acceptance Examples
 - **AE1:** Local Ollama `qwen2.5-coder`, medium effort, 55% context of 1M → footer:
-  `pi-statusline · qwen2.5-coder · medium · 55.0%/1.0M · ↑ 850 t/s ↓ 62 t/s` (no session bars).
+  `pi-statusline · qwen2.5-coder · medium · 55.0%/1.0M · ↑ 850 t/s ↓ 62 t/s · ⏱ 12m34s` (no session bars).
 - **AE2:** Anthropic subscription `claude-sonnet-4-5`, 5h at 23% / weekly at 41% →
-  `pi-statusline · claude-sonnet-4-5 · high · 30.2%/200K · 5h [██░░░░░░] 23% · wk [███░░░░] 41% · ↑ 1.2k t/s ↓ 74 t/s`, the two bar fills rendered light green.
+  `pi-statusline · claude-sonnet-4-5 · high · 30.2%/200K · 5h [██░░░░░░] 23% · wk [███░░░░] 41% · ↑ 1.2k t/s ↓ 74 t/s · ⏱ 8m02s`, the two bar fills rendered light green.
+- **AE7:** Time sub-metrics enabled → `⏱ 12m34s (elapsed 41m, last 18s)`; disabled (default) → just `⏱ 12m34s`; before first turn → time segment absent.
 - **AE3:** Cloud API-key provider without unified headers → same as AE1 shape (session bars omitted, throughput shown).
 - **AE4:** `/statusline toggle throughput` → throughput disappears, everything else recomposes on one line; persists to next session.
 - **AE5:** Non-reasoning model → effort segment absent.
@@ -140,6 +143,15 @@ user actually asks.
   change it (turn_end, after_provider_response, model_select, branch change,
   toggle) and call `tui.requestRender()`; `render(width)` only formats cached
   state. Rationale: no polling timers, no per-frame git/network calls.
+  ponytail: active-time display only advances on turn boundaries, so no
+  per-second ticking timer — the number is fresh enough at each `turn_end` and
+  the footer already re-renders then. Add a 1s interval only if a live-counting
+  display is later requested.
+- **D8 — Time accounting reuses the throughput timer.** IU4 already stamps
+  `turn_start`/`message_end` with `Date.now()`; active working time =
+  `Σ(turn_end − turn_start)` accumulated in the same module. Session-elapsed =
+  `now − session_start` (captured at extension load / `session_start`).
+  Last-turn = the most recent turn duration. One shared duration formatter.
 
 ### File / Module Layout (repo-relative)
 - `package.json` — name `@shvax/pi-statusline`, `pi` manifest object `"pi": { "extensions": ["./extensions"] }` (dir/glob arrays — verified `docs/packages.md`; NOT a file path string), `peerDependencies` `{ "@earendil-works/pi-tui": "*", "@earendil-works/pi-coding-agent": "*", "@earendil-works/pi-ai": "*" }` (host-provided, never bundled), `publishConfig.access=public`.
@@ -147,7 +159,7 @@ user actually asks.
 - `src/segments.ts` — ordered segment definitions + layout/compose/truncate.
 - `src/format.ts` — number/percent/window formatting (`k`/`M`, `NN.N%`).
 - `src/bar.ts` — ASCII loading-bar renderer (fraction → filled/empty cells).
-- `src/throughput.ts` — turn timing accumulator + t/s math.
+- `src/throughput.ts` — turn timing accumulator + t/s math + active-time/elapsed/last-turn accumulation.
 - `src/ratelimit.ts` — Anthropic unified-header parsing → `{ fiveHour?, weekly? }`.
 - `src/config.ts` — defaults, load/save/merge, segment enable/disable.
 - `test/*.test.ts` — pure-function checks (see Implementation Units).
@@ -169,7 +181,8 @@ No dedicated test (config-only, IU1 is smoke-verified).
 Files: `src/segments.ts`, `src/format.ts`; test `test/format.test.ts`, `test/segments.test.ts`.
 Scenarios:
 - format: 128000→`128K`, 200000→`200K`, 1000000→`1.0M`; 0.55→`55.0%`; t/s 1200→`1.2k`.
-- segment order is exactly project,model,effort,context,session,throughput.
+- duration format: 45000ms→`45s`, 754000ms→`12m34s`, 3720000ms→`1h02m`, 0→`0s`.
+- segment order is exactly project,model,effort,context,session,throughput,time.
 - a disabled or data-less segment produces `""` and is dropped from the join (no double separators).
 - compose truncates to width via `truncateToWidth`, never exceeds `width`, never wraps.
 
@@ -181,12 +194,15 @@ Scenarios:
 - context uses `getContextUsage().percent`/`.contextWindow`; hides when `percent` is `null` or `getContextUsage()` is `undefined` (asserted).
 - project = cwd basename; model = `ctx.model.id`.
 
-### IU4 — Throughput meter (↑/↓ t/s)
+### IU4 — Throughput + time meter (↑/↓ t/s and ⏱ active time)
 Files: `src/throughput.ts`; test `test/throughput.test.ts`.
 Scenarios:
 - tokens=620,output over 10.0s → `62 t/s`; input=8500 over 10s → `850 t/s` / formatted `1.2k` past 1000.
 - zero-duration guard (no divide-by-zero → segment hidden).
 - retains last value when idle; resets on new turn start.
+- active time: three turns of 5s/10s/3s accumulate to `18s`; a fourth turn adds on top (Σ = monotonic, never decreases).
+- session-elapsed = `now − session_start` (inject a fixed clock in the test).
+- last-turn = most recent duration only; time segment hidden before any turn completes.
 
 ### IU5 — Session-limit bars (Anthropic unified headers)
 Files: `src/ratelimit.ts`, `src/bar.ts`; tests `test/ratelimit.test.ts`, `test/bar.test.ts`.
@@ -232,10 +248,11 @@ Proof: published version resolves via `npm view @shvax/pi-statusline version`.
   - Proof: `test/ratelimit.test.ts` header fixture (captured from a real Anthropic subscription response during IU5) + `test/bar.test.ts`.
   - Approver: passing tests + one live Anthropic subscription smoke confirming real headers parse.
 
-- **AC3 — Throughput math.**
-  - Source of truth: R7 + D5 + AE1.
-  - Must match: t/s = tokens ÷ turn-seconds; formatting thresholds.
-  - Proof: `test/throughput.test.ts`.
+- **AC3 — Throughput & time math.**
+  - Source of truth: R7/R13 + D5/D8 + AE1/AE7.
+  - Must match: t/s = tokens ÷ streaming-window seconds; active time = Σ turn durations (monotonic); duration formatting thresholds.
+  - Must not regress: active time never decreases across turns; time segment hidden before first turn.
+  - Proof: `test/throughput.test.ts` + duration cases in `test/format.test.ts`.
 
 - **AC4 — Package installability.**
   - Source of truth: R11 + IU1/IU8.
@@ -249,7 +266,7 @@ Proof: published version resolves via `npm view @shvax/pi-statusline version`.
 - **Terminal width / ANSI width miscalc breaks truncation.** Mitigation: use `visibleWidth`/`truncateToWidth` from `@earendil-works/pi-tui` (as the example does); AC1 tests width bounds.
 
 ## Sequencing
-IU1 → IU2 → IU3 → (IU4 ∥ IU5 ∥ IU6) → IU7 → IU8.
+IU1 → IU2 → IU3 → (IU4 [throughput+time] ∥ IU5 ∥ IU6) → IU7 → IU8.
 IU2 is the backbone (all rendering flows through it). IU5 needs a live Anthropic
 response once to capture the header fixture; until then its parser+bar are built
 and tested against the fixture, and the segment simply stays hidden.
@@ -260,6 +277,7 @@ Every design fork is settled as Decisions D1–D7; the two the user explicitly c
 - Throughput semantics CONFIRMED: `↑` = input/prompt rate over the prompt-processing window, `↓` = generation rate over the streaming window (tool time excluded), per D5; tunable in settings later.
 - Optional extras R12a–d CONFIRMED: built but shipped disabled by default; core segments ship enabled.
 - Session-bar header shape is resolved live in IU5 before the parser is finalized (AC2); it self-hides until then, so it is not an open blocker.
+- Time metrics (R13/D8) added by user request 2026-07-15: active working time on by default; session-elapsed + last-turn optional; reuses the IU4 timer (no new dependency, no ticking timer).
 
 ## Advisor Hardening (folded in 2026-07-15)
 Read-only advisor pass against the installed pi 0.80.7 `.d.ts` corrected four grounding errors before implementation:
