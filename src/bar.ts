@@ -1,51 +1,38 @@
-export type BarLevel = "success" | "warning" | "error";
 export type Rgb = [number, number, number];
-
-export function barLevel(fraction: number): BarLevel {
-  return fraction >= 0.9 ? "error" : fraction >= 0.75 ? "warning" : "success";
-}
+export type ColorStops = readonly [Rgb, Rgb, Rgb];
 
 export interface BarStyle {
-  fill: (text: string, rgb: Rgb) => string; // gradient-painted consumed cell
-  track: (text: string) => string; // dim outline of the empty container
+  fill: (text: string, rgb: Rgb) => string;
+  track: (text: string) => string;
 }
 
-// "our colors" fallback when the theme's success/warning/error can't be read.
-export const DEFAULT_STOPS: Rgb[] = [
-  [46, 204, 113], // green
-  [230, 145, 56], // orange
-  [231, 76, 60], // red
+export const DEFAULT_STOPS: ColorStops = [
+  [92, 255, 170], // light neon green
+  [255, 140, 32], // vivid orange
+  [145, 0, 32], // deep blood red
 ];
 
-// Constant-shape pill: ◖ + body + ◗. Thin heavy line filled, light line empty.
-const CAP_LEFT = "◖";
-const CAP_RIGHT = "◗";
-const CELL_FILL = "━";
-const CELL_EMPTY = "─";
-
-// Linear interpolation across evenly-spaced rgb stops, t in [0, 1].
-export function gradientAt(stops: Rgb[], t: number): Rgb {
-  const clamped = Math.min(1, Math.max(0, t));
-  const span = stops.length - 1;
-  const pos = clamped * span;
-  const i = Math.min(span - 1, Math.floor(pos));
-  const f = pos - i;
-  const [a, b] = [stops[i], stops[i + 1]];
-  return [0, 1, 2].map((c) => Math.round(a[c] + (b[c] - a[c]) * f)) as Rgb;
+function mix(a: Rgb, b: Rgb, t: number): Rgb {
+  return [0, 1, 2].map((channel) => Math.max(0, Math.round(a[channel] + (b[channel] - a[channel]) * t))) as Rgb;
 }
 
-// The bottle is always drawn full-length; usage only decides how much is filled.
-export function renderBar(fraction: number, width: number, style: BarStyle, stops: Rgb[] = DEFAULT_STOPS): string {
-  const clamped = Math.min(1, Math.max(0, fraction));
-  const w = Math.max(1, width);
-  const filled = Math.round(clamped * w);
-  const colorAt = (i: number) => gradientAt(stops, w <= 1 ? clamped : i / (w - 1));
+export function usageColor(fraction: number, stops: ColorStops = DEFAULT_STOPS): Rgb {
+  const value = Math.min(1, Math.max(0, fraction));
+  if (value <= 0.6) return stops[0];
+  if (value <= 0.85) return mix(stops[0], stops[1], (value - 0.6) / 0.25);
+  return mix(stops[1], stops[2], (value - 0.85) / 0.15);
+}
 
-  const body = Array.from({ length: w }, (_, i) =>
-    i < filled ? style.fill(CELL_FILL, colorAt(i)) : style.track(CELL_EMPTY),
-  ).join("");
-  const left = filled > 0 ? style.fill(CAP_LEFT, colorAt(0)) : style.track(CAP_LEFT);
-  const right = filled >= w ? style.fill(CAP_RIGHT, colorAt(w - 1)) : style.track(CAP_RIGHT);
+export function renderBar(fraction: number, width: number, style: BarStyle, stops: ColorStops = DEFAULT_STOPS): string {
+  const value = Math.min(1, Math.max(0, fraction));
+  const length = Math.max(2, Math.floor(width));
+  const filled = Math.round(value * length);
+  const line = filled === 0
+    ? style.track(`╶${"─".repeat(length - 2)}╴`)
+    : filled === length
+      ? style.fill(`╺${"━".repeat(length - 2)}╸`, usageColor(value, stops))
+      : style.fill(`╺${"━".repeat(filled - 1)}`, usageColor(value, stops))
+        + style.track(`${"─".repeat(length - filled - 1)}╴`);
 
-  return `${left}${body}${right} ${Math.round(clamped * 100)}%`;
+  return `${line} ${Math.round(value * 100)}%`;
 }

@@ -5,10 +5,17 @@ import { join } from "node:path";
 import test from "node:test";
 import { formatSettings, loadSettings, saveSettings, toggleSetting } from "../src/config.ts";
 
-test("defaults core segments on and extras off", () => {
+test("defaults core segments and Git HUD on", () => {
   const settings = loadSettings(join(tmpdir(), `missing-statusline-${Date.now()}.json`));
   assert.ok(Object.values(settings.segments).every(Boolean));
-  assert.ok(Object.values(settings.extras).every((value) => !value));
+  assert.deepEqual(settings.extras, {
+    branch: true,
+    nerdFont: true,
+    cost: false,
+    sessionElapsed: false,
+    lastTurn: false,
+    pending: false,
+  });
   assert.equal(settings.footerEnabled, true);
 });
 
@@ -18,11 +25,14 @@ test("toggle persists and unknown names are rejected", () => {
   try {
     let settings = loadSettings(path);
     settings = toggleSetting(settings, "throughput");
+    settings = toggleSetting(settings, "nerdFont");
     saveSettings(settings, path);
     assert.equal(loadSettings(path).segments.throughput, false);
+    assert.equal(loadSettings(path).extras.nerdFont, false);
     assert.throws(() => toggleSetting(settings, "wat"), /Unknown statusline segment/);
     assert.match(formatSettings(settings), /throughput: off/);
-    assert.match(formatSettings(settings), /branch: off/);
+    assert.match(formatSettings(settings), /branch: on/);
+    assert.match(formatSettings(settings), /nerdFont: off/);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

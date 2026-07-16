@@ -8,23 +8,22 @@ const namedSegments = () => createSegments(enabled, Object.fromEntries(
   SEGMENT_ORDER.map((id) => [id, () => id]),
 ) as Record<(typeof SEGMENT_ORDER)[number], () => string>);
 
-test("segments have fixed order and drop disabled or empty values", () => {
-  assert.deepEqual([...SEGMENT_ORDER], ["project", "model", "effort", "context", "session", "throughput", "time"]);
+test("segments render in priority order and drop disabled or empty values", () => {
+  assert.deepEqual([...SEGMENT_ORDER], ["context", "session", "model", "effort", "project", "throughput", "time"]);
   const withoutEffort = { ...enabled, effort: false };
   const renderers = Object.fromEntries(SEGMENT_ORDER.map((id) => [id, () => id === "context" ? "" : id])) as Record<(typeof SEGMENT_ORDER)[number], () => string>;
-  assert.equal(composeSegments(createSegments(withoutEffort, renderers), 200), "project · model · session · throughput · time");
+  assert.equal(composeSegments(createSegments(withoutEffort, renderers), 200), "session · model · project · throughput · time");
 });
 
-test("injects separators and drops whole segments in priority order", () => {
+test("injects separators and drops lowest-priority segments first", () => {
   const separator = " > ";
-  const withoutSession = "project > model > effort > context > throughput > time";
-  assert.equal(composeSegments(namedSegments(), visibleWidth(withoutSession), separator), withoutSession);
+  const withoutTime = "context > session > model > effort > project > throughput";
+  assert.equal(composeSegments(namedSegments(), visibleWidth(withoutTime), separator), withoutTime);
 
-  const protectedPair = "throughput > time";
+  const protectedPair = "context > session";
   assert.equal(composeSegments(namedSegments(), visibleWidth(protectedPair), separator), protectedPair);
-  const narrow = composeSegments(namedSegments(), 10, separator);
-  assert.ok(visibleWidth(narrow) <= 10);
-  assert.equal(narrow.includes("\n"), false);
+  assert.equal(composeSegments(namedSegments(), 10, separator), "context");
+  assert.ok(composeSegments(namedSegments(), 4, separator).startsWith("cont"));
 });
 
 test("composition is one width-bounded line", () => {

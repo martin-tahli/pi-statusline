@@ -3,11 +3,11 @@
 A configurable, single-line footer for [pi](https://github.com/earendil-works/pi-mono). It uses the active pi theme for semantic colors, shows only the data available for the active model and provider, and drops lower-priority segments before truncating at narrow widths.
 
 ```text
-📁 pi-statusline > 🤖 qwen2.5-coder > 🧠 medium > 🪟  55.0%/1.0M > ⚡ ↑ 0 t/s ↓ 0 t/s > ⏳ 12m34s
-📁 pi-statusline > 🤖 claude-sonnet-4-5 > 🧠 high > 🪟  30.2%/200K > 5h (█▉) 23% wk (███▍) 41% > ⚡ ↑ 1.2k t/s ↓ 74 t/s > ⏳ 8m02s
+🪟  55.0%/1.0M > 🤖 qwen2.5-coder > 🧠 medium > 📁 pi-statusline   main ✓ > ⚡ ↑ 0 t/s ↓ 0 t/s > ⏳ 12m34s
+🪟  30.2%/200K > 5h ╺━━────────╴ 23% ↻2h14m wk ╺━━━━──────╴ 41% ↻4d6h > 🤖 claude-sonnet-4-5 > 🧠 high > 📁 pi-statusline   main ~2 ?1 ↑2 > ⚡ ↑ 1.2k t/s ↓ 74 t/s > ⏳ 8m02s
 ```
 
-The terminal renders these usage bars with rounded Nerd Font endcaps; the web-safe preview uses parentheses because npm and GitHub fonts do not include those glyphs. Their consumed fill is `success`, `warning`, or `error` from your selected pi theme; the empty portion is the terminal background.
+Usage is a thin continuous line with rounded half-line ends and a dark-gray track. Its bright truecolor fill gives a restrained glow, moving smoothly from neon green through vivid orange to blood red as usage rises. Each provider-reported window includes a compact live reset countdown.
 
 ## Install
 
@@ -23,19 +23,21 @@ pi -e .
 
 ## Segments
 
-Segments render in this order and disappear only when disabled or inapplicable.
+Segments render in priority order. As the window narrows, the lowest-priority available segment disappears first.
 
 | Segment | Default | Contents |
 |---|---:|---|
-| `project` | on | Current directory name |
+| `context` | on | Context percent and window; hidden while usage is unknown |
+| `session` | on | Available subscription usage windows and reset countdowns; Codex labels come from the account's current limits |
 | `model` | on | Active model id |
 | `effort` | on | Thinking level; hidden for non-reasoning models |
-| `context` | on | Context percent and window; hidden while usage is unknown |
-| `session` | on | Available subscription usage windows; Codex labels come from the account's current limits |
+| `project` | on | Current directory name and compact Git HUD |
 | `throughput` | on | Latest prompt and generation token rates, independently speed-colored; starts at `0 t/s` |
 | `time` | on | Live-ticking cumulative active turn time |
 
-Optional extras default off: `branch` (with dirty `*`), `cost`, `sessionElapsed`, `lastTurn`, and `pending`.
+The Git HUD defaults on inside repositories: ` main ✓`, with only relevant counters (`+` staged, `~` modified, `?` untracked, `-` deleted, `↑` ahead, `↓` behind, `!` conflict/error). `●` covers otherwise-unclassified dirty state such as a changed submodule. Colors use the active theme's accent, success, warning, and error roles.
+
+`nerdFont` defaults on for the `` branch icon; toggle it off to use the Unicode `⎇` fallback. Other optional extras default off: `cost`, `sessionElapsed`, `lastTurn`, and `pending`.
 
 ## Configure
 
@@ -44,7 +46,8 @@ Optional extras default off: `branch` (with dirty `*`), `cost`, `sessionElapsed`
 /statusline on                      enable the custom footer
 /statusline off                     restore pi's built-in footer
 /statusline toggle throughput       toggle a segment
-/statusline toggle branch           toggle an optional extra
+/statusline toggle branch           toggle the Git HUD
+/statusline toggle nerdFont         use the Unicode branch fallback
 /statusline toggle sessionElapsed   show wall time in the time segment
 /statusline toggle lastTurn         show the latest turn duration
 ```
@@ -59,7 +62,7 @@ Settings persist in `~/.pi/agent/statusline.json`.
 | Available usage bars | — | ✓ | ✓ | — |
 | Throughput and time | ✓ | ✓ | ✓ | ✓ |
 
-Anthropic OAuth shows its known `5h` and `wk` placeholders until headers arrive. Codex fetches its current account limits and shows only the windows returned by the account, labeled by duration; absent windows are omitted rather than rendered as `—`.
+Anthropic OAuth restores the last limits captured in the current session, then updates them from response headers; a first run shows `5h` and `wk` placeholders. Codex fetches its current account limits and shows only the windows returned by the account, labeled by duration. Reset countdowns appear for every Claude or Codex window that reports a reset time; absent data is omitted rather than rendered as `—`.
 
 ## Throughput and time
 

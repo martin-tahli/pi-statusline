@@ -17,11 +17,11 @@ function numberInRange(value: string | undefined, max: number): number | undefin
   return Number.isFinite(parsed) && parsed >= 0 && parsed <= max ? parsed : undefined;
 }
 
-function reset(value: string | undefined): number | undefined {
-  if (!value) return undefined;
+function reset(value: string | number | undefined): number | undefined {
+  if (value === undefined || value === "") return undefined;
   const numeric = Number(value);
-  if (Number.isFinite(numeric)) return numeric;
-  const parsed = Date.parse(value);
+  if (Number.isFinite(numeric)) return numeric < 1_000_000_000_000 ? numeric * 1_000 : numeric;
+  const parsed = Date.parse(String(value));
   return Number.isNaN(parsed) ? undefined : parsed;
 }
 
@@ -44,11 +44,26 @@ export function parseCodexUsage(payload: unknown): RateLimits {
     const percent = typeof window.used_percent === "number" ? window.used_percent : undefined;
     const seconds = typeof window.limit_window_seconds === "number" ? window.limit_window_seconds : undefined;
     if (percent === undefined || percent < 0 || percent > 100 || seconds === undefined || seconds <= 0) return [];
-    const resetAt = typeof window.reset_at === "number" ? window.reset_at : undefined;
+    const resetAt = reset(typeof window.reset_at === "number" ? window.reset_at : undefined);
     return [{
       label: durationLabel(seconds / 60),
       used: percent / 100,
       ...(resetAt === undefined ? {} : { resetAt }),
+    }];
+  });
+}
+
+export function parseStoredRateLimits(value: unknown): RateLimits {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((window) => {
+    if (!window || typeof window !== "object") return [];
+    const { label, used, resetAt } = window as Record<string, unknown>;
+    if (typeof label !== "string" || !label || typeof used !== "number" || !Number.isFinite(used) || used < 0 || used > 1) return [];
+    const parsedResetAt = reset(typeof resetAt === "number" ? resetAt : undefined);
+    return [{
+      label,
+      used,
+      ...(parsedResetAt === undefined ? {} : { resetAt: parsedResetAt }),
     }];
   });
 }

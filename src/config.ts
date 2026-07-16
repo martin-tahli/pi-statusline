@@ -3,7 +3,7 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { SEGMENT_ORDER, type SegmentId } from "./segments.ts";
 
-export const EXTRA_NAMES = ["branch", "cost", "sessionElapsed", "lastTurn", "pending"] as const;
+export const EXTRA_NAMES = ["branch", "nerdFont", "cost", "sessionElapsed", "lastTurn", "pending"] as const;
 export type ExtraName = (typeof EXTRA_NAMES)[number];
 
 export interface Settings {
@@ -24,7 +24,8 @@ export const DEFAULT_SETTINGS: Settings = {
     time: true,
   },
   extras: {
-    branch: false,
+    branch: true,
+    nerdFont: true,
     cost: false,
     sessionElapsed: false,
     lastTurn: false,

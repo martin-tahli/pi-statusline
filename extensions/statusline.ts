@@ -1,6 +1,6 @@
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { DEFAULT_STOPS, renderBar, type BarStyle, type Rgb } from "../src/bar.ts";
+import { renderBar, type BarStyle } from "../src/bar.ts";
 import {
   DEFAULT_CONFIG_PATH,
   formatSettings,
@@ -10,19 +10,35 @@ import {
   type Settings,
 } from "../src/config.ts";
 import { deriveContext, deriveEffort, deriveModel, deriveProject } from "../src/derive.ts";
-import { formatRate, formatTime } from "../src/format.ts";
-import { parseCodexUsage, parseRateLimits, type RateLimits, type RateLimitWindow } from "../src/ratelimit.ts";
+import { formatRate, formatResetCountdown, formatTime } from "../src/format.ts";
+import { gitBranchSymbol, gitStatusTokens, parseGitStatus, type GitStatusState, type GitTokenKind } from "../src/git.ts";
+import { parseCodexUsage, parseRateLimits, parseStoredRateLimits, type RateLimits, type RateLimitWindow } from "../src/ratelimit.ts";
 import { composeSegments, createSegments } from "../src/segments.ts";
 import { TurnMeter } from "../src/throughput.ts";
+
+const GIT_ROLES: Record<GitTokenKind, "accent" | "success" | "warning" | "error"> = {
+  staged: "success",
+  modified: "warning",
+  untracked: "warning",
+  deleted: "error",
+  dirty: "warning",
+  ahead: "accent",
+  behind: "warning",
+  clean: "success",
+  error: "error",
+};
 
 export default function statusline(pi: ExtensionAPI) {
   let settings = loadSettings();
   let meter = new TurnMeter();
   let limits: RateLimits = [];
-  let dirty = false;
+  let gitStatus: GitStatusState | undefined;
+  const ANTHROPIC_LIMITS_ENTRY = "pi-statusline:anthropic-limits";
   let requestRender: (() => void) | undefined;
   let tick: ReturnType<typeof setInterval> | undefined;
   let lastRenderedTime = "";
+  let sessionActive = false;
+  let turnActive = false;
 
   const timeLabel = () => {
     const snapshot = meter.snapshot();
@@ -35,6 +51,10 @@ export default function statusline(pi: ExtensionAPI) {
         settings.extras.lastTurn ? snapshot.lastTurnMs : undefined,
       );
   };
+  const tickLabel = (time = timeLabel()) => `${time}|${limits.map((limit) =>
+    limit.resetAt === undefined ? "" : formatResetCountdown(limit.resetAt)
+  ).join("|")}`;
+  const hasUpcomingReset = () => limits.some((limit) => limit.resetAt !== undefined && limit.resetAt > Date.now());
   const stopTick = () => {
     if (tick) clearInterval(tick);
     tick = undefined;
@@ -42,25 +62,49 @@ export default function statusline(pi: ExtensionAPI) {
   };
   const startTick = () => {
     stopTick();
-    lastRenderedTime = timeLabel();
+    lastRenderedTime = tickLabel();
     tick = setInterval(() => {
-      const next = timeLabel();
+      const next = tickLabel();
       if (next !== lastRenderedTime) {
         lastRenderedTime = next;
         requestRender?.();
       }
+      if (!turnActive && !hasUpcomingReset()) stopTick();
     }, 1_000);
   };
+  const syncTick = () => {
+    const shouldTick = sessionActive && settings.footerEnabled
+      && ((turnActive && settings.segments.time) || (settings.segments.session && hasUpcomingReset()));
+    if (shouldTick && !tick) startTick();
+    else if (!shouldTick && tick) stopTick();
+  };
 
-  const refreshDirty = async (ctx: ExtensionContext) => {
-    if (!settings.extras.branch) return;
+  const refreshGit = async (ctx: ExtensionContext) => {
+    if (!settings.extras.branch) {
+      gitStatus = undefined;
+      return;
+    }
     try {
-      const result = await pi.exec("git", ["status", "--porcelain"], { cwd: ctx.cwd, timeout: 2_000 });
-      dirty = result.code === 0 && result.stdout.trim().length > 0;
+      const result = await pi.exec("git", ["status", "--porcelain=v2", "--branch", "-z"], { cwd: ctx.cwd, timeout: 2_000 });
+      gitStatus = result.code === 0 ? parseGitStatus(result.stdout) : "error";
     } catch {
-      dirty = false;
+      gitStatus = "error";
     }
     requestRender?.();
+  };
+
+  const isAnthropicOAuth = (ctx: ExtensionContext) =>
+    ctx.model?.provider === "anthropic" && ctx.modelRegistry.authStorage.get("anthropic")?.type === "oauth";
+
+  const restoreAnthropicLimits = (ctx: ExtensionContext): RateLimits => {
+    const branch = ctx.sessionManager.getBranch();
+    for (let index = branch.length - 1; index >= 0; index--) {
+      const entry = branch[index];
+      if (entry?.type === "custom" && entry.customType === ANTHROPIC_LIMITS_ENTRY) {
+        return parseStoredRateLimits(entry.data);
+      }
+    }
+    return [];
   };
 
   const refreshCodexLimits = async (ctx: ExtensionContext) => {
@@ -81,6 +125,7 @@ export default function statusline(pi: ExtensionAPI) {
       });
       if (!response.ok || ctx.model?.provider !== "openai-codex") return;
       limits = parseCodexUsage(await response.json());
+      syncTick();
       requestRender?.();
     } catch {
       // Best effort: unavailable account usage simply stays hidden.
@@ -100,7 +145,11 @@ export default function statusline(pi: ExtensionAPI) {
   const installFooter = (ctx: ExtensionContext) => {
     ctx.ui.setFooter((tui, theme, footerData) => {
       requestRender = () => tui.requestRender();
-      const unsubscribe = footerData.onBranchChange(() => tui.requestRender());
+      const unsubscribe = footerData.onBranchChange(() => {
+        gitStatus = undefined;
+        tui.requestRender();
+        void refreshGit(ctx);
+      });
       return {
         dispose() {
           unsubscribe();
@@ -112,11 +161,13 @@ export default function statusline(pi: ExtensionAPI) {
           const context = deriveContext(ctx.getContextUsage());
           const snapshot = meter.snapshot();
           const branch = settings.extras.branch ? footerData.getGitBranch() : undefined;
-          const projectSuffix = [
-            branch ? `(${branch}${dirty ? "*" : ""})` : "",
-            settings.extras.pending && ctx.hasPendingMessages() ? "queued" : "",
-          ].filter(Boolean).join(" ");
-          const project = `${deriveProject(ctx.cwd)}${projectSuffix ? ` ${projectSuffix}` : ""}`;
+          const git = branch
+            ? [
+              theme.fg("accent", `${gitBranchSymbol(settings.extras.nerdFont)} ${branch}`),
+              ...(gitStatus ? gitStatusTokens(gitStatus).map((token) => theme.fg(GIT_ROLES[token.kind], token.text)) : []),
+            ].join(" ")
+            : "";
+          const pending = settings.extras.pending && ctx.hasPendingMessages();
           const model = deriveModel(ctx.model, footerData.getAvailableProviderCount() > 1);
           const cost = settings.extras.cost ? sessionCost(ctx) : undefined;
           const effort = deriveEffort(pi.getThinkingLevel(), ctx.model);
@@ -124,25 +175,22 @@ export default function statusline(pi: ExtensionAPI) {
           const output = theme.fg(snapshot.outputLevel ?? "muted", `↓ ${formatRate(snapshot.outputRate ?? 0)} t/s`);
           const throughput = `${input} ${output}`;
           const time = timeLabel();
-          lastRenderedTime = time;
-          const rgbOf = (ansi: string): Rgb | undefined => {
-            const m = /38;2;(\d+);(\d+);(\d+)/.exec(ansi);
-            return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : undefined;
-          };
+          lastRenderedTime = tickLabel(time);
           const truecolor = theme.getColorMode() === "truecolor";
-          const themeStops = (truecolor
-            ? [rgbOf(theme.getFgAnsi("success")), rgbOf(theme.getFgAnsi("warning")), rgbOf(theme.getFgAnsi("error"))]
-            : []
-          ).filter((rgb): rgb is Rgb => rgb !== undefined);
-          const stops = themeStops.length === 3 ? themeStops : DEFAULT_STOPS;
           const barStyle: BarStyle = {
             fill: truecolor
               ? (text, [r, g, b]) => `\x1b[38;2;${r};${g};${b}m${text}\x1b[39m`
-              : (text, [r, g]) => theme.fg(r >= 200 && g < 120 ? "error" : r >= 200 ? "warning" : "success", text),
-            track: (text) => theme.fg("dim", text),
+              : (text, [r, g]) => theme.fg(g > r ? "success" : r > 180 && g > 60 ? "warning" : "error", text),
+            track: truecolor
+              ? (text) => `\x1b[38;2;58;63;70m${text}\x1b[39m`
+              : (text) => theme.fg("dim", text),
           };
-          const sessionBar = (limit: RateLimitWindow) =>
-            `${theme.fg("muted", `${limit.label} `)}${renderBar(limit.used, 6, barStyle, stops)}`;
+          const sessionBar = (limit: RateLimitWindow) => {
+            const reset = limit.resetAt === undefined
+              ? ""
+              : theme.fg("dim", ` ↻ ${formatResetCountdown(limit.resetAt)}`);
+            return `${theme.fg("muted", `${limit.label} `)}${renderBar(limit.used, 12, barStyle)}${reset}`;
+          };
           const provider = ctx.model?.provider;
           const session = limits.length
             ? limits.map(sessionBar).join(theme.fg("dim", " "))
@@ -151,7 +199,7 @@ export default function statusline(pi: ExtensionAPI) {
               : "";
 
           const line = composeSegments(createSegments(settings.segments, {
-            project: () => theme.fg("muted", `📁 ${project}`),
+            project: () => `${theme.fg("muted", `📁 ${deriveProject(ctx.cwd)}`)}${git ? `  ${git}` : ""}${pending ? ` ${theme.fg("muted", "queued")}` : ""}`,
             model: () => model ? theme.fg("muted", `🤖 ${model}${cost === undefined ? "" : ` $${cost.toFixed(3)}`}`) : "",
             effort: () => effort ? theme.fg("muted", `🧠 ${effort}`) : "",
             context: () => context
@@ -165,6 +213,7 @@ export default function statusline(pi: ExtensionAPI) {
         },
       };
     });
+    syncTick();
   };
 
   const persist = () => saveSettings(settings, DEFAULT_CONFIG_PATH);
@@ -172,7 +221,7 @@ export default function statusline(pi: ExtensionAPI) {
   pi.registerCommand("statusline", {
     description: "List or toggle statusline segments",
     getArgumentCompletions: (prefix) => {
-      const choices = ["on", "off", "toggle project", "toggle model", "toggle effort", "toggle context", "toggle session", "toggle throughput", "toggle time", "toggle branch", "toggle cost", "toggle sessionElapsed", "toggle lastTurn", "toggle pending"];
+      const choices = ["on", "off", "toggle project", "toggle model", "toggle effort", "toggle context", "toggle session", "toggle throughput", "toggle time", "toggle branch", "toggle nerdFont", "toggle cost", "toggle sessionElapsed", "toggle lastTurn", "toggle pending"];
       const matches = choices.filter((value) => value.startsWith(prefix)).map((value) => ({ value, label: value }));
       return matches.length ? matches : null;
     },
@@ -198,7 +247,8 @@ export default function statusline(pi: ExtensionAPI) {
       try {
         settings = toggleSetting(settings, aliases[rawName] ?? rawName);
         persist();
-        await refreshDirty(ctx);
+        syncTick();
+        await refreshGit(ctx);
         requestRender?.();
         ctx.ui.notify(formatSettings(settings), "info");
       } catch (error) {
@@ -208,21 +258,28 @@ export default function statusline(pi: ExtensionAPI) {
   });
 
   pi.on("session_start", async (_event, ctx) => {
+    sessionActive = true;
+    turnActive = false;
     stopTick();
     settings = loadSettings();
     meter = new TurnMeter();
-    limits = [];
-    dirty = false;
+    limits = isAnthropicOAuth(ctx) ? restoreAnthropicLimits(ctx) : [];
+    gitStatus = undefined;
     if (settings.footerEnabled) installFooter(ctx);
     void refreshCodexLimits(ctx);
-    await refreshDirty(ctx);
+    await refreshGit(ctx);
   });
 
-  pi.on("session_shutdown", () => stopTick());
+  pi.on("session_shutdown", () => {
+    sessionActive = false;
+    turnActive = false;
+    stopTick();
+  });
 
   pi.on("turn_start", (event) => {
+    turnActive = true;
     meter.startTurn(event.timestamp);
-    if (settings.footerEnabled) startTick();
+    syncTick();
     requestRender?.();
   });
 
@@ -235,29 +292,36 @@ export default function statusline(pi: ExtensionAPI) {
   });
 
   pi.on("turn_end", async (event, ctx) => {
-    stopTick();
+    turnActive = false;
     if (event.message.role === "assistant") {
       meter.finishTurn({ input: event.message.usage.input, output: event.message.usage.output });
     }
+    syncTick();
     void refreshCodexLimits(ctx);
-    await refreshDirty(ctx);
+    await refreshGit(ctx);
     requestRender?.();
   });
 
   pi.on("agent_settled", () => {
+    turnActive = false;
     meter.finalizeActiveTurn();
-    stopTick();
+    syncTick();
     requestRender?.();
   });
 
-  pi.on("after_provider_response", (event) => {
-    limits = parseRateLimits(event.headers);
+  pi.on("after_provider_response", (event, ctx) => {
+    const next = parseRateLimits(event.headers);
+    if (!next.length) return;
+    limits = next;
+    if (isAnthropicOAuth(ctx)) pi.appendEntry(ANTHROPIC_LIMITS_ENTRY, limits);
+    syncTick();
     requestRender?.();
   });
 
   pi.on("model_select", (_event, ctx) => {
-    limits = [];
+    limits = isAnthropicOAuth(ctx) ? restoreAnthropicLimits(ctx) : [];
     meter.resetThroughput();
+    syncTick();
     requestRender?.();
     void refreshCodexLimits(ctx);
   });

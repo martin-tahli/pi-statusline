@@ -24,6 +24,15 @@ export function formatDuration(ms: number): string {
   return `${Math.floor(minutes / 60)}h${String(minutes % 60).padStart(2, "0")}m`;
 }
 
+export function formatResetCountdown(resetAt: number, now = Date.now()): string {
+  const minutes = Math.max(0, Math.ceil((resetAt - now) / 60_000));
+  if (minutes === 0) return "now";
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h${minutes % 60 ? `${minutes % 60}m` : ""}`;
+  return `${Math.floor(hours / 24)}d${hours % 24 ? `${hours % 24}h` : ""}`;
+}
+
 export function formatTime(activeMs: number, elapsedMs?: number, lastTurnMs?: number): string {
   const extras = [
     elapsedMs === undefined ? "" : `elapsed ${formatDuration(elapsedMs)}`,

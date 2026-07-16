@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { parseCodexUsage, parseRateLimits } from "../src/ratelimit.ts";
+import { parseCodexUsage, parseRateLimits, parseStoredRateLimits } from "../src/ratelimit.ts";
 
 const fixture = {
   "anthropic-ratelimit-unified-5h-utilization": "0.23",
@@ -24,7 +24,7 @@ test("parses only the Codex windows actually reported", () => {
     "X-Codex-Secondary-Used-Percent": "41",
     "X-Codex-Secondary-Window-Minutes": "10080",
   }), [
-    { label: "1h", used: 0.23, resetAt: 1_784_246_400 },
+    { label: "1h", used: 0.23, resetAt: 1_784_246_400_000 },
     { label: "wk", used: 0.41 },
   ]);
   assert.deepEqual(parseRateLimits({
@@ -43,8 +43,21 @@ test("parses Codex account usage by the windows returned by the account", () => 
         reset_at: 1_784_246_400,
       },
     },
-  }), [{ label: "wk", used: 0.63, resetAt: 1_784_246_400 }]);
+  }), [{ label: "wk", used: 0.63, resetAt: 1_784_246_400_000 }]);
   assert.deepEqual(parseCodexUsage({ rate_limit: null }), []);
+});
+
+test("restores only valid saved windows", () => {
+  assert.deepEqual(parseStoredRateLimits([
+    { label: "5h", used: 0.23, resetAt: 1_784_246_400 },
+    { label: "wk", used: 0.41 },
+    { label: "bad", used: 2 },
+    null,
+  ]), [
+    { label: "5h", used: 0.23, resetAt: 1_784_246_400_000 },
+    { label: "wk", used: 0.41 },
+  ]);
+  assert.deepEqual(parseStoredRateLimits({}), []);
 });
 
 test("hides absent, unrecognized, or invalid windows without hiding valid siblings", () => {
