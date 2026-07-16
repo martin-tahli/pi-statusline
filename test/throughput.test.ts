@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { TurnMeter } from "../src/throughput.ts";
+import { rateLevel, TurnMeter } from "../src/throughput.ts";
 
-test("measures prompt/generation windows and guards zero duration", () => {
+test("measures streamed windows and independently falls back to the whole turn", () => {
   const meter = new TurnMeter(() => 0);
   meter.startTurn(0);
   meter.markFirstUpdate(10_000);
@@ -12,11 +12,41 @@ test("measures prompt/generation windows and guards zero duration", () => {
   assert.equal(meter.snapshot(20_000).outputRate, 62);
 
   meter.startTurn(20_000);
-  meter.markFirstUpdate(20_000);
-  meter.markMessageEnd(20_000);
-  meter.finishTurn({ input: 10, output: 10 }, 20_000);
-  assert.equal(meter.snapshot(20_000).inputRate, undefined);
-  assert.equal(meter.snapshot(20_000).outputRate, undefined);
+  meter.finishTurn({ input: 100, output: 200 }, 30_000);
+  assert.equal(meter.snapshot(30_000).inputRate, 10);
+  assert.equal(meter.snapshot(30_000).outputRate, 20);
+
+  meter.startTurn(30_000);
+  meter.finishTurn({ input: 10, output: 10 }, 30_000);
+  assert.equal(meter.snapshot(30_000).inputRate, 0);
+  assert.equal(meter.snapshot(30_000).outputRate, 0);
+});
+
+test("classifies rates with directional baselines and an output floor", () => {
+  assert.equal(rateLevel(68, [70, 71, 69, 70, 70]), "success");
+  assert.equal(rateLevel(48, [70, 71, 69, 70, 70]), "warning");
+  assert.equal(rateLevel(30, [70, 71, 69, 70, 70]), "error");
+  assert.equal(rateLevel(1_000, [1_200, 1_200, 1_200]), "warning");
+  assert.equal(rateLevel(100, [100, 100]), "muted");
+  assert.equal(rateLevel(15, [], true), "error");
+});
+
+test("caps histories and resets displayed throughput on model changes", () => {
+  const meter = new TurnMeter(() => 0);
+  const finish = (start: number, rate: number) => {
+    meter.startTurn(start);
+    meter.finishTurn({ input: rate, output: rate }, start + 1_000);
+  };
+  for (let turn = 0; turn < 5; turn++) finish(turn * 1_000, 100);
+  finish(5_000, 0);
+  finish(6_000, 73);
+  assert.equal(meter.snapshot(7_000).inputLevel, "success");
+
+  meter.resetThroughput();
+  assert.equal(meter.snapshot(7_000).inputRate, undefined);
+  finish(7_000, 10);
+  assert.equal(meter.snapshot(8_000).inputLevel, "muted");
+  assert.equal(meter.snapshot(8_000).outputLevel, "error");
 });
 
 test("retains idle result, resets on turn start, and accumulates active time", () => {
