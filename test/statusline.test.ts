@@ -50,6 +50,7 @@ test("stops the live timer when settled or the footer is disposed", async () => 
 test("renders emoji segments with themed semantic colors", async () => {
   const handlers = new Map<string, (...args: any[]) => unknown>();
   const execCalls: unknown[][] = [];
+  let colorMode = "truecolor";
   let footer: { dispose?: () => void; render: (width: number) => string[] } | undefined;
   const pi = {
     on: (event: string, handler: (...args: any[]) => unknown) => handlers.set(event, handler),
@@ -77,7 +78,7 @@ test("renders emoji segments with themed semantic colors", async () => {
           { requestRender: () => {} },
           {
             fg: (role: string, text: string) => `<${role}>${text}</${role}>`,
-            getColorMode: () => "truecolor",
+            getColorMode: () => colorMode,
             getFgAnsi: (role: string) => ({
               success: "\x1b[38;2;0;255;0m",
               warning: "\x1b[38;2;255;165;0m",
@@ -104,10 +105,10 @@ test("renders emoji segments with themed semantic colors", async () => {
   await handlers.get("turn_end")!({ message: { role: "assistant", usage: { input: 850, output: 74 } } }, ctx);
   const resetAt = String(Math.floor((Date.now() + 3_600_000) / 1_000));
   handlers.get("after_provider_response")!({ headers: {
-    "x-codex-primary-used-percent": "23",
+    "x-codex-primary-used-percent": "60",
     "x-codex-primary-window-minutes": "60",
     "x-codex-primary-reset-at": resetAt,
-    "x-codex-secondary-used-percent": "91",
+    "x-codex-secondary-used-percent": "80",
     "x-codex-secondary-window-minutes": "10080",
     "x-codex-secondary-reset-at": resetAt,
   } }, ctx);
@@ -124,6 +125,11 @@ test("renders emoji segments with themed semantic colors", async () => {
   assert.equal(line.split("↻").length - 1, 2);
   assert.ok(line.includes("<dim> > </dim>"));
   assert.equal(line.includes(" · "), false);
+
+  colorMode = "16";
+  const semanticLine = footer!.render(1_000)[0]!;
+  assert.ok(semanticLine.includes("<warning>╺━━━━━━</warning><dim>────╴</dim> 60%"));
+  assert.ok(semanticLine.includes("<error>╺━━━━━━━━━</error><dim>─╴</dim> 80%"));
 
   await handlers.get("model_select")!({}, ctx);
   assert.ok(footer!.render(500)[0]!.includes("↑ 0 t/s"));

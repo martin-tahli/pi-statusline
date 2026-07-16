@@ -15,9 +15,9 @@ test("segments render in display order and drop disabled or empty values", () =>
   assert.equal(composeSegments(createSegments(withoutEffort, renderers), 200), "project · model · session · throughput · time");
 });
 
-test("switches to priority order before dropping lowest-priority segments", () => {
+test("preserves display order while dropping lowest-priority segments", () => {
   const separator = " > ";
-  const withoutTime = "context > session > model > effort > project > throughput";
+  const withoutTime = "project > model > effort > context > session > throughput";
   assert.equal(composeSegments(namedSegments(), visibleWidth(withoutTime), separator), withoutTime);
 
   const protectedPair = "context > session";

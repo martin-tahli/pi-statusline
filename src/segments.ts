@@ -38,7 +38,6 @@ export function composeSegments(segments: Segment[], width: number, separator = 
   const line = parts.map((part) => part.value).join(separator);
   if (visibleWidth(line) <= width) return line;
 
-  parts.sort((a, b) => COMPACT_ORDER.indexOf(a.id) - COMPACT_ORDER.indexOf(b.id));
   for (const id of DROP_ORDER) {
     parts = parts.filter((part) => part.id !== id);
     const compactLine = parts.map((part) => part.value).join(separator);

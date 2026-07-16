@@ -203,19 +203,19 @@ export default function statusline(pi: ExtensionAPI) {
           const time = timeLabel();
           lastRenderedTime = tickLabel(time);
           const truecolor = theme.getColorMode() === "truecolor";
-          const barStyle: BarStyle = {
+          const barStyle = (used: number): BarStyle => ({
             fill: truecolor
               ? (text, [r, g, b]) => `\x1b[38;2;${r};${g};${b}m${text}\x1b[39m`
-              : (text, [r, g]) => theme.fg(g > r ? "success" : r > 180 && g > 60 ? "warning" : "error", text),
+              : (text) => theme.fg(used >= 0.8 ? "error" : used >= 0.6 ? "warning" : "success", text),
             track: truecolor
               ? (text) => `\x1b[38;2;58;63;70m${text}\x1b[39m`
               : (text) => theme.fg("dim", text),
-          };
+          });
           const sessionBar = (limit: RateLimitWindow) => {
             const reset = limit.resetAt === undefined
               ? ""
               : theme.fg("dim", ` ↻ ${formatResetCountdown(limit.resetAt)}`);
-            return `${theme.fg("muted", `${limit.label} `)}${renderBar(limit.used, 12, barStyle)}${reset}`;
+            return `${theme.fg("muted", `${limit.label} `)}${renderBar(limit.used, 12, barStyle(limit.used))}${reset}`;
           };
           const provider = ctx.model?.provider;
           const session = limits.length
