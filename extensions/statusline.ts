@@ -21,6 +21,36 @@ export default function statusline(pi: ExtensionAPI) {
   let limits: RateLimits = {};
   let dirty = false;
   let requestRender: (() => void) | undefined;
+  let tick: ReturnType<typeof setInterval> | undefined;
+  let lastRenderedTime = "";
+
+  const timeLabel = () => {
+    const snapshot = meter.snapshot();
+    const liveMs = meter.liveElapsedMs();
+    return snapshot.lastTurnMs === undefined && liveMs === 0
+      ? ""
+      : formatTime(
+        snapshot.activeMs + liveMs,
+        settings.extras.sessionElapsed ? snapshot.elapsedMs : undefined,
+        settings.extras.lastTurn ? snapshot.lastTurnMs : undefined,
+      );
+  };
+  const stopTick = () => {
+    if (tick) clearInterval(tick);
+    tick = undefined;
+    lastRenderedTime = "";
+  };
+  const startTick = () => {
+    stopTick();
+    lastRenderedTime = timeLabel();
+    tick = setInterval(() => {
+      const next = timeLabel();
+      if (next !== lastRenderedTime) {
+        lastRenderedTime = next;
+        requestRender?.();
+      }
+    }, 1_000);
+  };
 
   const refreshDirty = async (ctx: ExtensionContext) => {
     if (!settings.extras.branch) return;
@@ -50,6 +80,7 @@ export default function statusline(pi: ExtensionAPI) {
       return {
         dispose() {
           unsubscribe();
+          stopTick();
           requestRender = undefined;
         },
         invalidate() {},
@@ -69,11 +100,8 @@ export default function statusline(pi: ExtensionAPI) {
             snapshot.inputRate === undefined ? "" : `↑ ${formatRate(snapshot.inputRate)} t/s`,
             snapshot.outputRate === undefined ? "" : `↓ ${formatRate(snapshot.outputRate)} t/s`,
           ].filter(Boolean).join(" ");
-          const time = snapshot.lastTurnMs === undefined ? "" : formatTime(
-            snapshot.activeMs,
-            settings.extras.sessionElapsed ? snapshot.elapsedMs : undefined,
-            settings.extras.lastTurn ? snapshot.lastTurnMs : undefined,
-          );
+          const time = timeLabel();
+          lastRenderedTime = time;
           const session = limits.fiveHour && limits.weekly
             ? `${theme.fg("dim", "5h ")}${renderBar(limits.fiveHour.used, 8, (text) => theme.fg("success", text))}`
               + `${theme.fg("dim", " · wk ")}${renderBar(limits.weekly.used, 8, (text) => theme.fg("success", text))}`
@@ -137,6 +165,7 @@ export default function statusline(pi: ExtensionAPI) {
   });
 
   pi.on("session_start", async (_event, ctx) => {
+    stopTick();
     settings = loadSettings();
     meter = new TurnMeter();
     limits = {};
@@ -145,8 +174,11 @@ export default function statusline(pi: ExtensionAPI) {
     await refreshDirty(ctx);
   });
 
+  pi.on("session_shutdown", () => stopTick());
+
   pi.on("turn_start", (event) => {
     meter.startTurn(event.timestamp);
+    if (settings.footerEnabled) startTick();
     requestRender?.();
   });
 
@@ -159,10 +191,17 @@ export default function statusline(pi: ExtensionAPI) {
   });
 
   pi.on("turn_end", async (event, ctx) => {
+    stopTick();
     if (event.message.role === "assistant") {
       meter.finishTurn({ input: event.message.usage.input, output: event.message.usage.output });
     }
     await refreshDirty(ctx);
+    requestRender?.();
+  });
+
+  pi.on("agent_settled", () => {
+    meter.finalizeActiveTurn();
+    stopTick();
     requestRender?.();
   });
 

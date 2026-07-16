@@ -84,6 +84,20 @@ export class TurnMeter {
     this.messageEndedAt = at;
   }
 
+  liveElapsedMs(at = this.clock()): number {
+    return this.turnStartedAt === undefined ? 0 : Math.max(0, at - this.turnStartedAt);
+  }
+
+  finalizeActiveTurn(at = this.clock()): void {
+    if (this.turnStartedAt === undefined) return;
+    const duration = this.liveElapsedMs(at);
+    this.activeMs += duration;
+    this.lastTurnMs = duration;
+    this.turnStartedAt = undefined;
+    this.firstUpdateAt = undefined;
+    this.messageEndedAt = undefined;
+  }
+
   finishTurn(usage: TokenUsage, at = this.clock()): void {
     if (this.turnStartedAt === undefined) return;
     const duration = Math.max(0, at - this.turnStartedAt);
@@ -103,6 +117,8 @@ export class TurnMeter {
     if (this.inputHistory.length > 5) this.inputHistory.shift();
     if (this.outputHistory.length > 5) this.outputHistory.shift();
     this.turnStartedAt = undefined;
+    this.firstUpdateAt = undefined;
+    this.messageEndedAt = undefined;
   }
 
   snapshot(now = this.clock()): MeterSnapshot {

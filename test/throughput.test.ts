@@ -49,6 +49,17 @@ test("caps histories and resets displayed throughput on model changes", () => {
   assert.equal(meter.snapshot(8_000).outputLevel, "error");
 });
 
+test("finalizes active time without preserving rates", () => {
+  const meter = new TurnMeter(() => 0);
+  meter.startTurn(1_000);
+  assert.equal(meter.liveElapsedMs(2_000), 1_000);
+  meter.finalizeActiveTurn(4_000);
+  assert.equal(meter.liveElapsedMs(5_000), 0);
+  assert.equal(meter.snapshot(5_000).activeMs, 3_000);
+  assert.equal(meter.snapshot(5_000).lastTurnMs, 3_000);
+  assert.equal(meter.snapshot(5_000).inputRate, undefined);
+});
+
 test("retains idle result, resets on turn start, and accumulates active time", () => {
   const meter = new TurnMeter(() => 1_000);
   assert.equal(meter.snapshot(1_000).lastTurnMs, undefined);

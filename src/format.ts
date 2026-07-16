@@ -29,5 +29,5 @@ export function formatTime(activeMs: number, elapsedMs?: number, lastTurnMs?: nu
     elapsedMs === undefined ? "" : `elapsed ${formatDuration(elapsedMs)}`,
     lastTurnMs === undefined ? "" : `last ${formatDuration(lastTurnMs)}`,
   ].filter(Boolean);
-  return `⏱ ${formatDuration(activeMs)}${extras.length ? ` (${extras.join(", ")})` : ""}`;
+  return `⏳ ${formatDuration(activeMs)}${extras.length ? ` (${extras.join(", ")})` : ""}`;
 }

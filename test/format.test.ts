@@ -13,5 +13,5 @@ test("formats windows, percentages, rates, and durations", () => {
   assert.equal(formatDuration(3_720_000), "1h02m");
   assert.equal(formatDuration(0), "0s");
   assert.equal(formatDuration(2_460_000), "41m");
-  assert.equal(formatTime(754_000, 2_460_000, 18_000), "⏱ 12m34s (elapsed 41m, last 18s)");
+  assert.equal(formatTime(754_000, 2_460_000, 18_000), "⏳ 12m34s (elapsed 41m, last 18s)");
 });
