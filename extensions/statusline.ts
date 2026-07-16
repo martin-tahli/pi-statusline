@@ -96,18 +96,16 @@ export default function statusline(pi: ExtensionAPI) {
           const model = deriveModel(ctx.model, footerData.getAvailableProviderCount() > 1);
           const cost = settings.extras.cost ? sessionCost(ctx) : undefined;
           const effort = deriveEffort(pi.getThinkingLevel(), ctx.model);
-          const input = snapshot.inputRate === undefined
-            ? ""
-            : theme.fg(snapshot.inputLevel ?? "muted", `↑ ${formatRate(snapshot.inputRate)} t/s`);
-          const output = snapshot.outputRate === undefined
-            ? ""
-            : theme.fg(snapshot.outputLevel ?? "muted", `↓ ${formatRate(snapshot.outputRate)} t/s`);
-          const throughput = [input, output].filter(Boolean).join(" ");
+          const input = theme.fg(snapshot.inputLevel ?? "muted", `↑ ${formatRate(snapshot.inputRate ?? 0)} t/s`);
+          const output = theme.fg(snapshot.outputLevel ?? "muted", `↓ ${formatRate(snapshot.outputRate ?? 0)} t/s`);
+          const throughput = `${input} ${output}`;
           const time = timeLabel();
           lastRenderedTime = time;
-          const sessionBar = (label: string, limit: NonNullable<RateLimits["fiveHour"]>) =>
-            `${theme.fg("muted", `${label} `)}${renderBar(limit.used, 8, (text) => theme.fg(barLevel(limit.used), text))}`;
-          const session = limits.fiveHour && limits.weekly
+          const sessionBar = (label: string, limit?: RateLimits["fiveHour"]) => limit
+            ? `${theme.fg("muted", `${label} `)}${renderBar(limit.used, 8, (text) => theme.fg(barLevel(limit.used), text))}`
+            : theme.fg("muted", `${label} —`);
+          const provider = ctx.model?.provider;
+          const session = (provider === "anthropic" || provider === "openai-codex") && ctx.modelRegistry.authStorage.get(provider)?.type === "oauth"
             ? `${sessionBar("5h", limits.fiveHour)}${theme.fg("dim", " ")}${sessionBar("wk", limits.weekly)}`
             : "";
 
@@ -116,10 +114,10 @@ export default function statusline(pi: ExtensionAPI) {
             model: () => model ? theme.fg("muted", `🤖 ${model}${cost === undefined ? "" : ` $${cost.toFixed(3)}`}`) : "",
             effort: () => effort ? theme.fg("muted", `🧠 ${effort}`) : "",
             context: () => context
-              ? `${theme.fg("muted", "🪟 ")}${theme.fg(context.percent >= 90 ? "error" : context.percent >= 75 ? "warning" : "dim", context.label)}`
+              ? `${theme.fg("muted", "🪟  ")}${theme.fg(context.percent >= 90 ? "error" : context.percent >= 75 ? "warning" : "dim", context.label)}`
               : "",
             session: () => session,
-            throughput: () => throughput ? `${theme.fg("muted", "⚡ ")}${throughput}` : "",
+            throughput: () => `${theme.fg("muted", "⚡ ")}${throughput}`,
             time: () => time ? theme.fg("muted", time) : "",
           }), width, theme.fg("dim", " > "));
           return [line];

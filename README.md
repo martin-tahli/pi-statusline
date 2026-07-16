@@ -3,8 +3,8 @@
 A configurable, single-line footer for [pi](https://github.com/earendil-works/pi-mono). It uses the active pi theme for semantic colors, shows only the data available for the active model and provider, and drops lower-priority segments before truncating at narrow widths.
 
 ```text
-📁 pi-statusline > 🤖 qwen2.5-coder > 🧠 medium > 🪟 55.0%/1.0M > ⚡ ↑ 850 t/s ↓ 62 t/s > ⏳ 12m34s
-📁 pi-statusline > 🤖 claude-sonnet-4-5 > 🧠 high > 🪟 30.2%/200K > 5h (█▉) 23% wk (███▍) 41% > ⚡ ↑ 1.2k t/s ↓ 74 t/s > ⏳ 8m02s
+📁 pi-statusline > 🤖 qwen2.5-coder > 🧠 medium > 🪟  55.0%/1.0M > ⚡ ↑ 0 t/s ↓ 0 t/s > ⏳ 12m34s
+📁 pi-statusline > 🤖 claude-sonnet-4-5 > 🧠 high > 🪟  30.2%/200K > 5h (█▉) 23% wk (███▍) 41% > ⚡ ↑ 1.2k t/s ↓ 74 t/s > ⏳ 8m02s
 ```
 
 The terminal renders these usage bars with rounded Nerd Font endcaps; the web-safe preview uses parentheses because npm and GitHub fonts do not include those glyphs. Their consumed fill is `success`, `warning`, or `error` from your selected pi theme; the empty portion is the terminal background.
@@ -23,7 +23,7 @@ pi -e .
 
 ## Segments
 
-Segments always render in this order and disappear when disabled or unavailable.
+Segments render in this order and disappear only when disabled or inapplicable.
 
 | Segment | Default | Contents |
 |---|---:|---|
@@ -31,8 +31,8 @@ Segments always render in this order and disappear when disabled or unavailable.
 | `model` | on | Active model id |
 | `effort` | on | Thinking level; hidden for non-reasoning models |
 | `context` | on | Context percent and window; hidden while usage is unknown |
-| `session` | on | Anthropic subscription 5-hour and weekly theme-colored usage pills |
-| `throughput` | on | Latest prompt and generation token rates, independently speed-colored |
+| `session` | on | Anthropic and OpenAI Codex subscription 5-hour and weekly usage pills; shows `—` until values arrive |
+| `throughput` | on | Latest prompt and generation token rates, independently speed-colored; starts at `0 t/s` |
 | `time` | on | Live-ticking cumulative active turn time |
 
 Optional extras default off: `branch` (with dirty `*`), `cost`, `sessionElapsed`, `lastTurn`, and `pending`.
@@ -53,17 +53,17 @@ Settings persist in `~/.pi/agent/statusline.json`.
 
 ## Provider applicability
 
-| Data | Local models | Anthropic subscription | Other cloud/API key |
-|---|:---:|:---:|:---:|
-| Project, model, effort, context | ✓ | ✓ | ✓ |
-| 5-hour and weekly bars | — | ✓ when unified headers are exposed | — |
-| Throughput and time | ✓ | ✓ | ✓ |
+| Data | Local models | Anthropic subscription | OpenAI Codex subscription | Other cloud/API key |
+|---|:---:|:---:|:---:|:---:|
+| Project, model, effort, context | ✓ | ✓ | ✓ | ✓ |
+| 5-hour and weekly bars | — | ✓ | ✓ | — |
+| Throughput and time | ✓ | ✓ | ✓ | ✓ |
 
-Session bars are best-effort: transports that do not expose both `anthropic-ratelimit-unified-5h-utilization` and `anthropic-ratelimit-unified-7d-utilization` headers show no bars.
+For Anthropic and OpenAI Codex OAuth subscriptions, the `5h` and `wk` labels are shown immediately. Their values are best-effort: unavailable rate-limit data retains `—`.
 
 ## Throughput and time
 
-`↑` is input tokens divided by the prompt-processing window from turn start to first streamed update. `↓` is output tokens divided by the generation window from first update to message end, so tool execution time is excluded. If either streaming window is unavailable, that direction falls back to its token count over the whole turn, including `0 t/s` for a zero-length measurement. Both rates remain visible while idle.
+`↑` is input tokens divided by the prompt-processing window from turn start to first streamed update. `↓` is output tokens divided by the generation window from first update to message end, so tool execution time is excluded. Both rates start at `0 t/s` and remain visible while idle. If either streaming window is unavailable, that direction falls back to its token count over the whole turn.
 
 Each direction compares to its own recent same-model baseline: green at or above 90%, orange from 60–89%, and red below 60%. Until three samples are available it stays neutral; output at or below 15 t/s is always red. Changing models resets both rates and baselines.
 
