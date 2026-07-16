@@ -68,7 +68,7 @@ test("renders emoji segments with themed semantic colors", async () => {
   const ctx = {
     cwd: process.cwd(),
     model: { id: "gpt-5.6-terra", provider: "openai-codex", reasoning: true },
-    modelRegistry: { authStorage: { get: () => ({ type: "oauth" }), getApiKey: async () => undefined } },
+    modelRegistry: { isUsingOAuth: () => true, getApiKeyForProvider: async () => undefined },
     getContextUsage: () => ({ tokens: 110_000, percent: 55, contextWindow: 200_000 }),
     hasPendingMessages: () => false,
     sessionManager: { getBranch: () => [] },
@@ -95,8 +95,8 @@ test("renders emoji segments with themed semantic colors", async () => {
   statusline(pi);
   await handlers.get("session_start")!({}, ctx);
   const initial = footer!.render(500)[0]!;
-  for (const label of ["⚡", "↑ 0 t/s", "↓ 0 t/s", "🪟  </muted><dim>55.0%/200K"]) assert.ok(initial.includes(label));
-  assert.ok(initial.includes("📁 pi-statusline</muted>  <accent> main</accent> <warning>~2</warning> <accent>↑2</accent> <warning>↓1</warning>"));
+  for (const label of ["⚡", "↑ 0 t/s", "↓ 0 t/s", "🪟  </muted><success>55.0%/200K"]) assert.ok(initial.includes(label));
+  assert.ok(initial.includes("📁 pi-statusline</muted>  <accent>main</accent> <warning>↓1</warning> <accent>↑2</accent>"));
   assert.deepEqual(execCalls[0], ["git", ["status", "--porcelain=v2", "--branch", "-z"], { cwd: process.cwd(), timeout: 2_000 }]);
   assert.equal(initial.includes("5h"), false);
   assert.equal(initial.includes("wk"), false);
@@ -163,7 +163,7 @@ test("loads Anthropic limits at session start", async () => {
     const ctx = {
       cwd: process.cwd(),
       model: { id: "claude-opus-4-8", provider: "anthropic", reasoning: true },
-      modelRegistry: { authStorage: { get: () => ({ type: "oauth" }), getApiKey: async () => "access-token" } },
+      modelRegistry: { isUsingOAuth: () => true, getApiKeyForProvider: async () => "access-token" },
       getContextUsage: () => undefined,
       hasPendingMessages: () => false,
       sessionManager: { getBranch: () => entries },
@@ -209,7 +209,7 @@ test("restores Anthropic limits when a session reloads", async () => {
   const ctx = {
     cwd: process.cwd(),
     model: { id: "claude-opus-4-8", provider: "anthropic", reasoning: true },
-    modelRegistry: { authStorage: { get: () => ({ type: "oauth" }), getApiKey: async () => undefined } },
+    modelRegistry: { isUsingOAuth: () => true, getApiKeyForProvider: async () => undefined },
     getContextUsage: () => undefined,
     hasPendingMessages: () => false,
     sessionManager: { getBranch: () => entries },

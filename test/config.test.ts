@@ -10,7 +10,7 @@ test("defaults core segments and Git HUD on", () => {
   assert.ok(Object.values(settings.segments).every(Boolean));
   assert.deepEqual(settings.extras, {
     branch: true,
-    nerdFont: true,
+    nerdFont: false,
     cost: false,
     sessionElapsed: false,
     lastTurn: false,
@@ -28,11 +28,11 @@ test("toggle persists and unknown names are rejected", () => {
     settings = toggleSetting(settings, "nerdFont");
     saveSettings(settings, path);
     assert.equal(loadSettings(path).segments.throughput, false);
-    assert.equal(loadSettings(path).extras.nerdFont, false);
+    assert.equal(loadSettings(path).extras.nerdFont, true);
     assert.throws(() => toggleSetting(settings, "wat"), /Unknown statusline segment/);
     assert.match(formatSettings(settings), /throughput: off/);
     assert.match(formatSettings(settings), /branch: on/);
-    assert.match(formatSettings(settings), /nerdFont: off/);
+    assert.match(formatSettings(settings), /nerdFont: on/);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

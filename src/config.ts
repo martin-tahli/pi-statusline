@@ -25,7 +25,7 @@ export const DEFAULT_SETTINGS: Settings = {
   },
   extras: {
     branch: true,
-    nerdFont: true,
+    nerdFont: false,
     cost: false,
     sessionElapsed: false,
     lastTurn: false,

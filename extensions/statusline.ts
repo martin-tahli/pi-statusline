@@ -9,7 +9,7 @@ import {
   toggleSetting,
   type Settings,
 } from "../src/config.ts";
-import { deriveContext, deriveEffort, deriveModel, deriveProject } from "../src/derive.ts";
+import { contextSeverity, deriveContext, deriveEffort, deriveModel, deriveProject } from "../src/derive.ts";
 import { formatRate, formatResetCountdown, formatTime } from "../src/format.ts";
 import { gitBranchSymbol, gitStatusTokens, parseGitStatus, type GitStatusState, type GitTokenKind } from "../src/git.ts";
 import { parseAnthropicUsage, parseCodexUsage, parseRateLimits, parseStoredRateLimits, type RateLimits, type RateLimitWindow } from "../src/ratelimit.ts";
@@ -17,10 +17,6 @@ import { composeSegments, createSegments } from "../src/segments.ts";
 import { TurnMeter } from "../src/throughput.ts";
 
 const GIT_ROLES: Record<GitTokenKind, "accent" | "success" | "warning" | "error"> = {
-  staged: "success",
-  modified: "warning",
-  deleted: "error",
-  dirty: "warning",
   ahead: "accent",
   behind: "warning",
   clean: "success",
@@ -93,7 +89,16 @@ export default function statusline(pi: ExtensionAPI) {
   };
 
   const isAnthropicOAuth = (ctx: ExtensionContext) =>
-    ctx.model?.provider === "anthropic" && ctx.modelRegistry.authStorage.get("anthropic")?.type === "oauth";
+    ctx.model?.provider === "anthropic" && ctx.modelRegistry.isUsingOAuth(ctx.model);
+
+  const codexAccountId = (token: string): string | undefined => {
+    try {
+      const payload = JSON.parse(atob(token.split(".")[1] ?? ""));
+      return payload?.["https://api.openai.com/auth"]?.chatgpt_account_id;
+    } catch {
+      return undefined;
+    }
+  };
 
   const restoreAnthropicLimits = (ctx: ExtensionContext): RateLimits => {
     const branch = ctx.sessionManager.getBranch();
@@ -109,7 +114,7 @@ export default function statusline(pi: ExtensionAPI) {
   const refreshAnthropicLimits = async (ctx: ExtensionContext) => {
     if (!isAnthropicOAuth(ctx)) return;
     try {
-      const access = await ctx.modelRegistry.authStorage.getApiKey("anthropic");
+      const access = await ctx.modelRegistry.getApiKeyForProvider("anthropic");
       if (!access) return;
       const response = await fetch("https://api.anthropic.com/api/oauth/usage", {
         headers: {
@@ -136,10 +141,9 @@ export default function statusline(pi: ExtensionAPI) {
   const refreshCodexLimits = async (ctx: ExtensionContext) => {
     if (ctx.model?.provider !== "openai-codex") return;
     try {
-      const access = await ctx.modelRegistry.authStorage.getApiKey("openai-codex");
-      const credential = ctx.modelRegistry.authStorage.get("openai-codex");
-      const accountId = credential?.type === "oauth" ? credential.accountId : undefined;
-      if (!access || typeof accountId !== "string") return;
+      const access = await ctx.modelRegistry.getApiKeyForProvider("openai-codex");
+      const accountId = access ? codexAccountId(access) : undefined;
+      if (!access || !accountId) return;
       const origin = new URL(ctx.model.baseUrl).origin;
       const response = await fetch(`${origin}/backend-api/wham/usage`, {
         headers: {
@@ -187,9 +191,10 @@ export default function statusline(pi: ExtensionAPI) {
           const context = deriveContext(ctx.getContextUsage());
           const snapshot = meter.snapshot();
           const branch = settings.extras.branch ? footerData.getGitBranch() : undefined;
+          const branchSymbol = gitBranchSymbol(settings.extras.nerdFont);
           const git = branch
             ? [
-              theme.fg("accent", `${gitBranchSymbol(settings.extras.nerdFont)} ${branch}`),
+              theme.fg("accent", `${branchSymbol ? `${branchSymbol} ` : ""}${branch}`),
               ...(gitStatus ? gitStatusTokens(gitStatus).map((token) => theme.fg(GIT_ROLES[token.kind], token.text)) : []),
             ].join(" ")
             : "";
@@ -220,7 +225,7 @@ export default function statusline(pi: ExtensionAPI) {
           const provider = ctx.model?.provider;
           const session = limits.length
             ? limits.map(sessionBar).join(theme.fg("dim", " "))
-            : provider === "anthropic" && ctx.modelRegistry.authStorage.get(provider)?.type === "oauth"
+            : provider === "anthropic" && ctx.model !== undefined && ctx.modelRegistry.isUsingOAuth(ctx.model)
               ? theme.fg("muted", "5h — wk —")
               : "";
 
@@ -229,7 +234,7 @@ export default function statusline(pi: ExtensionAPI) {
             model: () => model ? theme.fg("muted", `🤖 ${model}${cost === undefined ? "" : ` $${cost.toFixed(3)}`}`) : "",
             effort: () => effort ? theme.fg("muted", `🧠 ${effort}`) : "",
             context: () => context
-              ? `${theme.fg("muted", "🪟  ")}${theme.fg(context.percent >= 90 ? "error" : context.percent >= 75 ? "warning" : "dim", context.label)}`
+              ? `${theme.fg("muted", "🪟  ")}${theme.fg(contextSeverity(context), context.label)}`
               : "",
             session: () => session,
             throughput: () => `${theme.fg("muted", "⚡ ")}${throughput}`,
