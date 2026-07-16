@@ -1,4 +1,4 @@
-import { truncateToWidth } from "@earendil-works/pi-tui";
+import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 
 export const SEGMENT_ORDER = [
   "project",
@@ -25,12 +25,19 @@ export function createSegments(
   return SEGMENT_ORDER.map((id) => ({ id, enabled: enabled[id], render: renderers[id] }));
 }
 
-export function composeSegments(segments: Segment[], width: number): string {
+const DROP_ORDER: SegmentId[] = ["session", "effort", "project", "model", "context"];
+
+export function composeSegments(segments: Segment[], width: number, separator = " · "): string {
   if (width <= 0) return "";
-  const line = segments.flatMap((segment) => {
+  let parts = segments.flatMap((segment) => {
     if (!segment.enabled) return [];
     const value = segment.render();
-    return value ? [value] : [];
-  }).join(" · ");
-  return truncateToWidth(line, width, "");
+    return value ? [{ id: segment.id, value }] : [];
+  });
+  for (const id of DROP_ORDER) {
+    const line = parts.map((part) => part.value).join(separator);
+    if (visibleWidth(line) <= width) return line;
+    parts = parts.filter((part) => part.id !== id);
+  }
+  return truncateToWidth(parts.map((part) => part.value).join(separator), width, "");
 }
