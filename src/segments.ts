@@ -1,11 +1,11 @@
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 
 export const SEGMENT_ORDER = [
-  "context",
-  "session",
+  "project",
   "model",
   "effort",
-  "project",
+  "context",
+  "session",
   "throughput",
   "time",
 ] as const;
@@ -25,7 +25,8 @@ export function createSegments(
   return SEGMENT_ORDER.map((id) => ({ id, enabled: enabled[id], render: renderers[id] }));
 }
 
-const DROP_ORDER: SegmentId[] = SEGMENT_ORDER.slice(1).reverse();
+const COMPACT_ORDER: SegmentId[] = ["context", "session", "model", "effort", "project", "throughput", "time"];
+const DROP_ORDER = COMPACT_ORDER.slice(1).reverse();
 
 export function composeSegments(segments: Segment[], width: number, separator = " · "): string {
   if (width <= 0) return "";
@@ -34,10 +35,14 @@ export function composeSegments(segments: Segment[], width: number, separator = 
     const value = segment.render();
     return value ? [{ id: segment.id, value }] : [];
   });
+  const line = parts.map((part) => part.value).join(separator);
+  if (visibleWidth(line) <= width) return line;
+
+  parts.sort((a, b) => COMPACT_ORDER.indexOf(a.id) - COMPACT_ORDER.indexOf(b.id));
   for (const id of DROP_ORDER) {
-    const line = parts.map((part) => part.value).join(separator);
-    if (visibleWidth(line) <= width) return line;
     parts = parts.filter((part) => part.id !== id);
+    const compactLine = parts.map((part) => part.value).join(separator);
+    if (visibleWidth(compactLine) <= width) return compactLine;
   }
   return truncateToWidth(parts.map((part) => part.value).join(separator), width, "");
 }

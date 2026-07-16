@@ -8,14 +8,14 @@ const namedSegments = () => createSegments(enabled, Object.fromEntries(
   SEGMENT_ORDER.map((id) => [id, () => id]),
 ) as Record<(typeof SEGMENT_ORDER)[number], () => string>);
 
-test("segments render in priority order and drop disabled or empty values", () => {
-  assert.deepEqual([...SEGMENT_ORDER], ["context", "session", "model", "effort", "project", "throughput", "time"]);
+test("segments render in display order and drop disabled or empty values", () => {
+  assert.deepEqual([...SEGMENT_ORDER], ["project", "model", "effort", "context", "session", "throughput", "time"]);
   const withoutEffort = { ...enabled, effort: false };
   const renderers = Object.fromEntries(SEGMENT_ORDER.map((id) => [id, () => id === "context" ? "" : id])) as Record<(typeof SEGMENT_ORDER)[number], () => string>;
-  assert.equal(composeSegments(createSegments(withoutEffort, renderers), 200), "session · model · project · throughput · time");
+  assert.equal(composeSegments(createSegments(withoutEffort, renderers), 200), "project · model · session · throughput · time");
 });
 
-test("injects separators and drops lowest-priority segments first", () => {
+test("switches to priority order before dropping lowest-priority segments", () => {
   const separator = " > ";
   const withoutTime = "context > session > model > effort > project > throughput";
   assert.equal(composeSegments(namedSegments(), visibleWidth(withoutTime), separator), withoutTime);
