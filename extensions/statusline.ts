@@ -1,6 +1,6 @@
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { barLevel, renderBar } from "../src/bar.ts";
+import { DEFAULT_STOPS, renderBar, type BarStyle, type Rgb } from "../src/bar.ts";
 import {
   DEFAULT_CONFIG_PATH,
   formatSettings,
@@ -11,14 +11,14 @@ import {
 } from "../src/config.ts";
 import { deriveContext, deriveEffort, deriveModel, deriveProject } from "../src/derive.ts";
 import { formatRate, formatTime } from "../src/format.ts";
-import { parseRateLimits, type RateLimits } from "../src/ratelimit.ts";
+import { parseCodexUsage, parseRateLimits, type RateLimits, type RateLimitWindow } from "../src/ratelimit.ts";
 import { composeSegments, createSegments } from "../src/segments.ts";
 import { TurnMeter } from "../src/throughput.ts";
 
 export default function statusline(pi: ExtensionAPI) {
   let settings = loadSettings();
   let meter = new TurnMeter();
-  let limits: RateLimits = {};
+  let limits: RateLimits = [];
   let dirty = false;
   let requestRender: (() => void) | undefined;
   let tick: ReturnType<typeof setInterval> | undefined;
@@ -63,6 +63,30 @@ export default function statusline(pi: ExtensionAPI) {
     requestRender?.();
   };
 
+  const refreshCodexLimits = async (ctx: ExtensionContext) => {
+    if (ctx.model?.provider !== "openai-codex") return;
+    try {
+      const access = await ctx.modelRegistry.authStorage.getApiKey("openai-codex");
+      const credential = ctx.modelRegistry.authStorage.get("openai-codex");
+      const accountId = credential?.type === "oauth" ? credential.accountId : undefined;
+      if (!access || typeof accountId !== "string") return;
+      const origin = new URL(ctx.model.baseUrl).origin;
+      const response = await fetch(`${origin}/backend-api/wham/usage`, {
+        headers: {
+          authorization: `Bearer ${access}`,
+          "chatgpt-account-id": accountId,
+          originator: "pi",
+        },
+        signal: AbortSignal.timeout(3_000),
+      });
+      if (!response.ok || ctx.model?.provider !== "openai-codex") return;
+      limits = parseCodexUsage(await response.json());
+      requestRender?.();
+    } catch {
+      // Best effort: unavailable account usage simply stays hidden.
+    }
+  };
+
   const sessionCost = (ctx: ExtensionContext): number => {
     let total = 0;
     for (const entry of ctx.sessionManager.getBranch()) {
@@ -101,13 +125,30 @@ export default function statusline(pi: ExtensionAPI) {
           const throughput = `${input} ${output}`;
           const time = timeLabel();
           lastRenderedTime = time;
-          const sessionBar = (label: string, limit?: RateLimits["fiveHour"]) => limit
-            ? `${theme.fg("muted", `${label} `)}${renderBar(limit.used, 8, (text) => theme.fg(barLevel(limit.used), text))}`
-            : theme.fg("muted", `${label} —`);
+          const rgbOf = (ansi: string): Rgb | undefined => {
+            const m = /38;2;(\d+);(\d+);(\d+)/.exec(ansi);
+            return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : undefined;
+          };
+          const truecolor = theme.getColorMode() === "truecolor";
+          const themeStops = (truecolor
+            ? [rgbOf(theme.getFgAnsi("success")), rgbOf(theme.getFgAnsi("warning")), rgbOf(theme.getFgAnsi("error"))]
+            : []
+          ).filter((rgb): rgb is Rgb => rgb !== undefined);
+          const stops = themeStops.length === 3 ? themeStops : DEFAULT_STOPS;
+          const barStyle: BarStyle = {
+            fill: truecolor
+              ? (text, [r, g, b]) => `\x1b[38;2;${r};${g};${b}m${text}\x1b[39m`
+              : (text, [r, g]) => theme.fg(r >= 200 && g < 120 ? "error" : r >= 200 ? "warning" : "success", text),
+            track: (text) => theme.fg("dim", text),
+          };
+          const sessionBar = (limit: RateLimitWindow) =>
+            `${theme.fg("muted", `${limit.label} `)}${renderBar(limit.used, 6, barStyle, stops)}`;
           const provider = ctx.model?.provider;
-          const session = (provider === "anthropic" || provider === "openai-codex") && ctx.modelRegistry.authStorage.get(provider)?.type === "oauth"
-            ? `${sessionBar("5h", limits.fiveHour)}${theme.fg("dim", " ")}${sessionBar("wk", limits.weekly)}`
-            : "";
+          const session = limits.length
+            ? limits.map(sessionBar).join(theme.fg("dim", " "))
+            : provider === "anthropic" && ctx.modelRegistry.authStorage.get(provider)?.type === "oauth"
+              ? theme.fg("muted", "5h — wk —")
+              : "";
 
           const line = composeSegments(createSegments(settings.segments, {
             project: () => theme.fg("muted", `📁 ${project}`),
@@ -170,9 +211,10 @@ export default function statusline(pi: ExtensionAPI) {
     stopTick();
     settings = loadSettings();
     meter = new TurnMeter();
-    limits = {};
+    limits = [];
     dirty = false;
     if (settings.footerEnabled) installFooter(ctx);
+    void refreshCodexLimits(ctx);
     await refreshDirty(ctx);
   });
 
@@ -197,6 +239,7 @@ export default function statusline(pi: ExtensionAPI) {
     if (event.message.role === "assistant") {
       meter.finishTurn({ input: event.message.usage.input, output: event.message.usage.output });
     }
+    void refreshCodexLimits(ctx);
     await refreshDirty(ctx);
     requestRender?.();
   });
@@ -212,10 +255,11 @@ export default function statusline(pi: ExtensionAPI) {
     requestRender?.();
   });
 
-  pi.on("model_select", () => {
-    limits = {};
+  pi.on("model_select", (_event, ctx) => {
+    limits = [];
     meter.resetThroughput();
     requestRender?.();
+    void refreshCodexLimits(ctx);
   });
 
   pi.on("thinking_level_select", () => requestRender?.());

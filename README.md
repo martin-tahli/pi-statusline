@@ -31,7 +31,7 @@ Segments render in this order and disappear only when disabled or inapplicable.
 | `model` | on | Active model id |
 | `effort` | on | Thinking level; hidden for non-reasoning models |
 | `context` | on | Context percent and window; hidden while usage is unknown |
-| `session` | on | Anthropic and OpenAI Codex subscription 5-hour and weekly usage pills; shows `—` until values arrive |
+| `session` | on | Available subscription usage windows; Codex labels come from the account's current limits |
 | `throughput` | on | Latest prompt and generation token rates, independently speed-colored; starts at `0 t/s` |
 | `time` | on | Live-ticking cumulative active turn time |
 
@@ -56,10 +56,10 @@ Settings persist in `~/.pi/agent/statusline.json`.
 | Data | Local models | Anthropic subscription | OpenAI Codex subscription | Other cloud/API key |
 |---|:---:|:---:|:---:|:---:|
 | Project, model, effort, context | ✓ | ✓ | ✓ | ✓ |
-| 5-hour and weekly bars | — | ✓ | ✓ | — |
+| Available usage bars | — | ✓ | ✓ | — |
 | Throughput and time | ✓ | ✓ | ✓ | ✓ |
 
-For Anthropic and OpenAI Codex OAuth subscriptions, the `5h` and `wk` labels are shown immediately. Their values are best-effort: unavailable rate-limit data retains `—`.
+Anthropic OAuth shows its known `5h` and `wk` placeholders until headers arrive. Codex fetches its current account limits and shows only the windows returned by the account, labeled by duration; absent windows are omitted rather than rendered as `—`.
 
 ## Throughput and time
 

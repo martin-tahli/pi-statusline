@@ -59,7 +59,7 @@ test("renders emoji segments with themed semantic colors", async () => {
   const ctx = {
     cwd: process.cwd(),
     model: { id: "gpt-5.6-terra", provider: "openai-codex", reasoning: true },
-    modelRegistry: { authStorage: { get: () => ({ type: "oauth" }) } },
+    modelRegistry: { authStorage: { get: () => ({ type: "oauth" }), getApiKey: async () => undefined } },
     getContextUsage: () => ({ tokens: 110_000, percent: 55, contextWindow: 200_000 }),
     hasPendingMessages: () => false,
     sessionManager: { getBranch: () => [] },
@@ -67,7 +67,15 @@ test("renders emoji segments with themed semantic colors", async () => {
       setFooter: (factory: any) => {
         footer = factory?.(
           { requestRender: () => {} },
-          { fg: (role: string, text: string) => `<${role}>${text}</${role}>` },
+          {
+            fg: (role: string, text: string) => `<${role}>${text}</${role}>`,
+            getColorMode: () => "truecolor",
+            getFgAnsi: (role: string) => ({
+              success: "\x1b[38;2;0;255;0m",
+              warning: "\x1b[38;2;255;165;0m",
+              error: "\x1b[38;2;255;0;0m",
+            } as Record<string, string>)[role] ?? "\x1b[39m",
+          },
           { getGitBranch: () => null, getAvailableProviderCount: () => 1, onBranchChange: () => () => {} },
         );
       },
@@ -78,21 +86,29 @@ test("renders emoji segments with themed semantic colors", async () => {
   statusline(pi);
   await handlers.get("session_start")!({}, ctx);
   const initial = footer!.render(500)[0]!;
-  for (const label of ["5h —", "wk —", "⚡", "↑ 0 t/s", "↓ 0 t/s", "🪟  </muted><dim>55.0%/200K"]) assert.ok(initial.includes(label));
+  for (const label of ["⚡", "↑ 0 t/s", "↓ 0 t/s", "🪟  </muted><dim>55.0%/200K"]) assert.ok(initial.includes(label));
+  assert.equal(initial.includes("5h"), false);
+  assert.equal(initial.includes("wk"), false);
   const now = Date.now();
   handlers.get("turn_start")!({ timestamp: now - 1_000 });
   await handlers.get("turn_end")!({ message: { role: "assistant", usage: { input: 850, output: 74 } } }, ctx);
   handlers.get("after_provider_response")!({ headers: {
-    "anthropic-ratelimit-unified-5h-utilization": "0.23",
-    "anthropic-ratelimit-unified-7d-utilization": "0.91",
+    "x-codex-primary-used-percent": "23",
+    "x-codex-primary-window-minutes": "60",
+    "x-codex-secondary-used-percent": "91",
+    "x-codex-secondary-window-minutes": "10080",
   } });
   const line = footer!.render(500)[0]!;
   for (const icon of ["📁", "🤖", "🧠", "🪟", "⚡", "⏳"]) assert.ok(line.includes(icon));
-  assert.ok(line.includes("<success>"));
-  assert.ok(line.includes("<error>"));
+  assert.ok(line.includes("1h"));
+  assert.ok(line.includes("wk"));
+  assert.equal(line.includes("5h"), false);
+  assert.ok(line.includes("\x1b[38;2;")); // session bars paint a truecolor gradient
+  assert.ok(line.includes("◖"));
+  assert.ok(line.includes("◗"));
   assert.ok(line.includes("<dim> > </dim>"));
   assert.equal(line.includes(" · "), false);
 
-  handlers.get("model_select")!({});
+  await handlers.get("model_select")!({}, ctx);
   assert.ok(footer!.render(500)[0]!.includes("↑ 0 t/s"));
 });
