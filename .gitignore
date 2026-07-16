@@ -10,3 +10,5 @@
 .pi-subagents/
 
 node_modules/
+*.tgz
+npm-debug.log*
