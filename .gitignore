@@ -8,6 +8,7 @@
 # Pi / ce-workflow runtime artifacts (added at init)
 .pi/
 .pi-subagents/
+.ce-workflow/
 
 node_modules/
 *.tgz
