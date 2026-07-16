@@ -58,7 +58,8 @@ test("renders emoji segments with themed semantic colors", async () => {
   } as never;
   const ctx = {
     cwd: process.cwd(),
-    model: { id: "test-model", provider: "test", reasoning: true },
+    model: { id: "gpt-5.6-terra", provider: "openai-codex", reasoning: true },
+    modelRegistry: { authStorage: { get: () => ({ type: "oauth" }) } },
     getContextUsage: () => ({ tokens: 110_000, percent: 55, contextWindow: 200_000 }),
     hasPendingMessages: () => false,
     sessionManager: { getBranch: () => [] },
@@ -76,6 +77,8 @@ test("renders emoji segments with themed semantic colors", async () => {
 
   statusline(pi);
   await handlers.get("session_start")!({}, ctx);
+  const initial = footer!.render(500)[0]!;
+  for (const label of ["5h —", "wk —", "⚡", "↑ 0 t/s", "↓ 0 t/s", "🪟  </muted><dim>55.0%/200K"]) assert.ok(initial.includes(label));
   const now = Date.now();
   handlers.get("turn_start")!({ timestamp: now - 1_000 });
   await handlers.get("turn_end")!({ message: { role: "assistant", usage: { input: 850, output: 74 } } }, ctx);
@@ -91,5 +94,5 @@ test("renders emoji segments with themed semantic colors", async () => {
   assert.equal(line.includes(" · "), false);
 
   handlers.get("model_select")!({});
-  assert.equal(footer!.render(500)[0]!.includes("⚡"), false);
+  assert.ok(footer!.render(500)[0]!.includes("↑ 0 t/s"));
 });
