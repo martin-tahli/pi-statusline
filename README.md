@@ -4,7 +4,7 @@ A configurable, single-line footer for [pi](https://github.com/earendil-works/pi
 
 ```text
 📁 pi-statusline   main ✓ > 🤖 qwen2.5-coder > 🧠 medium > 🪟  55.0%/1.0M > ⚡ ↑ 0 t/s ↓ 0 t/s > ⏳ 12m34s
-📁 pi-statusline   main ~2 ?1 ↑2 > 🤖 claude-sonnet-4-5 > 🧠 high > 🪟  30.2%/200K > 5h ╺━━────────╴ 23% ↻2h14m wk ╺━━━━──────╴ 41% ↻4d6h > ⚡ ↑ 1.2k t/s ↓ 74 t/s > ⏳ 8m02s
+📁 pi-statusline   main ~3 ↑2 > 🤖 claude-sonnet-4-5 > 🧠 high > 🪟  30.2%/200K > 5h ╺━━────────╴ 23% ↻2h14m wk ╺━━━━──────╴ 41% ↻4d6h > ⚡ ↑ 1.2k t/s ↓ 74 t/s > ⏳ 8m02s
 ```
 
 Usage is a thin continuous line with rounded half-line ends and a dark-gray track. Its bright truecolor fill gives a restrained glow, moving smoothly from neon green through vivid orange to blood red as usage rises. Each provider-reported window includes a compact live reset countdown.
@@ -35,7 +35,7 @@ At full width, segments render in the order below. When that line no longer fits
 | `throughput` | on | Latest prompt and generation token rates, independently speed-colored; starts at `0 t/s` |
 | `time` | on | Live-ticking cumulative active turn time |
 
-The Git HUD defaults on inside repositories: ` main ✓`, with only relevant counters (`+` staged, `~` modified, `?` untracked, `-` deleted, `↑` ahead, `↓` behind, `!` conflict/error). `●` covers otherwise-unclassified dirty state such as a changed submodule. Colors use the active theme's accent, success, warning, and error roles.
+The Git HUD defaults on inside repositories: ` main ✓`, with only relevant counters (`+` staged, `~` modified or untracked, `-` deleted, `↑` ahead, `↓` behind, `!` conflict/error). `●` covers otherwise-unclassified dirty state such as a changed submodule. Colors use the active theme's accent, success, warning, and error roles.
 
 `nerdFont` defaults on for the `` branch icon; toggle it off to use the Unicode `⎇` fallback. Other optional extras default off: `cost`, `sessionElapsed`, `lastTurn`, and `pending`.
 
@@ -62,7 +62,7 @@ Settings persist in `~/.pi/agent/statusline.json`.
 | Available usage bars | — | ✓ | ✓ | — |
 | Throughput and time | ✓ | ✓ | ✓ | ✓ |
 
-Anthropic OAuth restores the last limits captured in the current session, then updates them from response headers; a first run shows `5h` and `wk` placeholders. Codex fetches its current account limits and shows only the windows returned by the account, labeled by duration. Reset countdowns appear for every Claude or Codex window that reports a reset time; absent data is omitted rather than rendered as `—`.
+Anthropic OAuth fetches its current `5h` and `wk` limits when the session starts, then updates them from response headers. Codex fetches its current account limits and shows only the windows returned by the account, labeled by duration. Reset countdowns appear for every Claude or Codex window that reports a reset time; absent data is omitted rather than rendered as `—`.
 
 ## Throughput and time
 

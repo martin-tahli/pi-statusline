@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { parseCodexUsage, parseRateLimits, parseStoredRateLimits } from "../src/ratelimit.ts";
+import { parseAnthropicUsage, parseCodexUsage, parseRateLimits, parseStoredRateLimits } from "../src/ratelimit.ts";
 
 const fixture = {
   "anthropic-ratelimit-unified-5h-utilization": "0.23",
@@ -11,6 +11,16 @@ const fixture = {
 
 test("parses Anthropic unified windows", () => {
   assert.deepEqual(parseRateLimits(fixture), [
+    { label: "5h", used: 0.23, resetAt: Date.parse("2026-07-15T18:00:00Z") },
+    { label: "wk", used: 0.41, resetAt: 1_784_246_400_000 },
+  ]);
+});
+
+test("parses Anthropic OAuth usage", () => {
+  assert.deepEqual(parseAnthropicUsage({
+    five_hour: { utilization: 23, resets_at: "2026-07-15T18:00:00Z" },
+    seven_day: { utilization: 41, resets_at: 1_784_246_400 },
+  }), [
     { label: "5h", used: 0.23, resetAt: Date.parse("2026-07-15T18:00:00Z") },
     { label: "wk", used: 0.41, resetAt: 1_784_246_400_000 },
   ]);

@@ -32,6 +32,20 @@ function durationLabel(minutes: number): string {
   return `${minutes}m`;
 }
 
+export function parseAnthropicUsage(payload: unknown): RateLimits {
+  if (!payload || typeof payload !== "object") return [];
+  const usage = payload as Record<string, unknown>;
+
+  return ([["5h", usage.five_hour], ["wk", usage.seven_day]] as const).flatMap(([label, value]) => {
+    if (!value || typeof value !== "object") return [];
+    const window = value as Record<string, unknown>;
+    const utilization = window.utilization;
+    if (typeof utilization !== "number" || !Number.isFinite(utilization) || utilization < 0 || utilization > 100) return [];
+    const resetAt = reset(typeof window.resets_at === "string" || typeof window.resets_at === "number" ? window.resets_at : undefined);
+    return [{ label, used: utilization / 100, ...(resetAt === undefined ? {} : { resetAt }) }];
+  });
+}
+
 export function parseCodexUsage(payload: unknown): RateLimits {
   if (!payload || typeof payload !== "object") return [];
   const rateLimit = (payload as Record<string, unknown>).rate_limit;

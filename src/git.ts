@@ -10,7 +10,7 @@ export interface GitStatus {
 }
 
 export type GitStatusState = GitStatus | "error";
-export type GitTokenKind = "staged" | "modified" | "untracked" | "deleted" | "dirty" | "ahead" | "behind" | "clean" | "error";
+export type GitTokenKind = "staged" | "modified" | "deleted" | "dirty" | "ahead" | "behind" | "clean" | "error";
 
 export interface GitStatusToken {
   kind: GitTokenKind;
@@ -53,11 +53,11 @@ export function parseGitStatus(output: string): GitStatus {
 
 export function gitStatusTokens(status: GitStatusState): GitStatusToken[] {
   if (status === "error") return [{ kind: "error", text: "!" }];
+  const modified = status.modified + status.untracked;
   const tokens: GitStatusToken[] = [
     status.conflicts && { kind: "error", text: `!${status.conflicts}` },
     status.staged && { kind: "staged", text: `+${status.staged}` },
-    status.modified && { kind: "modified", text: `~${status.modified}` },
-    status.untracked && { kind: "untracked", text: `?${status.untracked}` },
+    modified && { kind: "modified", text: `~${modified}` },
     status.deleted && { kind: "deleted", text: `-${status.deleted}` },
     status.dirty && { kind: "dirty", text: "●" },
     status.ahead && { kind: "ahead", text: `↑${status.ahead}` },

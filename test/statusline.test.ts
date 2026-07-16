@@ -95,7 +95,7 @@ test("renders emoji segments with themed semantic colors", async () => {
   await handlers.get("session_start")!({}, ctx);
   const initial = footer!.render(500)[0]!;
   for (const label of ["⚡", "↑ 0 t/s", "↓ 0 t/s", "🪟  </muted><dim>55.0%/200K"]) assert.ok(initial.includes(label));
-  assert.ok(initial.includes("📁 pi-statusline</muted>  <accent> main</accent> <warning>~1</warning> <warning>?1</warning> <accent>↑2</accent> <warning>↓1</warning>"));
+  assert.ok(initial.includes("📁 pi-statusline</muted>  <accent> main</accent> <warning>~2</warning> <accent>↑2</accent> <warning>↓1</warning>"));
   assert.deepEqual(execCalls[0], ["git", ["status", "--porcelain=v2", "--branch", "-z"], { cwd: process.cwd(), timeout: 2_000 }]);
   assert.equal(initial.includes("5h"), false);
   assert.equal(initial.includes("wk"), false);
@@ -128,6 +128,65 @@ test("renders emoji segments with themed semantic colors", async () => {
   await handlers.get("model_select")!({}, ctx);
   assert.ok(footer!.render(500)[0]!.includes("↑ 0 t/s"));
   footer?.dispose?.();
+});
+
+test("loads Anthropic limits at session start", async () => {
+  const handlers = new Map<string, (...args: any[]) => unknown>();
+  const entries: unknown[] = [];
+  let footer: { dispose?: () => void; render: (width: number) => string[] } | undefined;
+  let request: [string, RequestInit | undefined] | undefined;
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (input, init) => {
+    request = [String(input), init];
+    return {
+      ok: true,
+      json: async () => ({
+        five_hour: { utilization: 23, resets_at: new Date(Date.now() + 3_600_000).toISOString() },
+        seven_day: { utilization: 41, resets_at: new Date(Date.now() + 86_400_000).toISOString() },
+      }),
+    } as Response;
+  }) as typeof fetch;
+  try {
+    const pi = {
+      on: (event: string, handler: (...args: any[]) => unknown) => handlers.set(event, handler),
+      registerCommand: () => {},
+      getThinkingLevel: () => "off",
+      exec: async () => ({ code: 0, stdout: "", stderr: "" }),
+      appendEntry: (customType: string, data: unknown) => entries.push({ type: "custom", customType, data }),
+    } as never;
+    const ctx = {
+      cwd: process.cwd(),
+      model: { id: "claude-opus-4-8", provider: "anthropic", reasoning: true },
+      modelRegistry: { authStorage: { get: () => ({ type: "oauth" }), getApiKey: async () => "access-token" } },
+      getContextUsage: () => undefined,
+      hasPendingMessages: () => false,
+      sessionManager: { getBranch: () => entries },
+      ui: {
+        setFooter: (factory: any) => {
+          footer = factory?.(
+            { requestRender: () => {} },
+            { fg: (_: string, text: string) => text, getColorMode: () => "16", getFgAnsi: () => "" },
+            { getGitBranch: () => null, getAvailableProviderCount: () => 1, onBranchChange: () => () => {} },
+          );
+        },
+        notify: () => {},
+      },
+    } as never;
+
+    statusline(pi);
+    await handlers.get("session_start")!({}, ctx);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    assert.equal(request?.[0], "https://api.anthropic.com/api/oauth/usage");
+    assert.equal((request?.[1]?.headers as Record<string, string>)["anthropic-beta"], "oauth-2025-04-20");
+    const line = footer!.render(500)[0]!;
+    assert.ok(line.includes("5h ╺"));
+    assert.ok(line.includes("wk ╺"));
+    assert.equal(entries.length, 1);
+  } finally {
+    footer?.dispose?.();
+    globalThis.fetch = originalFetch;
+  }
 });
 
 test("restores Anthropic limits when a session reloads", async () => {

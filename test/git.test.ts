@@ -50,8 +50,7 @@ test("formats only relevant compact Git tokens", () => {
     behind: 1,
   }), [
     { kind: "staged", text: "+2" },
-    { kind: "modified", text: "~1" },
-    { kind: "untracked", text: "?3" },
+    { kind: "modified", text: "~4" },
     { kind: "deleted", text: "-1" },
     { kind: "ahead", text: "↑2" },
     { kind: "behind", text: "↓1" },

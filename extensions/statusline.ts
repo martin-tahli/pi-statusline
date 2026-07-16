@@ -12,14 +12,13 @@ import {
 import { deriveContext, deriveEffort, deriveModel, deriveProject } from "../src/derive.ts";
 import { formatRate, formatResetCountdown, formatTime } from "../src/format.ts";
 import { gitBranchSymbol, gitStatusTokens, parseGitStatus, type GitStatusState, type GitTokenKind } from "../src/git.ts";
-import { parseCodexUsage, parseRateLimits, parseStoredRateLimits, type RateLimits, type RateLimitWindow } from "../src/ratelimit.ts";
+import { parseAnthropicUsage, parseCodexUsage, parseRateLimits, parseStoredRateLimits, type RateLimits, type RateLimitWindow } from "../src/ratelimit.ts";
 import { composeSegments, createSegments } from "../src/segments.ts";
 import { TurnMeter } from "../src/throughput.ts";
 
 const GIT_ROLES: Record<GitTokenKind, "accent" | "success" | "warning" | "error"> = {
   staged: "success",
   modified: "warning",
-  untracked: "warning",
   deleted: "error",
   dirty: "warning",
   ahead: "accent",
@@ -105,6 +104,33 @@ export default function statusline(pi: ExtensionAPI) {
       }
     }
     return [];
+  };
+
+  const refreshAnthropicLimits = async (ctx: ExtensionContext) => {
+    if (!isAnthropicOAuth(ctx)) return;
+    try {
+      const access = await ctx.modelRegistry.authStorage.getApiKey("anthropic");
+      if (!access) return;
+      const response = await fetch("https://api.anthropic.com/api/oauth/usage", {
+        headers: {
+          authorization: `Bearer ${access}`,
+          accept: "application/json",
+          "anthropic-version": "2023-06-01",
+          "anthropic-beta": "oauth-2025-04-20",
+          "user-agent": "pi-statusline",
+        },
+        signal: AbortSignal.timeout(3_000),
+      });
+      if (!response.ok || !isAnthropicOAuth(ctx)) return;
+      const next = parseAnthropicUsage(await response.json());
+      if (!next.length) return;
+      limits = next;
+      pi.appendEntry(ANTHROPIC_LIMITS_ENTRY, limits);
+      syncTick();
+      requestRender?.();
+    } catch {
+      // Best effort: unavailable account usage falls back to response headers.
+    }
   };
 
   const refreshCodexLimits = async (ctx: ExtensionContext) => {
@@ -266,6 +292,7 @@ export default function statusline(pi: ExtensionAPI) {
     limits = isAnthropicOAuth(ctx) ? restoreAnthropicLimits(ctx) : [];
     gitStatus = undefined;
     if (settings.footerEnabled) installFooter(ctx);
+    void refreshAnthropicLimits(ctx);
     void refreshCodexLimits(ctx);
     await refreshGit(ctx);
   });
@@ -323,6 +350,7 @@ export default function statusline(pi: ExtensionAPI) {
     meter.resetThroughput();
     syncTick();
     requestRender?.();
+    void refreshAnthropicLimits(ctx);
     void refreshCodexLimits(ctx);
   });
 
