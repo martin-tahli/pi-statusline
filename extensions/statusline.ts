@@ -1,6 +1,6 @@
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { renderBar } from "../src/bar.ts";
+import { barLevel, renderBar } from "../src/bar.ts";
 import {
   DEFAULT_CONFIG_PATH,
   formatSettings,
@@ -96,28 +96,32 @@ export default function statusline(pi: ExtensionAPI) {
           const model = deriveModel(ctx.model, footerData.getAvailableProviderCount() > 1);
           const cost = settings.extras.cost ? sessionCost(ctx) : undefined;
           const effort = deriveEffort(pi.getThinkingLevel(), ctx.model);
-          const throughput = [
-            snapshot.inputRate === undefined ? "" : `↑ ${formatRate(snapshot.inputRate)} t/s`,
-            snapshot.outputRate === undefined ? "" : `↓ ${formatRate(snapshot.outputRate)} t/s`,
-          ].filter(Boolean).join(" ");
+          const input = snapshot.inputRate === undefined
+            ? ""
+            : theme.fg(snapshot.inputLevel ?? "muted", `↑ ${formatRate(snapshot.inputRate)} t/s`);
+          const output = snapshot.outputRate === undefined
+            ? ""
+            : theme.fg(snapshot.outputLevel ?? "muted", `↓ ${formatRate(snapshot.outputRate)} t/s`);
+          const throughput = [input, output].filter(Boolean).join(" ");
           const time = timeLabel();
           lastRenderedTime = time;
+          const sessionBar = (label: string, limit: NonNullable<RateLimits["fiveHour"]>) =>
+            `${theme.fg("muted", `${label} `)}${renderBar(limit.used, 8, (text) => theme.fg(barLevel(limit.used), text))}`;
           const session = limits.fiveHour && limits.weekly
-            ? `${theme.fg("dim", "5h ")}${renderBar(limits.fiveHour.used, 8, (text) => theme.fg("success", text))}`
-              + `${theme.fg("dim", " · wk ")}${renderBar(limits.weekly.used, 8, (text) => theme.fg("success", text))}`
+            ? `${sessionBar("5h", limits.fiveHour)}${theme.fg("dim", " ")}${sessionBar("wk", limits.weekly)}`
             : "";
 
           const line = composeSegments(createSegments(settings.segments, {
-            project: () => theme.fg("dim", project),
-            model: () => model ? theme.fg("dim", `${model}${cost === undefined ? "" : ` $${cost.toFixed(3)}`}`) : "",
-            effort: () => effort ? theme.fg("dim", effort) : "",
+            project: () => theme.fg("muted", `📁 ${project}`),
+            model: () => model ? theme.fg("muted", `🤖 ${model}${cost === undefined ? "" : ` $${cost.toFixed(3)}`}`) : "",
+            effort: () => effort ? theme.fg("muted", `🧠 ${effort}`) : "",
             context: () => context
-              ? theme.fg(context.percent >= 90 ? "error" : context.percent >= 75 ? "warning" : "dim", context.label)
+              ? `${theme.fg("muted", "🪟 ")}${theme.fg(context.percent >= 90 ? "error" : context.percent >= 75 ? "warning" : "dim", context.label)}`
               : "",
             session: () => session,
-            throughput: () => throughput ? theme.fg("dim", throughput) : "",
-            time: () => time ? theme.fg("dim", time) : "",
-          }), width);
+            throughput: () => throughput ? `${theme.fg("muted", "⚡ ")}${throughput}` : "",
+            time: () => time ? theme.fg("muted", time) : "",
+          }), width, theme.fg("dim", " > "));
           return [line];
         },
       };
@@ -212,6 +216,7 @@ export default function statusline(pi: ExtensionAPI) {
 
   pi.on("model_select", () => {
     limits = {};
+    meter.resetThroughput();
     requestRender?.();
   });
 

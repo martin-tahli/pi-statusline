@@ -46,3 +46,50 @@ test("stops the live timer when settled or the footer is disposed", async () => 
     globalThis.clearInterval = originalClearInterval;
   }
 });
+
+test("renders emoji segments with themed semantic colors", async () => {
+  const handlers = new Map<string, (...args: any[]) => unknown>();
+  let footer: { render: (width: number) => string[] } | undefined;
+  const pi = {
+    on: (event: string, handler: (...args: any[]) => unknown) => handlers.set(event, handler),
+    registerCommand: () => {},
+    getThinkingLevel: () => "medium",
+    exec: async () => ({ code: 0, stdout: "", stderr: "" }),
+  } as never;
+  const ctx = {
+    cwd: process.cwd(),
+    model: { id: "test-model", provider: "test", reasoning: true },
+    getContextUsage: () => ({ tokens: 110_000, percent: 55, contextWindow: 200_000 }),
+    hasPendingMessages: () => false,
+    sessionManager: { getBranch: () => [] },
+    ui: {
+      setFooter: (factory: any) => {
+        footer = factory?.(
+          { requestRender: () => {} },
+          { fg: (role: string, text: string) => `<${role}>${text}</${role}>` },
+          { getGitBranch: () => null, getAvailableProviderCount: () => 1, onBranchChange: () => () => {} },
+        );
+      },
+      notify: () => {},
+    },
+  } as never;
+
+  statusline(pi);
+  await handlers.get("session_start")!({}, ctx);
+  const now = Date.now();
+  handlers.get("turn_start")!({ timestamp: now - 1_000 });
+  await handlers.get("turn_end")!({ message: { role: "assistant", usage: { input: 850, output: 74 } } }, ctx);
+  handlers.get("after_provider_response")!({ headers: {
+    "anthropic-ratelimit-unified-5h-utilization": "0.23",
+    "anthropic-ratelimit-unified-7d-utilization": "0.91",
+  } });
+  const line = footer!.render(500)[0]!;
+  for (const icon of ["📁", "🤖", "🧠", "🪟", "⚡", "⏳"]) assert.ok(line.includes(icon));
+  assert.ok(line.includes("<success>"));
+  assert.ok(line.includes("<error>"));
+  assert.ok(line.includes("<dim> > </dim>"));
+  assert.equal(line.includes(" · "), false);
+
+  handlers.get("model_select")!({});
+  assert.equal(footer!.render(500)[0]!.includes("⚡"), false);
+});
