@@ -4,10 +4,10 @@ A configurable, single-line footer for [pi](https://github.com/earendil-works/pi
 
 ```text
 📁 pi-statusline > 🤖 qwen2.5-coder > 🧠 medium > 🪟 55.0%/1.0M > ⚡ ↑ 850 t/s ↓ 62 t/s > ⏳ 12m34s
-📁 pi-statusline > 🤖 claude-sonnet-4-5 > 🧠 high > 🪟 30.2%/200K > 5h █▉ 23% wk ███▍ 41% > ⚡ ↑ 1.2k t/s ↓ 74 t/s > ⏳ 8m02s
+📁 pi-statusline > 🤖 claude-sonnet-4-5 > 🧠 high > 🪟 30.2%/200K > 5h (█▉) 23% wk (███▍) 41% > ⚡ ↑ 1.2k t/s ↓ 74 t/s > ⏳ 8m02s
 ```
 
-The rounded usage pills require a Nerd Font terminal. Their consumed fill is `success`, `warning`, or `error` from your selected pi theme; the empty portion is the terminal background.
+The terminal renders these usage bars with rounded Nerd Font endcaps; the web-safe preview uses parentheses because npm and GitHub fonts do not include those glyphs. Their consumed fill is `success`, `warning`, or `error` from your selected pi theme; the empty portion is the terminal background.
 
 ## Install
 
