@@ -40,7 +40,8 @@ test("stops the live timer when settled or the footer is disposed", async () => 
 
     handlers.get("turn_start")!({ timestamp: now });
     footer?.dispose?.();
-    assert.equal(cleared, 2);
+    // Disposing also stops the independent git-status poll interval alongside the time tick.
+    assert.equal(cleared, 3);
   } finally {
     globalThis.setInterval = originalSetInterval;
     globalThis.clearInterval = originalClearInterval;
@@ -95,8 +96,8 @@ test("renders emoji segments with themed semantic colors", async () => {
   statusline(pi);
   await handlers.get("session_start")!({}, ctx);
   const initial = footer!.render(500)[0]!;
-  for (const label of ["⚡", "↑ 0 t/s", "↓ 0 t/s", "🪟  </muted><success>55.0%/200K"]) assert.ok(initial.includes(label));
-  assert.ok(initial.includes("📁 pi-statusline</muted>  <accent>main</accent> <warning>↓1</warning> <accent>↑2</accent>"));
+  for (const label of ["⚡", "↑0", "↓0", " t/s", "🪟  </muted><success>55.0%/200K"]) assert.ok(initial.includes(label));
+  assert.ok(initial.includes("📁 pi-statusline</muted><dim> > </dim><accent>main</accent> <warning>↓1</warning> <accent>↑2</accent>"));
   assert.deepEqual(execCalls[0], ["git", ["status", "--porcelain=v2", "--branch", "-z"], { cwd: process.cwd(), timeout: 2_000 }]);
   assert.equal(initial.includes("5h"), false);
   assert.equal(initial.includes("wk"), false);
@@ -124,6 +125,7 @@ test("renders emoji segments with themed semantic colors", async () => {
   assert.equal(line.includes("◗"), false);
   assert.equal(line.split("↻").length - 1, 2);
   assert.ok(line.includes("<dim> > </dim>"));
+  assert.ok(line.includes("<dim> ></dim>"));
   assert.equal(line.includes(" · "), false);
 
   colorMode = "16";
@@ -132,7 +134,7 @@ test("renders emoji segments with themed semantic colors", async () => {
   assert.ok(semanticLine.includes("<error>╺━━━━━━━━━</error><dim>─╴</dim> 80%"));
 
   await handlers.get("model_select")!({}, ctx);
-  assert.ok(footer!.render(500)[0]!.includes("↑ 0 t/s"));
+  assert.ok(footer!.render(500)[0]!.includes("↑0"));
   footer?.dispose?.();
 });
 
@@ -245,4 +247,103 @@ test("restores Anthropic limits when a session reloads", async () => {
   assert.equal(line.includes(""), false);
   assert.equal(line.includes("⎇"), false);
   footer?.dispose?.();
+});
+
+test("estimates throughput from response text when a provider reports no usage", async () => {
+  const handlers = new Map<string, (...args: any[]) => unknown>();
+  let footer: { dispose?: () => void; render: (width: number) => string[] } | undefined;
+  const pi = {
+    on: (event: string, handler: (...args: any[]) => unknown) => handlers.set(event, handler),
+    registerCommand: () => {},
+    getThinkingLevel: () => "off",
+    exec: async () => ({ code: 0, stdout: "", stderr: "" }),
+  } as never;
+  const ctx = {
+    cwd: process.cwd(),
+    model: { id: "llama-local", provider: "llama-cpp" },
+    modelRegistry: { isUsingOAuth: () => false, getApiKeyForProvider: async () => undefined },
+    getContextUsage: () => undefined,
+    hasPendingMessages: () => false,
+    sessionManager: { getBranch: () => [] },
+    ui: {
+      setFooter: (factory: any) => {
+        footer = factory?.(
+          { requestRender: () => {} },
+          { fg: (_: string, text: string) => text, getColorMode: () => "16", getFgAnsi: () => "" },
+          { getGitBranch: () => null, getAvailableProviderCount: () => 1, onBranchChange: () => () => {} },
+        );
+      },
+      notify: () => {},
+    },
+  } as never;
+
+  statusline(pi);
+  await handlers.get("session_start")!({}, ctx);
+  handlers.get("context")!({ messages: [{ role: "user", content: "a".repeat(400) }] });
+  const now = Date.now();
+  handlers.get("turn_start")!({ timestamp: now - 1_000 });
+  await handlers.get("turn_end")!({
+    message: { role: "assistant", usage: { input: 0, output: 0 }, content: [{ type: "text", text: "b".repeat(200) }] },
+  }, ctx);
+
+  const line = footer!.render(500)[0]!;
+  assert.ok(line.includes("↑100"));
+  assert.ok(line.includes("↓50"));
+  footer?.dispose?.();
+});
+
+test("refreshes git status on an interval independent of turn activity", async () => {
+  const handlers = new Map<string, (...args: any[]) => unknown>();
+  let intervalCallback: (() => void) | undefined;
+  let intervalMs: number | undefined;
+  const originalSetInterval = globalThis.setInterval;
+  const originalClearInterval = globalThis.clearInterval;
+  globalThis.setInterval = ((fn: () => void, ms: number) => {
+    intervalCallback = fn;
+    intervalMs = ms;
+    return 1;
+  }) as typeof setInterval;
+  globalThis.clearInterval = (() => {}) as typeof clearInterval;
+  let execCount = 0;
+  try {
+    const pi = {
+      on: (event: string, handler: (...args: any[]) => unknown) => handlers.set(event, handler),
+      registerCommand: () => {},
+      getThinkingLevel: () => "off",
+      exec: async () => {
+        execCount++;
+        return { code: 0, stdout: "", stderr: "" };
+      },
+    } as never;
+    const ctx = {
+      cwd: process.cwd(),
+      ui: {
+        setFooter: (factory: any) => {
+          factory?.(
+            { requestRender: () => {} },
+            { fg: (_: string, text: string) => text },
+            { getGitBranch: () => "main", getAvailableProviderCount: () => 1, onBranchChange: () => () => {} },
+          );
+        },
+        notify: () => {},
+      },
+    } as never;
+
+    statusline(pi);
+    await handlers.get("session_start")!({}, ctx);
+    const countAfterStart = execCount;
+    assert.ok(intervalCallback, "expected a periodic git refresh interval");
+    assert.equal(intervalMs, 10_000);
+
+    intervalCallback!();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(execCount, countAfterStart + 1);
+
+    intervalCallback!();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(execCount, countAfterStart + 2);
+  } finally {
+    globalThis.setInterval = originalSetInterval;
+    globalThis.clearInterval = originalClearInterval;
+  }
 });

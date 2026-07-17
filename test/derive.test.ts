@@ -4,8 +4,8 @@ import { contextSeverity, deriveContext, deriveEffort, deriveModel, deriveProjec
 
 test("derives project, model, and effort applicability", () => {
   assert.equal(deriveProject("/tmp/pi-statusline"), "pi-statusline");
-  assert.equal(deriveModel({ id: "claude-sonnet-4-5", provider: "anthropic" }), "claude-sonnet-4-5");
-  assert.equal(deriveModel({ id: "claude-sonnet-4-5", provider: "anthropic" }, true), "(anthropic) claude-sonnet-4-5");
+  assert.equal(deriveModel({ id: "claude-sonnet-4-5" }), "claude-sonnet-4-5");
+  assert.equal(deriveModel(undefined), "");
   assert.equal(deriveEffort("off", { reasoning: false }), "");
   assert.equal(deriveEffort("off", { reasoning: true }), "off");
   assert.equal(deriveEffort("high", { reasoning: true }), "high");

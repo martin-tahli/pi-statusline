@@ -27,6 +27,27 @@ function fallbackRate(tokens: number, measuredMs: number, turnMs: number): numbe
   return duration > 0 ? tokens / (duration / 1_000) : 0;
 }
 
+// Providers that omit token usage (many local servers, e.g. llama.cpp, never report it)
+// leave counts at 0. Approximate from response text so throughput isn't stuck at 0 t/s.
+const CHARS_PER_TOKEN = 4;
+
+export function estimateTokens(chars: number): number {
+  return chars > 0 ? Math.max(1, Math.round(chars / CHARS_PER_TOKEN)) : 0;
+}
+
+export function sumTextLength(value: unknown): number {
+  if (typeof value === "string") return value.length;
+  if (Array.isArray(value)) return value.reduce((sum: number, item) => sum + sumTextLength(item), 0);
+  if (value && typeof value === "object") {
+    return Object.entries(value as Record<string, unknown>).reduce((sum, [key, part]) => {
+      if ((key === "text" || key === "thinking") && typeof part === "string") return sum + part.length;
+      if (key === "content") return sum + sumTextLength(part);
+      return sum;
+    }, 0);
+  }
+  return 0;
+}
+
 export class TurnMeter {
   private readonly clock: () => number;
   private sessionStartedAt: number;

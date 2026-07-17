@@ -14,7 +14,7 @@ import { formatRate, formatResetCountdown, formatTime } from "../src/format.ts";
 import { gitBranchSymbol, gitStatusTokens, parseGitStatus, type GitStatusState, type GitTokenKind } from "../src/git.ts";
 import { parseAnthropicUsage, parseCodexUsage, parseRateLimits, parseStoredRateLimits, type RateLimits, type RateLimitWindow } from "../src/ratelimit.ts";
 import { composeSegments, createSegments } from "../src/segments.ts";
-import { TurnMeter } from "../src/throughput.ts";
+import { estimateTokens, sumTextLength, TurnMeter } from "../src/throughput.ts";
 
 const GIT_ROLES: Record<GitTokenKind, "accent" | "success" | "warning" | "error"> = {
   ahead: "accent",
@@ -31,9 +31,13 @@ export default function statusline(pi: ExtensionAPI) {
   const ANTHROPIC_LIMITS_ENTRY = "pi-statusline:anthropic-limits";
   let requestRender: (() => void) | undefined;
   let tick: ReturnType<typeof setInterval> | undefined;
+  let gitTick: ReturnType<typeof setInterval> | undefined;
+  let anthropicRetryTimer: ReturnType<typeof setTimeout> | undefined;
+  let lastContextChars = 0;
   let lastRenderedTime = "";
   let sessionActive = false;
   let turnActive = false;
+  const ANTHROPIC_RETRY_DELAYS_MS = [1_500, 3_000];
 
   const timeLabel = () => {
     const snapshot = meter.snapshot();
@@ -66,6 +70,7 @@ export default function statusline(pi: ExtensionAPI) {
       }
       if (!turnActive && !hasUpcomingReset()) stopTick();
     }, 1_000);
+    tick.unref?.();
   };
   const syncTick = () => {
     const shouldTick = sessionActive && settings.footerEnabled
@@ -86,6 +91,33 @@ export default function statusline(pi: ExtensionAPI) {
       gitStatus = "error";
     }
     requestRender?.();
+  };
+
+  const stopGitTick = () => {
+    if (gitTick) clearInterval(gitTick);
+    gitTick = undefined;
+  };
+  const syncGitTick = (ctx: ExtensionContext) => {
+    const shouldTick = sessionActive && settings.footerEnabled && settings.extras.branch;
+    if (shouldTick && !gitTick) {
+      gitTick = setInterval(() => void refreshGit(ctx), 10_000);
+      gitTick.unref?.();
+    } else if (!shouldTick) stopGitTick();
+  };
+
+  const stopAnthropicRetry = () => {
+    if (anthropicRetryTimer) clearTimeout(anthropicRetryTimer);
+    anthropicRetryTimer = undefined;
+  };
+  const scheduleAnthropicRetry = (ctx: ExtensionContext, attempt = 0) => {
+    stopAnthropicRetry();
+    if (attempt >= ANTHROPIC_RETRY_DELAYS_MS.length) return;
+    anthropicRetryTimer = setTimeout(() => {
+      anthropicRetryTimer = undefined;
+      if (!sessionActive || limits.length || !isAnthropicOAuth(ctx)) return;
+      void refreshAnthropicLimits(ctx).then((ok) => { if (!ok) scheduleAnthropicRetry(ctx, attempt + 1); });
+    }, ANTHROPIC_RETRY_DELAYS_MS[attempt]);
+    anthropicRetryTimer.unref?.();
   };
 
   const isAnthropicOAuth = (ctx: ExtensionContext) =>
@@ -111,11 +143,11 @@ export default function statusline(pi: ExtensionAPI) {
     return [];
   };
 
-  const refreshAnthropicLimits = async (ctx: ExtensionContext) => {
-    if (!isAnthropicOAuth(ctx)) return;
+  const refreshAnthropicLimits = async (ctx: ExtensionContext): Promise<boolean> => {
+    if (!isAnthropicOAuth(ctx)) return false;
     try {
       const access = await ctx.modelRegistry.getApiKeyForProvider("anthropic");
-      if (!access) return;
+      if (!access) return false;
       const response = await fetch("https://api.anthropic.com/api/oauth/usage", {
         headers: {
           authorization: `Bearer ${access}`,
@@ -126,15 +158,17 @@ export default function statusline(pi: ExtensionAPI) {
         },
         signal: AbortSignal.timeout(3_000),
       });
-      if (!response.ok || !isAnthropicOAuth(ctx)) return;
+      if (!response.ok || !isAnthropicOAuth(ctx)) return false;
       const next = parseAnthropicUsage(await response.json());
-      if (!next.length) return;
+      if (!next.length) return false;
       limits = next;
       pi.appendEntry(ANTHROPIC_LIMITS_ENTRY, limits);
       syncTick();
       requestRender?.();
+      return true;
     } catch {
       // Best effort: unavailable account usage falls back to response headers.
+      return false;
     }
   };
 
@@ -184,6 +218,8 @@ export default function statusline(pi: ExtensionAPI) {
         dispose() {
           unsubscribe();
           stopTick();
+          stopGitTick();
+          stopAnthropicRetry();
           requestRender = undefined;
         },
         invalidate() {},
@@ -199,11 +235,11 @@ export default function statusline(pi: ExtensionAPI) {
             ].join(" ")
             : "";
           const pending = settings.extras.pending && ctx.hasPendingMessages();
-          const model = deriveModel(ctx.model, footerData.getAvailableProviderCount() > 1);
+          const model = deriveModel(ctx.model);
           const cost = settings.extras.cost ? sessionCost(ctx) : undefined;
           const effort = deriveEffort(pi.getThinkingLevel(), ctx.model);
-          const input = theme.fg(snapshot.inputLevel ?? "muted", `↑ ${formatRate(snapshot.inputRate ?? 0)} t/s`);
-          const output = theme.fg(snapshot.outputLevel ?? "muted", `↓ ${formatRate(snapshot.outputRate ?? 0)} t/s`);
+          const input = theme.fg(snapshot.inputLevel ?? "muted", `↑${formatRate(snapshot.inputRate ?? 0)}`);
+          const output = theme.fg(snapshot.outputLevel ?? "muted", `↓${formatRate(snapshot.outputRate ?? 0)}`);
           const throughput = `${input} ${output}`;
           const time = timeLabel();
           lastRenderedTime = tickLabel(time);
@@ -224,22 +260,22 @@ export default function statusline(pi: ExtensionAPI) {
           };
           const provider = ctx.model?.provider;
           const session = limits.length
-            ? limits.map(sessionBar).join(theme.fg("dim", " "))
+            ? limits.map(sessionBar).join(theme.fg("dim", " >"))
             : provider === "anthropic" && ctx.model !== undefined && ctx.modelRegistry.isUsingOAuth(ctx.model)
               ? theme.fg("muted", "5h — wk —")
               : "";
 
           const line = composeSegments(createSegments(settings.segments, {
-            project: () => `${theme.fg("muted", `📁 ${deriveProject(ctx.cwd)}`)}${git ? `  ${git}` : ""}${pending ? ` ${theme.fg("muted", "queued")}` : ""}`,
+            project: () => `${theme.fg("muted", `📁 ${deriveProject(ctx.cwd)}`)}${git ? `${theme.fg("dim", " > ")}${git}` : ""}${pending ? ` ${theme.fg("muted", "queued")}` : ""}`,
             model: () => model ? theme.fg("muted", `🤖 ${model}${cost === undefined ? "" : ` $${cost.toFixed(3)}`}`) : "",
             effort: () => effort ? theme.fg("muted", `🧠 ${effort}`) : "",
             context: () => context
               ? `${theme.fg("muted", "🪟  ")}${theme.fg(contextSeverity(context), context.label)}`
               : "",
             session: () => session,
-            throughput: () => `${theme.fg("muted", "⚡ ")}${throughput}`,
+            throughput: () => `${theme.fg("muted", "⚡")}${throughput}${theme.fg("muted", " t/s")}`,
             time: () => time ? theme.fg("muted", time) : "",
-          }), width, theme.fg("dim", " > "));
+          }), width, theme.fg("dim", " >"));
           return [line];
         },
       };
@@ -279,6 +315,7 @@ export default function statusline(pi: ExtensionAPI) {
         settings = toggleSetting(settings, aliases[rawName] ?? rawName);
         persist();
         syncTick();
+        syncGitTick(ctx);
         await refreshGit(ctx);
         requestRender?.();
         ctx.ui.notify(formatSettings(settings), "info");
@@ -292,13 +329,15 @@ export default function statusline(pi: ExtensionAPI) {
     sessionActive = true;
     turnActive = false;
     stopTick();
+    stopAnthropicRetry();
     settings = loadSettings();
     meter = new TurnMeter();
     limits = isAnthropicOAuth(ctx) ? restoreAnthropicLimits(ctx) : [];
     gitStatus = undefined;
     if (settings.footerEnabled) installFooter(ctx);
-    void refreshAnthropicLimits(ctx);
+    void refreshAnthropicLimits(ctx).then((ok) => { if (!ok) scheduleAnthropicRetry(ctx); });
     void refreshCodexLimits(ctx);
+    syncGitTick(ctx);
     await refreshGit(ctx);
   });
 
@@ -306,6 +345,8 @@ export default function statusline(pi: ExtensionAPI) {
     sessionActive = false;
     turnActive = false;
     stopTick();
+    stopGitTick();
+    stopAnthropicRetry();
   });
 
   pi.on("turn_start", (event) => {
@@ -323,10 +364,17 @@ export default function statusline(pi: ExtensionAPI) {
     if (event.message.role === "assistant") meter.markMessageEnd();
   });
 
+  pi.on("context", (event) => {
+    lastContextChars = sumTextLength(event.messages);
+  });
+
   pi.on("turn_end", async (event, ctx) => {
     turnActive = false;
     if (event.message.role === "assistant") {
-      meter.finishTurn({ input: event.message.usage.input, output: event.message.usage.output });
+      const { usage, content } = event.message;
+      const input = usage.input || estimateTokens(lastContextChars);
+      const output = usage.output || estimateTokens(sumTextLength(content));
+      meter.finishTurn({ input, output });
     }
     syncTick();
     void refreshCodexLimits(ctx);
@@ -355,7 +403,8 @@ export default function statusline(pi: ExtensionAPI) {
     meter.resetThroughput();
     syncTick();
     requestRender?.();
-    void refreshAnthropicLimits(ctx);
+    stopAnthropicRetry();
+    void refreshAnthropicLimits(ctx).then((ok) => { if (!ok) scheduleAnthropicRetry(ctx); });
     void refreshCodexLimits(ctx);
   });
 

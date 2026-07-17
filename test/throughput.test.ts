@@ -1,6 +1,20 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { rateLevel, TurnMeter } from "../src/throughput.ts";
+import { estimateTokens, rateLevel, sumTextLength, TurnMeter } from "../src/throughput.ts";
+
+test("estimates tokens from character counts for providers that omit usage", () => {
+  assert.equal(estimateTokens(0), 0);
+  assert.equal(estimateTokens(3), 1);
+  assert.equal(estimateTokens(400), 100);
+});
+
+test("sums text across nested message content, ignoring non-text fields", () => {
+  assert.equal(sumTextLength("abcd"), 4);
+  assert.equal(sumTextLength([{ type: "text", text: "ab" }, { type: "thinking", thinking: "cde" }]), 5);
+  assert.equal(sumTextLength({ role: "user", content: [{ type: "text", text: "abcdefgh" }] }), 8);
+  assert.equal(sumTextLength([{ role: "assistant", content: "hi" }, { role: "toolResult", toolCallId: "1" }]), 2);
+  assert.equal(sumTextLength(undefined), 0);
+});
 
 test("measures streamed windows and independently falls back to the whole turn", () => {
   const meter = new TurnMeter(() => 0);

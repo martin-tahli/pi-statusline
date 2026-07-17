@@ -11,9 +11,8 @@ export function deriveProject(cwd: string): string {
   return basename(cwd);
 }
 
-export function deriveModel(model?: { id: string; provider?: string }, includeProvider = false): string {
-  if (!model) return "";
-  return includeProvider && model.provider ? `(${model.provider}) ${model.id}` : model.id;
+export function deriveModel(model?: { id: string }): string {
+  return model?.id ?? "";
 }
 
 export function deriveEffort(
