@@ -19,6 +19,7 @@ import { estimateTokens, sumTextLength, TurnMeter } from "../src/throughput.ts";
 const GIT_ROLES: Record<GitTokenKind, "accent" | "success" | "warning" | "error"> = {
   ahead: "accent",
   behind: "warning",
+  dirty: "warning",
   clean: "success",
   error: "error",
 };
@@ -74,7 +75,7 @@ export default function statusline(pi: ExtensionAPI) {
   };
   const syncTick = () => {
     const shouldTick = sessionActive && settings.footerEnabled
-      && ((turnActive && settings.segments.time) || (settings.segments.session && hasUpcomingReset()));
+      && ((turnActive && (settings.segments.time || settings.segments.throughput)) || (settings.segments.session && hasUpcomingReset()));
     if (shouldTick && !tick) startTick();
     else if (!shouldTick && tick) stopTick();
   };
@@ -238,8 +239,14 @@ export default function statusline(pi: ExtensionAPI) {
           const model = deriveModel(ctx.model);
           const cost = settings.extras.cost ? sessionCost(ctx) : undefined;
           const effort = deriveEffort(pi.getThinkingLevel(), ctx.model);
-          const input = theme.fg(snapshot.inputLevel ?? "muted", `↑${formatRate(snapshot.inputRate ?? 0)}`);
-          const output = theme.fg(snapshot.outputLevel ?? "muted", `↓${formatRate(snapshot.outputRate ?? 0)}`);
+          // While the prompt is still being ingested (no output yet), show the model reading it as
+          // a live ↑ rate estimated from the known prompt size, instead of a bare elapsed timer.
+          // Once a turn settles, fall back to the rolling average across recent turns rather than
+          // freezing on that one turn's number.
+          const promptRate = snapshot.waitingMs ? estimateTokens(lastContextChars) / (snapshot.waitingMs / 1_000) : undefined;
+          const liveOutputRate = turnActive && snapshot.outputRate !== undefined ? snapshot.outputRate : undefined;
+          const input = theme.fg(snapshot.inputLevel ?? "muted", `↑${formatRate(promptRate ?? snapshot.avgInputRate ?? 0)}`);
+          const output = theme.fg(snapshot.outputLevel ?? "muted", `↓${formatRate(liveOutputRate ?? snapshot.avgOutputRate ?? 0)}`);
           const throughput = `${input} ${output}`;
           const time = timeLabel();
           lastRenderedTime = tickLabel(time);
@@ -357,7 +364,10 @@ export default function statusline(pi: ExtensionAPI) {
   });
 
   pi.on("message_update", (event) => {
-    if (event.message.role === "assistant") meter.markFirstUpdate();
+    if (event.message.role !== "assistant") return;
+    meter.markFirstUpdate();
+    meter.updateOutputChars(sumTextLength(event.message.content));
+    requestRender?.();
   });
 
   pi.on("message_end", (event) => {

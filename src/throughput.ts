@@ -13,6 +13,15 @@ export interface MeterSnapshot {
   activeMs: number;
   elapsedMs: number;
   lastTurnMs?: number;
+  /** Elapsed ms since turn start while no output has streamed yet (prompt processing). */
+  waitingMs?: number;
+  /** Rolling average over recent finished turns (smooths out single-turn noise). */
+  avgInputRate?: number;
+  avgOutputRate?: number;
+}
+
+function average(values: number[]): number | undefined {
+  return values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : undefined;
 }
 
 export function rateLevel(rate: number, history: number[], output = false): ThroughputLevel {
@@ -62,6 +71,7 @@ export class TurnMeter {
   private outputHistory: number[] = [];
   private activeMs = 0;
   private lastTurnMs?: number;
+  private liveOutputChars = 0;
 
   constructor(clock: () => number = Date.now) {
     this.clock = clock;
@@ -95,10 +105,16 @@ export class TurnMeter {
     this.outputRate = undefined;
     this.inputLevel = undefined;
     this.outputLevel = undefined;
+    this.liveOutputChars = 0;
   }
 
   markFirstUpdate(at = this.clock()): void {
     this.firstUpdateAt ??= at;
+  }
+
+  /** Running character count of the streamed assistant message, for a live rate while the turn is active. */
+  updateOutputChars(chars: number): void {
+    this.liveOutputChars = chars;
   }
 
   markMessageEnd(at = this.clock()): void {
@@ -117,6 +133,7 @@ export class TurnMeter {
     this.turnStartedAt = undefined;
     this.firstUpdateAt = undefined;
     this.messageEndedAt = undefined;
+    this.liveOutputChars = 0;
   }
 
   finishTurn(usage: TokenUsage, at = this.clock()): void {
@@ -140,17 +157,30 @@ export class TurnMeter {
     this.turnStartedAt = undefined;
     this.firstUpdateAt = undefined;
     this.messageEndedAt = undefined;
+    this.liveOutputChars = 0;
   }
 
   snapshot(now = this.clock()): MeterSnapshot {
+    const turnRunning = this.turnStartedAt !== undefined;
+    const waitingMs = turnRunning && this.firstUpdateAt === undefined
+      ? Math.max(0, now - this.turnStartedAt!)
+      : undefined;
+    // While streaming, override the last-turn rate with a live one so the UI updates continuously
+    // instead of freezing until the turn finishes.
+    const liveOutputRate = turnRunning && this.firstUpdateAt !== undefined
+      ? fallbackRate(estimateTokens(this.liveOutputChars), now - this.firstUpdateAt, 0)
+      : undefined;
     return {
       inputRate: this.inputRate,
-      outputRate: this.outputRate,
+      outputRate: liveOutputRate ?? this.outputRate,
       inputLevel: this.inputLevel,
-      outputLevel: this.outputLevel,
+      outputLevel: liveOutputRate !== undefined ? rateLevel(liveOutputRate, this.outputHistory, true) : this.outputLevel,
       activeMs: this.activeMs,
       elapsedMs: Math.max(0, now - this.sessionStartedAt),
       lastTurnMs: this.lastTurnMs,
+      waitingMs,
+      avgInputRate: average(this.inputHistory),
+      avgOutputRate: average(this.outputHistory),
     };
   }
 }

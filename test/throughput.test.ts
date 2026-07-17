@@ -36,6 +36,40 @@ test("measures streamed windows and independently falls back to the whole turn",
   assert.equal(meter.snapshot(30_000).outputRate, 0);
 });
 
+test("reports live output rate and prompt-wait time while a turn streams", () => {
+  const meter = new TurnMeter(() => 0);
+  meter.startTurn(0);
+  assert.equal(meter.snapshot(3_000).waitingMs, 3_000);
+  assert.equal(meter.snapshot(3_000).outputRate, undefined);
+
+  meter.markFirstUpdate(3_000);
+  meter.updateOutputChars(40); // 10 tokens at 4 chars/token
+  assert.equal(meter.snapshot(4_000).waitingMs, undefined);
+  assert.equal(meter.snapshot(4_000).outputRate, 10);
+
+  meter.updateOutputChars(80);
+  assert.equal(meter.snapshot(5_000).outputRate, 10);
+
+  meter.markMessageEnd(5_000);
+  meter.finishTurn({ input: 5, output: 20 }, 5_000);
+  assert.equal(meter.snapshot(5_000).waitingMs, undefined);
+  assert.equal(meter.snapshot(5_000).outputRate, 10);
+});
+
+test("averages recent turns instead of freezing on the last one", () => {
+  const meter = new TurnMeter(() => 0);
+  const finish = (start: number, rate: number) => {
+    meter.startTurn(start);
+    meter.markFirstUpdate(start);
+    meter.markMessageEnd(start + 1_000);
+    meter.finishTurn({ input: rate, output: rate }, start + 1_000);
+  };
+  finish(0, 100);
+  assert.equal(meter.snapshot(1_000).avgOutputRate, 100);
+  finish(1_000, 50);
+  assert.equal(meter.snapshot(2_000).avgOutputRate, 75);
+});
+
 test("classifies rates with directional baselines and an output floor", () => {
   assert.equal(rateLevel(68, [70, 71, 69, 70, 70]), "success");
   assert.equal(rateLevel(48, [70, 71, 69, 70, 70]), "warning");
