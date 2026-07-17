@@ -3,8 +3,8 @@
 A configurable, single-line footer for [pi](https://github.com/earendil-works/pi-mono). It uses the active pi theme for semantic colors, shows only the data available for the active model and provider, and drops lower-priority segments before truncating at narrow widths.
 
 ```text
-📁 pi-statusline  main ✓ > 🤖 qwen2.5-coder > 🧠 medium > 🪟  55.0%/1.0M > ⚡ ↑ 0 t/s ↓ 0 t/s > ⏳ 12m34s
-📁 pi-statusline  main ↑2 > 🤖 claude-sonnet-4-5 > 🧠 high > 🪟  30.2%/200K > 5h ╺━━────────╴ 23% ↻2h14m wk ╺━━━━──────╴ 41% ↻4d6h > ⚡ ↑ 1.2k t/s ↓ 74 t/s > ⏳ 8m02s
+📁 pi-statusline  main ✓ > 🤖 qwen36-coder > 🧠 medium > 🪟  55.0%/1.0M > ⚡ ↑ 0 t/s ↓ 0 t/s > ⏳ 12m34s
+📁 pi-statusline  main ↑2 > 🤖 claude-sonnet-5 > 🧠 high > 🪟  30.2%/200K > 5h ╺━━────────╴ 23% ↻2h14m wk ╺━━━━──────╴ 41% ↻4d6h > ⚡ ↑ 1.2k t/s ↓ 74 t/s > ⏳ 8m02s
 ```
 
 Usage is a thin continuous line with rounded half-line ends and a dark-gray track. Its bright truecolor fill gives a restrained glow, moving smoothly from neon green through vivid orange to blood red as usage rises. Each provider-reported window includes a compact live reset countdown.
