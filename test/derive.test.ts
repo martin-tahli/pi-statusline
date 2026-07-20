@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { contextSeverity, deriveContext, deriveEffort, deriveModel, deriveProject } from "../src/derive.ts";
+import { contextSeverity, deriveContext, deriveEffort, deriveModel, deriveProject, isLocalEndpoint } from "../src/derive.ts";
 
 test("derives project, model, and effort applicability", () => {
   assert.equal(deriveProject("/tmp/pi-statusline"), "pi-statusline");
@@ -9,6 +9,16 @@ test("derives project, model, and effort applicability", () => {
   assert.equal(deriveEffort("off", { reasoning: false }), "");
   assert.equal(deriveEffort("off", { reasoning: true }), "off");
   assert.equal(deriveEffort("high", { reasoning: true }), "high");
+});
+
+test("treats loopback/LAN endpoints as local, hosted providers as not", () => {
+  assert.equal(isLocalEndpoint("http://localhost:11434/v1"), true);
+  assert.equal(isLocalEndpoint("http://127.0.0.1:8080"), true);
+  assert.equal(isLocalEndpoint("http://192.168.1.50:1234/v1"), true);
+  assert.equal(isLocalEndpoint("https://api.anthropic.com"), false);
+  assert.equal(isLocalEndpoint("https://api.openai.com/v1"), false);
+  assert.equal(isLocalEndpoint(undefined), false);
+  assert.equal(isLocalEndpoint("not a url"), false);
 });
 
 test("context uses provided percent/window and hides unavailable values", () => {

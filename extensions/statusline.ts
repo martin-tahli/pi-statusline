@@ -9,7 +9,7 @@ import {
   toggleSetting,
   type Settings,
 } from "../src/config.ts";
-import { contextSeverity, deriveContext, deriveEffort, deriveModel, deriveProject } from "../src/derive.ts";
+import { contextSeverity, deriveContext, deriveEffort, deriveModel, deriveProject, isLocalEndpoint } from "../src/derive.ts";
 import { formatRate, formatResetCountdown, formatTime } from "../src/format.ts";
 import { gitBranchSymbol, gitStatusTokens, parseGitStatus, type GitStatusState, type GitTokenKind } from "../src/git.ts";
 import { parseAnthropicUsage, parseCodexUsage, parseRateLimits, parseStoredRateLimits, type RateLimits, type RateLimitWindow } from "../src/ratelimit.ts";
@@ -243,9 +243,14 @@ export default function statusline(pi: ExtensionAPI) {
           // a live ↑ rate estimated from the known prompt size, instead of a bare elapsed timer.
           // Once a turn settles, fall back to the rolling average across recent turns rather than
           // freezing on that one turn's number.
-          const promptRate = snapshot.waitingMs ? estimateTokens(lastContextChars) / (snapshot.waitingMs / 1_000) : undefined;
+          // Prompt-processing rate (↑) is only meaningful for local inference; over a network it
+          // just tracks prompt size (a 7.4k-token prompt reads as a bogus "7.4k t/s"), so hosted
+          // providers show ↑0. Output generation rate (↓) is the useful metric everywhere.
+          const localModel = isLocalEndpoint(ctx.model?.baseUrl);
+          const promptRate = localModel && snapshot.waitingMs ? estimateTokens(lastContextChars) / (snapshot.waitingMs / 1_000) : undefined;
+          const inputRate = localModel ? (promptRate ?? snapshot.avgInputRate ?? 0) : 0;
           const liveOutputRate = turnActive && snapshot.outputRate !== undefined ? snapshot.outputRate : undefined;
-          const input = theme.fg(snapshot.inputLevel ?? "muted", `↑${formatRate(promptRate ?? snapshot.avgInputRate ?? 0)}`);
+          const input = theme.fg(localModel ? (snapshot.inputLevel ?? "muted") : "muted", `↑${formatRate(inputRate)}`);
           const output = theme.fg(snapshot.outputLevel ?? "muted", `↓${formatRate(liveOutputRate ?? snapshot.avgOutputRate ?? 0)}`);
           const throughput = `${input} ${output}`;
           const time = timeLabel();

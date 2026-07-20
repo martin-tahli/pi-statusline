@@ -66,7 +66,7 @@ Anthropic OAuth fetches its current `5h` and `wk` limits when the session starts
 
 ## Throughput and time
 
-`↑` is input tokens divided by the prompt-processing window from turn start to first streamed update. `↓` is output tokens divided by the generation window from first update to message end, so tool execution time is excluded. Both rates start at `0 t/s` and remain visible while idle. If either streaming window is unavailable, that direction falls back to its token count over the whole turn.
+`↓` is output tokens divided by the generation window from first update to message end, so tool execution time is excluded — the useful throughput number for any provider. `↑` is the prompt-processing rate (input tokens divided by the window from turn start to first streamed update). That rate is only meaningful for **local** models (loopback/LAN endpoint); over a network it collapses to request latency plus prompt caching and just tracks prompt size, so hosted providers show `↑0`. Both rates start at `0 t/s` and remain visible while idle. If the generation window is unavailable, `↓` falls back to output tokens over the whole turn.
 
 Each direction compares to its own recent same-model baseline: green at or above 90%, orange from 60–89%, and red below 60%. Until three samples are available it stays neutral; output at or below 15 t/s is always red. Changing models resets both rates and baselines.
 

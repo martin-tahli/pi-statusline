@@ -15,6 +15,28 @@ export function deriveModel(model?: { id: string }): string {
   return model?.id ?? "";
 }
 
+// The prompt-processing "rate" (input tokens ÷ time-to-first-token) is only a real, measurable
+// number for local inference. Over a network it collapses to request latency + prompt caching,
+// so it just tracks prompt size (a 7.4k-token prompt reads as a bogus "7.4k t/s"). Detect local
+// endpoints by loopback/LAN host so hosted providers can suppress the meaningless rate.
+export function isLocalEndpoint(baseUrl?: string): boolean {
+  if (!baseUrl) return false;
+  let host: string;
+  try {
+    host = new URL(baseUrl).hostname;
+  } catch {
+    return false;
+  }
+  return host === "localhost"
+    || host === "127.0.0.1"
+    || host === "::1"
+    || host === "0.0.0.0"
+    || host.endsWith(".local")
+    || /^10\./.test(host)
+    || /^192\.168\./.test(host)
+    || /^172\.(1[6-9]|2\d|3[01])\./.test(host);
+}
+
 export function deriveEffort(
   level: string,
   model?: { reasoning?: boolean },

@@ -260,7 +260,7 @@ test("estimates throughput from response text when a provider reports no usage",
   } as never;
   const ctx = {
     cwd: process.cwd(),
-    model: { id: "llama-local", provider: "llama-cpp" },
+    model: { id: "llama-local", provider: "llama-cpp", baseUrl: "http://localhost:8080/v1" },
     modelRegistry: { isUsingOAuth: () => false, getApiKeyForProvider: async () => undefined },
     getContextUsage: () => undefined,
     hasPendingMessages: () => false,
@@ -289,6 +289,48 @@ test("estimates throughput from response text when a provider reports no usage",
   const line = footer!.render(500)[0]!;
   assert.ok(line.includes("↑100"));
   assert.ok(line.includes("↓50"));
+  footer?.dispose?.();
+});
+
+test("suppresses the prompt-processing rate (↑0) for hosted providers", async () => {
+  const handlers = new Map<string, (...args: any[]) => unknown>();
+  let footer: { dispose?: () => void; render: (width: number) => string[] } | undefined;
+  const pi = {
+    on: (event: string, handler: (...args: any[]) => unknown) => handlers.set(event, handler),
+    registerCommand: () => {},
+    getThinkingLevel: () => "off",
+    exec: async () => ({ code: 0, stdout: "", stderr: "" }),
+  } as never;
+  const ctx = {
+    cwd: process.cwd(),
+    model: { id: "claude-sonnet-4-5", provider: "anthropic", baseUrl: "https://api.anthropic.com" },
+    modelRegistry: { isUsingOAuth: () => false, getApiKeyForProvider: async () => undefined },
+    getContextUsage: () => undefined,
+    hasPendingMessages: () => false,
+    sessionManager: { getBranch: () => [] },
+    ui: {
+      setFooter: (factory: any) => {
+        footer = factory?.(
+          { requestRender: () => {} },
+          { fg: (_: string, text: string) => text, getColorMode: () => "16", getFgAnsi: () => "" },
+          { getGitBranch: () => null, getAvailableProviderCount: () => 1, onBranchChange: () => () => {} },
+        );
+      },
+      notify: () => {},
+    },
+  } as never;
+
+  statusline(pi);
+  await handlers.get("session_start")!({}, ctx);
+  handlers.get("context")!({ messages: [{ role: "user", content: "a".repeat(30_000) }] });
+  const now = Date.now();
+  handlers.get("turn_start")!({ timestamp: now - 1_000 });
+  await handlers.get("turn_end")!({
+    message: { role: "assistant", usage: { input: 7_400, output: 200 }, content: [{ type: "text", text: "b".repeat(800) }] },
+  }, ctx);
+
+  const line = footer!.render(500)[0]!;
+  assert.ok(line.includes("↑0"), `expected ↑0 for hosted provider, got: ${line}`);
   footer?.dispose?.();
 });
 
