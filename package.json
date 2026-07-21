@@ -1,6 +1,6 @@
 {
   "name": "@shvax/pi-statusline",
-  "version": "0.5.1",
+  "version": "0.6.0",
   "description": "Configurable single-line status footer for pi",
   "type": "module",
   "license": "MIT",
