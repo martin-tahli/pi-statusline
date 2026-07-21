@@ -9,8 +9,8 @@ import {
   toggleSetting,
   type Settings,
 } from "../src/config.ts";
-import { contextSeverity, deriveContext, deriveEffort, deriveModel, deriveProject, isLocalEndpoint } from "../src/derive.ts";
-import { formatRate, formatResetCountdown, formatTime } from "../src/format.ts";
+import { billingMode, contextSeverity, deriveContext, deriveEffort, deriveModel, deriveProject, isLocalEndpoint } from "../src/derive.ts";
+import { formatRate, formatResetCountdown, formatTime, formatWindow } from "../src/format.ts";
 import { gitBranchSymbol, gitStatusTokens, parseGitStatus, type GitStatusState, type GitTokenKind } from "../src/git.ts";
 import { parseAnthropicUsage, parseCodexUsage, parseRateLimits, parseStoredRateLimits, type RateLimits, type RateLimitWindow } from "../src/ratelimit.ts";
 import { composeSegments, createSegments } from "../src/segments.ts";
@@ -197,14 +197,19 @@ export default function statusline(pi: ExtensionAPI) {
     }
   };
 
-  const sessionCost = (ctx: ExtensionContext): number => {
-    let total = 0;
+  // Sum token usage across the session's assistant messages. "input" folds cached and
+  // cache-write tokens into the prompt total; cost.total already reflects the cache discount.
+  const sessionTotals = (ctx: ExtensionContext): { input: number; output: number; cost: number } => {
+    let input = 0, output = 0, cost = 0;
     for (const entry of ctx.sessionManager.getBranch()) {
       if (entry.type === "message" && entry.message.role === "assistant") {
-        total += (entry.message as AssistantMessage).usage.cost.total;
+        const usage = (entry.message as AssistantMessage).usage;
+        input += usage.input + usage.cacheRead + usage.cacheWrite;
+        output += usage.output;
+        cost += usage.cost.total;
       }
     }
-    return total;
+    return { input, output, cost };
   };
 
   const installFooter = (ctx: ExtensionContext) => {
@@ -237,22 +242,37 @@ export default function statusline(pi: ExtensionAPI) {
             : "";
           const pending = settings.extras.pending && ctx.hasPendingMessages();
           const model = deriveModel(ctx.model);
-          const cost = settings.extras.cost ? sessionCost(ctx) : undefined;
           const effort = deriveEffort(pi.getThinkingLevel(), ctx.model);
-          // While the prompt is still being ingested (no output yet), show the model reading it as
-          // a live ↑ rate estimated from the known prompt size, instead of a bare elapsed timer.
-          // Once a turn settles, fall back to the rolling average across recent turns rather than
-          // freezing on that one turn's number.
-          // Prompt-processing rate (↑) is only meaningful for local inference; over a network it
-          // just tracks prompt size (a 7.4k-token prompt reads as a bogus "7.4k t/s"), so hosted
-          // providers show ↑0. Output generation rate (↓) is the useful metric everywhere.
           const localModel = isLocalEndpoint(ctx.model?.baseUrl);
-          const promptRate = localModel && snapshot.waitingMs ? estimateTokens(lastContextChars) / (snapshot.waitingMs / 1_000) : undefined;
-          const inputRate = localModel ? (promptRate ?? snapshot.avgInputRate ?? 0) : 0;
+          const subscription = ctx.model !== undefined
+            && (ctx.model.provider === "openai-codex" || ctx.modelRegistry.isUsingOAuth(ctx.model));
+          const mode = billingMode(localModel, subscription);
+          // Walk the branch for totals only when something actually shows them (opt-in cost, or the
+          // API token ledger while idle), not on every render tick.
+          const needTotals = settings.extras.cost || (mode === "api" && !turnActive);
+          const totals = needTotals ? sessionTotals(ctx) : undefined;
+          const cost = settings.extras.cost ? totals!.cost : undefined;
           const liveOutputRate = turnActive && snapshot.outputRate !== undefined ? snapshot.outputRate : undefined;
-          const input = theme.fg(localModel ? (snapshot.inputLevel ?? "muted") : "muted", `↑${formatRate(inputRate)}`);
-          const output = theme.fg(snapshot.outputLevel ?? "muted", `↓${formatRate(liveOutputRate ?? snapshot.avgOutputRate ?? 0)}`);
-          const throughput = `${input} ${output}`;
+          const outputRateLabel = () => theme.fg(snapshot.outputLevel ?? "muted", `↓${formatRate(liveOutputRate ?? snapshot.avgOutputRate ?? 0)}`);
+          // The ⚡ segment adapts to the billing model:
+          //  local        → live ↑/↓ token rates (the rate is the real, measurable point)
+          //  hosted+turn  → live ↓ speed pulse ("is it working, how fast") for API and subscription
+          //  subscription → idle: nothing; the 5h/wk quota bars are the real budget meter
+          //  api          → idle: 🧾 running token totals + session cost (what you're spending)
+          const throughput = (() => {
+            if (mode === "local") {
+              // While the prompt is still ingesting, estimate ↑ from the known prompt size; once a
+              // turn settles, fall back to the rolling average rather than freezing on one number.
+              const promptRate = snapshot.waitingMs ? estimateTokens(lastContextChars) / (snapshot.waitingMs / 1_000) : undefined;
+              const inputRate = promptRate ?? snapshot.avgInputRate ?? 0;
+              const input = theme.fg(snapshot.inputLevel ?? "muted", `↑${formatRate(inputRate)}`);
+              return `${theme.fg("muted", "⚡")}${input} ${outputRateLabel()}${theme.fg("muted", " t/s")}`;
+            }
+            if (turnActive) return `${theme.fg("muted", "⚡")}${outputRateLabel()}${theme.fg("muted", " t/s")}`;
+            if (mode === "subscription") return "";
+            if (!totals || (!totals.input && !totals.output)) return "";
+            return theme.fg("muted", `🧾 ↑${formatWindow(totals.input)} ↓${formatWindow(totals.output)} $${totals.cost.toFixed(3)}`);
+          })();
           const time = timeLabel();
           lastRenderedTime = tickLabel(time);
           const truecolor = theme.getColorMode() === "truecolor";
@@ -285,7 +305,7 @@ export default function statusline(pi: ExtensionAPI) {
               ? `${theme.fg("muted", "🪟  ")}${theme.fg(contextSeverity(context), context.label)}`
               : "",
             session: () => session,
-            throughput: () => `${theme.fg("muted", "⚡")}${throughput}${theme.fg("muted", " t/s")}`,
+            throughput: () => throughput,
             time: () => time ? theme.fg("muted", time) : "",
           }), width, theme.fg("dim", " >"));
           return [line];

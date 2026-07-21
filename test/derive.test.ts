@@ -1,6 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { contextSeverity, deriveContext, deriveEffort, deriveModel, deriveProject, isLocalEndpoint } from "../src/derive.ts";
+import { billingMode, contextSeverity, deriveContext, deriveEffort, deriveModel, deriveProject, isLocalEndpoint } from "../src/derive.ts";
+
+test("billing mode prefers local, then subscription, then api", () => {
+  assert.equal(billingMode(true, false), "local");
+  assert.equal(billingMode(true, true), "local");
+  assert.equal(billingMode(false, true), "subscription");
+  assert.equal(billingMode(false, false), "api");
+});
 
 test("derives project, model, and effort applicability", () => {
   assert.equal(deriveProject("/tmp/pi-statusline"), "pi-statusline");

@@ -96,7 +96,9 @@ test("renders emoji segments with themed semantic colors", async () => {
   statusline(pi);
   await handlers.get("session_start")!({}, ctx);
   const initial = footer!.render(500)[0]!;
-  for (const label of ["⚡", "↑0", "↓0", " t/s", "🪟  </muted><success>55.0%/200K"]) assert.ok(initial.includes(label));
+  // Subscription (openai-codex + OAuth) hides the throughput ledger at idle; quota bars carry it.
+  assert.equal(initial.includes(" t/s"), false);
+  for (const label of ["🪟  </muted><success>55.0%/200K"]) assert.ok(initial.includes(label));
   assert.ok(initial.includes("📁 pi-statusline</muted><dim> > </dim><accent>main</accent> <warning>● 2</warning> <warning>↓1</warning> <accent>↑2</accent>"));
   assert.deepEqual(execCalls[0], ["git", ["status", "--porcelain=v2", "--branch", "-z"], { cwd: process.cwd(), timeout: 2_000 }]);
   assert.equal(initial.includes("5h"), false);
@@ -114,7 +116,7 @@ test("renders emoji segments with themed semantic colors", async () => {
     "x-codex-secondary-reset-at": resetAt,
   } }, ctx);
   const line = footer!.render(1_000)[0]!;
-  for (const icon of ["📁", "🤖", "🧠", "🪟", "⚡", "⏳"]) assert.ok(line.includes(icon));
+  for (const icon of ["📁", "🤖", "🧠", "🪟", "⏳"]) assert.ok(line.includes(icon));
   assert.ok(line.includes("1h"));
   assert.ok(line.includes("wk"));
   assert.equal(line.includes("5h"), false);
@@ -134,7 +136,7 @@ test("renders emoji segments with themed semantic colors", async () => {
   assert.ok(semanticLine.includes("<error>╺━━━━━━━━━</error><dim>─╴</dim> 80%"));
 
   await handlers.get("model_select")!({}, ctx);
-  assert.ok(footer!.render(500)[0]!.includes("↑0"));
+  assert.equal(footer!.render(500)[0]!.includes(" t/s"), false);
   footer?.dispose?.();
 });
 
@@ -292,7 +294,7 @@ test("estimates throughput from response text when a provider reports no usage",
   footer?.dispose?.();
 });
 
-test("suppresses the prompt-processing rate (↑0) for hosted providers", async () => {
+test("shows an API token ledger (not a bogus prompt rate) for hosted providers when idle", async () => {
   const handlers = new Map<string, (...args: any[]) => unknown>();
   let footer: { dispose?: () => void; render: (width: number) => string[] } | undefined;
   const pi = {
@@ -307,7 +309,15 @@ test("suppresses the prompt-processing rate (↑0) for hosted providers", async 
     modelRegistry: { isUsingOAuth: () => false, getApiKeyForProvider: async () => undefined },
     getContextUsage: () => undefined,
     hasPendingMessages: () => false,
-    sessionManager: { getBranch: () => [] },
+    sessionManager: {
+      getBranch: () => [{
+        type: "message",
+        message: {
+          role: "assistant",
+          usage: { input: 7_400, output: 200, cacheRead: 0, cacheWrite: 0, cost: { total: 0.021 } },
+        },
+      }],
+    },
     ui: {
       setFooter: (factory: any) => {
         footer = factory?.(
@@ -328,9 +338,12 @@ test("suppresses the prompt-processing rate (↑0) for hosted providers", async 
   await handlers.get("turn_end")!({
     message: { role: "assistant", usage: { input: 7_400, output: 200 }, content: [{ type: "text", text: "b".repeat(800) }] },
   }, ctx);
+  handlers.get("agent_settled")!({});
 
   const line = footer!.render(500)[0]!;
-  assert.ok(line.includes("↑0"), `expected ↑0 for hosted provider, got: ${line}`);
+  assert.ok(line.includes("🧾"), `expected API token ledger, got: ${line}`);
+  assert.ok(line.includes("$0.021"), `expected session cost, got: ${line}`);
+  assert.ok(!/↑\d+ ↓\d+ t\/s/.test(line), `should not show a bogus prompt rate, got: ${line}`);
   footer?.dispose?.();
 });
 
