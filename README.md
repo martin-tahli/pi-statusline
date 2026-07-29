@@ -45,7 +45,7 @@ The Git HUD defaults on inside repositories: `main ✓`. It shows `↓` incoming
 ## Configure
 
 ```text
-/statusline                         list settings
+/statusline                         open provider tracking settings
 /statusline on                      enable the custom footer
 /statusline off                     restore pi's built-in footer
 /statusline toggle throughput       toggle a segment
@@ -55,7 +55,9 @@ The Git HUD defaults on inside repositories: `main ✓`. It shows `↓` incoming
 /statusline toggle lastTurn         show the latest turn duration
 ```
 
-Settings persist in `~/.pi/agent/statusline.json`.
+Settings persist in `~/.pi/agent/statusline.json`. The provider stack is on by default: it includes only providers returned by pi's configured `getAvailable()` models, selects newly configured providers, and keeps saved selection and order. The bare command opens controls for the stack, selection, order, shared usage/reset defaults, and sparse per-provider overrides; the argument commands above remain compatible.
+
+Fresh selected providers render in that saved order beneath the active-session line. Each row keeps its provider's own reported windows; an override changes only that metric and otherwise inherits the shared default. A row is hidden when both enabled metrics are unavailable, or when its authorized usage is missing, unavailable, expired, or stale; it returns after a successful background retry. The active provider's quota stays on its row while visible and returns to the session line otherwise.
 
 ## Provider applicability
 
@@ -68,7 +70,7 @@ Settings persist in `~/.pi/agent/statusline.json`.
 | Streaming `↓` speed pulse | ✓ | ✓ | ✓ | ✓ |
 | Time | ✓ | ✓ | ✓ | ✓ |
 
-Anthropic OAuth fetches its current `5h` and `wk` limits when the session starts, then updates them from response headers. Codex fetches its current account limits and shows only the windows returned by the account, labeled by duration. Reset countdowns appear for every Claude or Codex window that reports a reset time; absent data is omitted rather than rendered as `—`.
+Anthropic OAuth fetches its current `5h` and `wk` limits when the session starts, then updates them from response headers. Codex fetches its current account limits and shows only the windows returned by the account, labeled by duration. Reset countdowns appear for every Claude or Codex window that reports a reset time; absent data is omitted rather than rendered as `—`. Usage is shown only from provider-specific sources pi already authorizes; providers without a permitted source have no quota row.
 
 ## Throughput and time
 

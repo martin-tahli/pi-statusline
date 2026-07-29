@@ -1208,17 +1208,23 @@
       ],
       "dependencyEdges": [],
       "description": "Complete the tracer bullet by rendering each fresh usable selected provider beneath the unchanged active-session line, applying saved order and metric inheritance, suppressing active-provider quota only when its row is actually visible, and documenting the shipped behavior and limitations.",
-      "evidence": [],
+      "evidence": [
+        {
+          "closeEvidence": "Completed by coded inline work path"
+        }
+      ],
       "id": "work-1.5",
       "labels": [],
       "notes": [
-        "wo:execution-slice; source: docs/plans/2026-07-29-001-feat-multi-provider-model-tracking-plan.md; expand-contract slice 3/3. Covered plan parts: R3, R5, R8-R10, R12 render integration, R14; AE1 display subset, AE4-AE7; F1 and F3 rendering. Reuse the discovery, config, and refresh states from slices 1-2; do not add a fixed provider catalog, synthetic quota, scraping, or extra credentials."
+        "wo:execution-slice; source: docs/plans/2026-07-29-001-feat-multi-provider-model-tracking-plan.md; expand-contract slice 3/3. Covered plan parts: R3, R5, R8-R10, R12 render integration, R14; AE1 display subset, AE4-AE7; F1 and F3 rendering. Reuse the discovery, config, and refresh states from slices 1-2; do not add a fixed provider catalog, synthetic quota, scraping, or extra credentials.",
+        "--text Implemented provider footer rows in extensions/statusline.ts and documented the stack in README.md. Added focused footer coverage in test/statusline.test.ts for active-session-first rendering, quota dedupe, provider windows, and narrow-width row retention.\n\nVerification passed: node --test test/statusline.test.ts; npm test (46 tests); npm run typecheck; ensure-no-staged --allow-work-store. Existing test/providers.test.ts covers independent timed-out/fresh coordinator refresh and recovery.\n\nResult: ready for review/commit. No remaining blockers.",
+        "wo:verify-check PASS\nCommand: npm test && npm run typecheck\nOutput:  while a turn streams (0.1618ms)\n✔ averages recent turns instead of freezing on the last one (0.1171ms)\n✔ classifies rates with directional baselines and an output floor (0.0916ms)\n✔ caps histories and resets displayed throughput on model changes (0.1594ms)\n✔ finalizes active time without preserving rates (0.1027ms)\n✔ retains idle result, resets on turn start, and accumulates active time (0.2075ms)\nℹ tests 46\nℹ suites 0\nℹ pass 46\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 980.0358"
       ],
       "parentId": "work-1",
-      "status": "open",
+      "status": "closed",
       "title": "Render fresh ordered provider rows with active quota dedupe",
       "type": "task",
-      "updatedAt": "2026-07-29T14:50:43.657Z"
+      "updatedAt": "2026-07-29T22:26:35.233Z"
     }
   },
   "metadata": {
@@ -1228,7 +1234,7 @@
       "recordCount": 11,
       "sourceFingerprint": "716c6815dbadf79dc70c6d01af6a643e7bcf36809c4af4405175a0d2a56789f1"
     },
-    "updatedAt": "2026-07-29T22:23:00.584Z"
+    "updatedAt": "2026-07-29T22:26:35.233Z"
   },
   "schemaVersion": 1
 }

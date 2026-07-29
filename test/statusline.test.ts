@@ -347,6 +347,60 @@ test("shows an API token ledger (not a bogus prompt rate) for hosted providers w
   footer?.dispose?.();
 });
 
+test("renders a fresh active provider beneath the session line without duplicate quota", async () => {
+  const handlers = new Map<string, (...args: any[]) => unknown>();
+  let footer: { dispose?: () => void; render: (width: number) => string[] } | undefined;
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () => new Response(JSON.stringify({
+    five_hour: { utilization: 25, resets_at: Date.now() + 3_600_000 },
+    seven_day: { utilization: 50, resets_at: Date.now() + 86_400_000 },
+  }), { status: 200 })) as typeof fetch;
+  try {
+    const pi = {
+      on: (event: string, handler: (...args: any[]) => unknown) => handlers.set(event, handler),
+      registerCommand: () => {},
+      getThinkingLevel: () => "off",
+      exec: async () => ({ code: 0, stdout: "", stderr: "" }),
+      appendEntry: () => {},
+    } as never;
+    const ctx = {
+      cwd: process.cwd(),
+      model: { id: "claude", provider: "anthropic" },
+      modelRegistry: {
+        isUsingOAuth: () => true,
+        getApiKeyForProvider: async () => "access-token",
+        getAvailable: () => [{ provider: "anthropic" }],
+      },
+      getContextUsage: () => undefined,
+      hasPendingMessages: () => false,
+      sessionManager: { getBranch: () => [] },
+      ui: {
+        setFooter: (factory: any) => {
+          footer = factory?.(
+            { requestRender: () => {} },
+            { fg: (_: string, text: string) => text, getColorMode: () => "16" },
+            { getGitBranch: () => null, getAvailableProviderCount: () => 1, onBranchChange: () => () => {} },
+          );
+        },
+        notify: () => {},
+      },
+    } as never;
+
+    statusline(pi);
+    await handlers.get("session_start")!({}, ctx);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    const lines = footer!.render(500);
+    assert.equal(lines.length, 2);
+    assert.equal(lines[0]!.includes("5h"), false, `active session line duplicated quota: ${lines[0]}`);
+    assert.ok(lines[1]!.includes("anthropic 5h"), `missing provider row: ${lines[1]}`);
+    assert.ok(lines[1]!.includes("wk"), `provider windows were not preserved: ${lines[1]}`);
+    assert.equal(footer!.render(1).length, 2, "narrow widths must retain the provider row");
+  } finally {
+    footer?.dispose?.();
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("refreshes git status on an interval independent of turn activity", async () => {
   const handlers = new Map<string, (...args: any[]) => unknown>();
   let intervalCallback: (() => void) | undefined;

@@ -1,6 +1,6 @@
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { getSettingsListTheme, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { Container, type SettingItem, SettingsList } from "@earendil-works/pi-tui";
+import { Container, type SettingItem, SettingsList, truncateToWidth } from "@earendil-works/pi-tui";
 import { renderBar, type BarStyle } from "../src/bar.ts";
 import {
   DEFAULT_CONFIG_PATH,
@@ -300,8 +300,24 @@ export default function statusline(pi: ExtensionAPI) {
               : theme.fg("dim", ` ↻ ${formatResetCountdown(limit.resetAt)}`);
             return `${theme.fg("muted", `${limit.label} `)}${renderBar(limit.used, 12, barStyle(limit.used))}${reset}`;
           };
+          const tracking = settings.providerTracking;
+          const providerRows = !tracking.enabled ? [] : tracking.order.flatMap((provider) => {
+            if (!tracking.selected[provider]) return [];
+            const health = providerRefresh?.get(provider);
+            if (health?.state !== "fresh") return [];
+            const metrics = { ...tracking.metrics, ...tracking.overrides[provider] };
+            const windows = health.usage.limits.flatMap((limit) => {
+              const usage = metrics.usage ? renderBar(limit.used, 12, barStyle(limit.used)) : "";
+              const reset = metrics.reset && limit.resetAt !== undefined
+                ? theme.fg("dim", ` ↻ ${formatResetCountdown(limit.resetAt)}`)
+                : "";
+              return usage || reset ? [`${theme.fg("muted", `${limit.label} `)}${usage}${reset}`] : [];
+            });
+            return windows.length ? [{ provider, line: `${theme.fg("muted", `${provider} `)}${windows.join(theme.fg("dim", " >"))}` }] : [];
+          });
+          const activeProviderHasRow = providerRows.some((row) => row.provider === ctx.model?.provider);
           const provider = ctx.model?.provider;
-          const session = limits.length
+          const session = activeProviderHasRow ? "" : limits.length
             ? limits.map(sessionBar).join(theme.fg("dim", " >"))
             : provider === "anthropic" && ctx.model !== undefined && ctx.modelRegistry.isUsingOAuth(ctx.model)
               ? theme.fg("muted", "5h — wk —")
@@ -318,7 +334,7 @@ export default function statusline(pi: ExtensionAPI) {
             throughput: () => throughput,
             time: () => time ? theme.fg("muted", time) : "",
           }), width, theme.fg("dim", " >"));
-          return [line];
+          return [line, ...providerRows.map((row) => truncateToWidth(row.line, width, ""))];
         },
       };
     });
