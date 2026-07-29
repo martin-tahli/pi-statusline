@@ -1,10 +1,13 @@
 import type { AssistantMessage } from "@earendil-works/pi-ai";
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { getSettingsListTheme, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { Container, type SettingItem, SettingsList } from "@earendil-works/pi-tui";
 import { renderBar, type BarStyle } from "../src/bar.ts";
 import {
   DEFAULT_CONFIG_PATH,
+  configuredProviders,
   formatSettings,
   loadSettings,
+  reconcileProviderTracking,
   saveSettings,
   toggleSetting,
   type Settings,
@@ -13,6 +16,7 @@ import { billingMode, contextSeverity, deriveContext, deriveEffort, deriveModel,
 import { formatRate, formatResetCountdown, formatTime, formatWindow } from "../src/format.ts";
 import { gitBranchSymbol, gitStatusTokens, parseGitStatus, type GitStatusState, type GitTokenKind } from "../src/git.ts";
 import { parseAnthropicUsage, parseCodexUsage, parseRateLimits, parseStoredRateLimits, type RateLimits, type RateLimitWindow } from "../src/ratelimit.ts";
+import { ProviderRefreshCoordinator, type ProviderAdapter } from "../src/providers.ts";
 import { composeSegments, createSegments } from "../src/segments.ts";
 import { estimateTokens, sumTextLength, TurnMeter } from "../src/throughput.ts";
 
@@ -38,6 +42,7 @@ export default function statusline(pi: ExtensionAPI) {
   let lastRenderedTime = "";
   let sessionActive = false;
   let turnActive = false;
+  let providerRefresh: ProviderRefreshCoordinator | undefined;
   const ANTHROPIC_RETRY_DELAYS_MS = [1_500, 3_000];
 
   const timeLabel = () => {
@@ -116,7 +121,7 @@ export default function statusline(pi: ExtensionAPI) {
     anthropicRetryTimer = setTimeout(() => {
       anthropicRetryTimer = undefined;
       if (!sessionActive || limits.length || !isAnthropicOAuth(ctx)) return;
-      void refreshAnthropicLimits(ctx).then((ok) => { if (!ok) scheduleAnthropicRetry(ctx, attempt + 1); });
+      void refreshAnthropicLimits(ctx).then((next) => { if (!next.length) scheduleAnthropicRetry(ctx, attempt + 1); });
     }, ANTHROPIC_RETRY_DELAYS_MS[attempt]);
     anthropicRetryTimer.unref?.();
   };
@@ -144,11 +149,13 @@ export default function statusline(pi: ExtensionAPI) {
     return [];
   };
 
-  const refreshAnthropicLimits = async (ctx: ExtensionContext): Promise<boolean> => {
-    if (!isAnthropicOAuth(ctx)) return false;
+  // Returns the freshly fetched windows (empty when unavailable) so provider-scoped callers can use
+  // their own result instead of the shared session `limits` state.
+  const refreshAnthropicLimits = async (ctx: ExtensionContext): Promise<RateLimits> => {
+    if (!isAnthropicOAuth(ctx)) return [];
     try {
       const access = await ctx.modelRegistry.getApiKeyForProvider("anthropic");
-      if (!access) return false;
+      if (!access) return [];
       const response = await fetch("https://api.anthropic.com/api/oauth/usage", {
         headers: {
           authorization: `Bearer ${access}`,
@@ -159,26 +166,26 @@ export default function statusline(pi: ExtensionAPI) {
         },
         signal: AbortSignal.timeout(3_000),
       });
-      if (!response.ok || !isAnthropicOAuth(ctx)) return false;
+      if (!response.ok || !isAnthropicOAuth(ctx)) return [];
       const next = parseAnthropicUsage(await response.json());
-      if (!next.length) return false;
+      if (!next.length) return [];
       limits = next;
       pi.appendEntry(ANTHROPIC_LIMITS_ENTRY, limits);
       syncTick();
       requestRender?.();
-      return true;
+      return next;
     } catch {
       // Best effort: unavailable account usage falls back to response headers.
-      return false;
+      return [];
     }
   };
 
-  const refreshCodexLimits = async (ctx: ExtensionContext) => {
-    if (ctx.model?.provider !== "openai-codex") return;
+  const refreshCodexLimits = async (ctx: ExtensionContext): Promise<RateLimits> => {
+    if (ctx.model?.provider !== "openai-codex") return [];
     try {
       const access = await ctx.modelRegistry.getApiKeyForProvider("openai-codex");
       const accountId = access ? codexAccountId(access) : undefined;
-      if (!access || !accountId) return;
+      if (!access || !accountId) return [];
       const origin = new URL(ctx.model.baseUrl).origin;
       const response = await fetch(`${origin}/backend-api/wham/usage`, {
         headers: {
@@ -188,12 +195,15 @@ export default function statusline(pi: ExtensionAPI) {
         },
         signal: AbortSignal.timeout(3_000),
       });
-      if (!response.ok || ctx.model?.provider !== "openai-codex") return;
-      limits = parseCodexUsage(await response.json());
+      if (!response.ok || ctx.model?.provider !== "openai-codex") return [];
+      const next = parseCodexUsage(await response.json());
+      limits = next;
       syncTick();
       requestRender?.();
+      return next;
     } catch {
       // Best effort: unavailable account usage simply stays hidden.
+      return [];
     }
   };
 
@@ -316,6 +326,63 @@ export default function statusline(pi: ExtensionAPI) {
   };
 
   const persist = () => saveSettings(settings, DEFAULT_CONFIG_PATH);
+  const availableProviders = (ctx: ExtensionContext) => {
+    const registry = ctx.modelRegistry as unknown as { getAvailable?: () => Array<{ provider: string }> } | undefined;
+    return registry?.getAvailable ? configuredProviders(registry as { getAvailable(): Array<{ provider: string }> }) : [];
+  };
+
+  const openProviderMenu = async (ctx: ExtensionContext) => {
+    const providers = availableProviders(ctx);
+    const base = providers.length ? reconcileProviderTracking(settings, ctx.modelRegistry) : settings;
+    // Deep clone so cancel or a failing save leaves the live `settings` object untouched.
+    const draft: Settings = { ...base, providerTracking: structuredClone(base.providerTracking) };
+    let accepted = false;
+    await ctx.ui.custom((tui, theme, _kb, done) => {
+      const tracking = draft.providerTracking;
+      const items: SettingItem[] = [
+        { id: "enabled", label: "Provider stack", currentValue: tracking.enabled ? "on" : "off", values: ["on", "off"] },
+        { id: "usage", label: "Shared usage", currentValue: tracking.metrics.usage ? "on" : "off", values: ["on", "off"] },
+        { id: "reset", label: "Shared reset", currentValue: tracking.metrics.reset ? "on" : "off", values: ["on", "off"] },
+        ...providers.flatMap((provider) => {
+          const override = tracking.overrides[provider] ?? {};
+          const health = providerRefresh?.get(provider);
+          return [
+            { id: `selected:${provider}`, label: provider, description: health?.state === "hidden" ? health.reason : "usage is fresh", currentValue: tracking.selected[provider] ? "selected" : "hidden", values: ["selected", "hidden"] },
+            { id: `usage:${provider}`, label: `${provider} usage`, currentValue: override.usage === undefined ? "inherit" : override.usage ? "on" : "off", values: ["inherit", "on", "off"] },
+            { id: `reset:${provider}`, label: `${provider} reset`, currentValue: override.reset === undefined ? "inherit" : override.reset ? "on" : "off", values: ["inherit", "on", "off"] },
+            { id: `order:${provider}`, label: `${provider} order`, currentValue: String(tracking.order.indexOf(provider) + 1), values: ["move up", "move down"] },
+          ];
+        }),
+        { id: "save", label: "Confirm", currentValue: "save changes", values: ["save changes"] },
+      ];
+      const list = new SettingsList(items, 14, getSettingsListTheme(), (id, value) => {
+        if (id === "save") { accepted = true; done(undefined); return; }
+        if (id === "enabled") tracking.enabled = value === "on";
+        else if (id === "usage" || id === "reset") tracking.metrics[id] = value === "on";
+        else {
+          const [kind, provider] = id.split(":");
+          if (!provider) return;
+          if (kind === "selected") tracking.selected[provider] = value === "selected";
+          if (kind === "order") {
+            const index = tracking.order.indexOf(provider), target = value === "move up" ? index - 1 : index + 1;
+            if (index >= 0 && target >= 0 && target < tracking.order.length) [tracking.order[index], tracking.order[target]] = [tracking.order[target]!, tracking.order[index]!];
+          }
+          if (kind === "usage" || kind === "reset") {
+            const next = { ...(tracking.overrides[provider] ?? {}) };
+            if (value === "inherit") delete next[kind]; else next[kind] = value === "on";
+            if (Object.keys(next).length) tracking.overrides[provider] = next; else delete tracking.overrides[provider];
+          }
+        }
+      }, () => done(undefined));
+      const container = new Container();
+      container.addChild({ render: () => [theme.fg("accent", theme.bold("Provider tracking")), ""], invalidate() {} });
+      container.addChild(list);
+      return { render: (width) => container.render(width), invalidate: () => container.invalidate(), handleInput: (data) => { list.handleInput?.(data); tui.requestRender(); } };
+    });
+    if (!accepted) return;
+    try { saveSettings(draft, DEFAULT_CONFIG_PATH); settings = draft; ctx.ui.notify("Provider tracking saved", "info"); requestRender?.(); }
+    catch { ctx.ui.notify("Could not save provider tracking", "error"); }
+  };
 
   pi.registerCommand("statusline", {
     description: "List or toggle statusline segments",
@@ -327,7 +394,7 @@ export default function statusline(pi: ExtensionAPI) {
     handler: async (args, ctx) => {
       const [action, rawName] = args.trim().split(/\s+/);
       if (!action) {
-        ctx.ui.notify(formatSettings(settings), "info");
+        await openProviderMenu(ctx);
         return;
       }
       if (action === "on" || action === "off") {
@@ -363,12 +430,24 @@ export default function statusline(pi: ExtensionAPI) {
     stopTick();
     stopAnthropicRetry();
     settings = loadSettings();
+    if (availableProviders(ctx).length) settings = reconcileProviderTracking(settings, ctx.modelRegistry);
     meter = new TurnMeter();
     limits = isAnthropicOAuth(ctx) ? restoreAnthropicLimits(ctx) : [];
     gitStatus = undefined;
     if (settings.footerEnabled) installFooter(ctx);
-    void refreshAnthropicLimits(ctx).then((ok) => { if (!ok) scheduleAnthropicRetry(ctx); });
+    void refreshAnthropicLimits(ctx).then((next) => { if (!next.length) scheduleAnthropicRetry(ctx); });
     void refreshCodexLimits(ctx);
+    const providers = availableProviders(ctx);
+    const adapters = new Map<string, ProviderAdapter>();
+    const scoped = async (fetchLimits: () => Promise<RateLimits>) => {
+      const next = await fetchLimits();
+      return next.length ? { limits: next } : undefined;
+    };
+    if (providers.includes("anthropic")) adapters.set("anthropic", { refresh: () => scoped(() => refreshAnthropicLimits(ctx)) });
+    if (providers.includes("openai-codex")) adapters.set("openai-codex", { refresh: () => scoped(() => refreshCodexLimits(ctx)) });
+    providerRefresh?.stop();
+    providerRefresh = new ProviderRefreshCoordinator(adapters, () => requestRender?.());
+    providerRefresh.start(providers);
     syncGitTick(ctx);
     await refreshGit(ctx);
   });
@@ -379,6 +458,7 @@ export default function statusline(pi: ExtensionAPI) {
     stopTick();
     stopGitTick();
     stopAnthropicRetry();
+    providerRefresh?.stop();
   });
 
   pi.on("turn_start", (event) => {
@@ -439,7 +519,7 @@ export default function statusline(pi: ExtensionAPI) {
     syncTick();
     requestRender?.();
     stopAnthropicRetry();
-    void refreshAnthropicLimits(ctx).then((ok) => { if (!ok) scheduleAnthropicRetry(ctx); });
+    void refreshAnthropicLimits(ctx).then((next) => { if (!next.length) scheduleAnthropicRetry(ctx); });
     void refreshCodexLimits(ctx);
   });
 
