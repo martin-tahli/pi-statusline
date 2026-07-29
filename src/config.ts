@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { SEGMENT_ORDER, type SegmentId } from "./segments.ts";
@@ -6,11 +6,33 @@ import { SEGMENT_ORDER, type SegmentId } from "./segments.ts";
 export const EXTRA_NAMES = ["branch", "nerdFont", "cost", "sessionElapsed", "lastTurn", "pending"] as const;
 export type ExtraName = (typeof EXTRA_NAMES)[number];
 
+export interface ProviderMetrics {
+  usage: boolean;
+  reset: boolean;
+}
+
+export interface ProviderTrackingSettings {
+  enabled: boolean;
+  selected: Record<string, boolean>;
+  order: string[];
+  metrics: ProviderMetrics;
+  overrides: Record<string, Partial<ProviderMetrics>>;
+}
+
 export interface Settings {
   footerEnabled: boolean;
   segments: Record<SegmentId, boolean>;
   extras: Record<ExtraName, boolean>;
+  providerTracking: ProviderTrackingSettings;
 }
+
+const DEFAULT_PROVIDER_TRACKING: ProviderTrackingSettings = {
+  enabled: true,
+  selected: {},
+  order: [],
+  metrics: { usage: true, reset: true },
+  overrides: {},
+};
 
 export const DEFAULT_SETTINGS: Settings = {
   footerEnabled: true,
@@ -31,18 +53,50 @@ export const DEFAULT_SETTINGS: Settings = {
     lastTurn: false,
     pending: false,
   },
+  providerTracking: DEFAULT_PROVIDER_TRACKING,
 };
 
 export const DEFAULT_CONFIG_PATH = join(homedir(), ".pi", "agent", "statusline.json");
 
+function record(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function providerName(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value : undefined;
+}
+
+function mergeProviderTracking(value: unknown): ProviderTrackingSettings {
+  const input = record(value);
+  const selected = Object.fromEntries(Object.entries(record(input.selected)).flatMap(([provider, enabled]) =>
+    providerName(provider) && typeof enabled === "boolean" ? [[provider, enabled]] : []
+  ));
+  const order = Array.from(new Set((Array.isArray(input.order) ? input.order : [])
+    .map(providerName).filter((provider): provider is string => provider !== undefined)));
+  const metrics = record(input.metrics);
+  const overrides = Object.fromEntries(Object.entries(record(input.overrides)).flatMap(([provider, override]) => {
+    const values = record(override);
+    const sparse = Object.fromEntries(["usage", "reset"].flatMap((metric) =>
+      typeof values[metric] === "boolean" ? [[metric, values[metric]]] : []
+    )) as Partial<ProviderMetrics>;
+    return providerName(provider) && Object.keys(sparse).length ? [[provider, sparse]] : [];
+  }));
+  return {
+    enabled: typeof input.enabled === "boolean" ? input.enabled : true,
+    selected,
+    order,
+    metrics: {
+      usage: typeof metrics.usage === "boolean" ? metrics.usage : true,
+      reset: typeof metrics.reset === "boolean" ? metrics.reset : true,
+    },
+    overrides,
+  };
+}
+
 export function mergeSettings(value: unknown): Settings {
-  const input = value && typeof value === "object" ? value as Partial<Settings> : {};
-  const segments: Partial<Record<SegmentId, unknown>> = input.segments && typeof input.segments === "object"
-    ? input.segments
-    : {};
-  const extras: Partial<Record<ExtraName, unknown>> = input.extras && typeof input.extras === "object"
-    ? input.extras
-    : {};
+  const input = record(value);
+  const segments = record(input.segments) as Partial<Record<SegmentId, unknown>>;
+  const extras = record(input.extras) as Partial<Record<ExtraName, unknown>>;
   return {
     footerEnabled: typeof input.footerEnabled === "boolean" ? input.footerEnabled : true,
     segments: Object.fromEntries(SEGMENT_ORDER.map((name) => [
@@ -53,7 +107,31 @@ export function mergeSettings(value: unknown): Settings {
       name,
       typeof extras[name] === "boolean" ? extras[name] : DEFAULT_SETTINGS.extras[name],
     ])) as Record<ExtraName, boolean>,
+    providerTracking: mergeProviderTracking(input.providerTracking),
   };
+}
+
+export interface AvailableModelRegistry {
+  getAvailable(): Array<{ provider: string }>;
+}
+
+/** Providers with configured pi authentication, in registry order. */
+export function configuredProviders(registry: AvailableModelRegistry): string[] {
+  return Array.from(new Set(registry.getAvailable().map((model) => providerName(model.provider))
+    .filter((provider): provider is string => provider !== undefined)));
+}
+
+/** Preserve saved providers while appending newly authenticated providers as selected. */
+export function reconcileProviderTracking(settings: Settings, registry: AvailableModelRegistry): Settings {
+  const providers = configuredProviders(registry);
+  const tracking = settings.providerTracking;
+  const selected = { ...tracking.selected };
+  const order = [...tracking.order];
+  for (const provider of providers) {
+    if (!(provider in selected)) selected[provider] = true;
+    if (!order.includes(provider)) order.push(provider);
+  }
+  return { ...settings, providerTracking: { ...tracking, selected, order } };
 }
 
 export function loadSettings(path = DEFAULT_CONFIG_PATH): Settings {
@@ -64,9 +142,25 @@ export function loadSettings(path = DEFAULT_CONFIG_PATH): Settings {
   }
 }
 
-export function saveSettings(settings: Settings, path = DEFAULT_CONFIG_PATH): void {
-  mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, `${JSON.stringify(settings, null, 2)}\n`, "utf8");
+export interface SaveOperations {
+  mkdir(path: string, options: { recursive: true }): void;
+  writeFile(path: string, data: string, encoding: "utf8"): void;
+  rename(from: string, to: string): void;
+  unlink(path: string): void;
+}
+
+const saveOperations: SaveOperations = { mkdir: mkdirSync, writeFile: writeFileSync, rename: renameSync, unlink: unlinkSync };
+
+export function saveSettings(settings: Settings, path = DEFAULT_CONFIG_PATH, operations = saveOperations): void {
+  const temporary = `${path}.tmp`;
+  operations.mkdir(dirname(path), { recursive: true });
+  try {
+    operations.writeFile(temporary, `${JSON.stringify(settings, null, 2)}\n`, "utf8");
+    operations.rename(temporary, path);
+  } catch (error) {
+    try { operations.unlink(temporary); } catch { /* The original document remains untouched. */ }
+    throw error;
+  }
 }
 
 export function toggleSetting(settings: Settings, name: string): Settings {

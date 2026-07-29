@@ -62,6 +62,10 @@
       "dependencies": [],
       "dependencyEdges": [],
       "description": "Master roadmap plan from docs/plans/pi-statusline-plan.md.\n\n## Goal Capsule\n\nShip a single-line, configurable **statusline footer** as a publishable pi\npackage. It replaces pi's built-in footer with a compact, information-dense\nstrip that shows — left to right — project, model, effort, context usage,\n(for subscription/cloud models) 5-hour and weekly session-usage bars, and\nthroughput (↑/↓ tokens per second). Every segment self-hides when its data is\nnot applicable to the current provider/model, and every segment can be\nmanually enabled/disabled. Works identically for local and cloud models.\nPublished to npm as a scoped pi package installable with `pi install`.\n\n**Problem frame.** pi's built-in footer shows working dir, session, token/cache\nusage, cost, context, model. It is fine but fixed. Users who run mixed local\n(Ollama/LM Studio) and cloud (Anthropic subscription) models want one glanceable\nstrip with the *right* signals per provider — subscription users care about\ntheir 5h/weekly quota burn; local users care about generation speed — plus the\nability to turn segments off. No existing extension does this.\n\n**Non-goals (YAGNI).** Multi-line footers, history graphs, sparklines, clickable\nsegments, per-project themes, remote telemetry, a settings TUI/GUI. Deferred\nuntil asked. See `## Non-Goals`.",
+      "displayMetadata": {
+        "schemaVersion": 1,
+        "title": "pi-statusline — configurable statusline footer extension for pi"
+      },
       "documentLinks": {
         "design": "---\ntitle: pi-statusline — configurable statusline footer extension for pi\ncreated: 2026-07-15\nartifact_contract: ce-unified-plan/v1\nartifact_readiness: implementation-ready\nproduct_contract_source: ce-plan-bootstrap\nplan_depth: standard\noutput_format: md\n---\n\n# pi-statusline — configurable statusline footer for the pi agent\n\n## Goal Capsule\n\nShip a single-line, configurable **statusline footer** as a publishable pi\npackage. It replaces pi's built-in footer with a compact, information-dense\nstrip that shows — left to right — project, model, effort, context usage,\n(for subscription/cloud models) 5-hour and weekly session-usage bars, and\nthroughput (↑/↓ tokens per second). Every segment self-hides when its data is\nnot applicable to the current provider/model, and every segment can be\nmanually enabled/disabled. Works identically for local and cloud models.\nPublished to npm as a scoped pi package installable with `pi install`.\n\n**Problem frame.** pi's built-in footer shows working dir, session, token/cache\nusage, cost, context, model. It is fine but fixed. Users who run mixed local\n(Ollama/LM Studio) and cloud (Anthropic subscription) models want one glanceable\nstrip with the *right* signals per provider — subscription users care about\ntheir 5h/weekly quota burn; local users care about generation speed — plus the\nability to turn segments off. No existing extension does this.\n\n**Non-goals (YAGNI).** Multi-line footers, history graphs, sparklines, clickable\nsegments, per-project themes, remote telemetry, a settings TUI/GUI. Deferred\nuntil asked. See `## Non-Goals`.\n\n## Technical Grounding (verified against pi 0.80.7 docs)\n\nThe plugin is a thin enrichment of the shipped `examples/extensions/custom-footer.ts`\npattern. Confirmed API surface:\n\n- **Footer replacement:** `ctx.ui.setFooter((tui, theme, footerData) => ({ render(width): string[], invalidate(), dispose? }))`. `ctx.ui.setFooter(undefined)` restores the built-in footer. Render returns styled lines; use `truncateToWidth` / `visibleWidth` from `@earendil-works/pi-tui`, colors via `theme.fg(role, text)`.\n- **footerData:** `getGitBranch()`, `onBranchChange(cb)`, `getExtensionStatuses()`.\n- **Model:** `ctx.model` → `{ id, provider, contextWindow, reasoning, ... }` (fields are **camelCase** — verified in `pi-ai/dist/types.d.ts`; there is no `context_window`).\n- **Effort (reasoning level):** `ctx.getThinkingLevel()` / `setThinkingLevel()`; non-reasoning models are always `\"off\"`.\n- **Context usage:** `ctx.getContextUsage()` → `{ tokens: number|null, contextWindow: number, percent: number|null }` (verified `extensions/types.d.ts`). Consume `.percent` and `.contextWindow` directly — do NOT recompute. `tokens`/`percent` are `null` immediately after compaction → treat as \"hide segment\", never divide.\n- **Throughput:** token counts from assistant messages `usage.input` / `usage.output` (see custom-footer example) and timing from `turn_start` / `turn_end` (`event.turnIndex`, `event.message.usage`) plus `message_update` streaming events.\n- **Session-limit bars (cloud subscription):** `after_provider_response` event exposes normalized `event.headers`. Anthropic subscription responses carry `anthropic-ratelimit-unified-*` headers (usage + reset windows) — the data source for the 5h and weekly bars. \"Header availability depends on provider and transport\" → the segment self-hides when absent (exactly matches the \"don't display if not applicable\" requirement).\n- **Commands/config:** `pi.registerCommand(...)` for a `/statusline` toggle command; settings persist to a small JSON file.\n- **Packaging:** pi package via `package.json` `pi` key or a conventional `extensions/` directory; publish to npm; install with `pi install npm:@scope/pkg`.\n\n## Product Contract\n\nProduct Contract preservation: N/A — bootstrapped from user request; no prior brainstorm to preserve.\n\n### Actors\n- **A1 — pi user (local models):** runs Ollama/LM Studio/other local providers; wants project, model, effort, context %, ↑/↓ t/s. No session bars.\n- **A2 — pi user (cloud subscription):** runs Anthropic Claude subscription; wants everything A1 has plus 5h + weekly session-usage bars.\n- **A3 — pi user (cloud API key / other cloud):** cloud provider without unified session-limit headers; gets everything except the session bars.\n\n### Requirements\n\n- **R1 — Single-line footer, fixed left→right order.** Segments render in order:\n  `project · model · effort · context · [session bars] · throughput`. Truncates to terminal width without wrapping.\n- **R2 — Project segment.** Shows the project name (cwd basename; git branch appended only if the branch segment is enabled — default off).\n- **R3 — Model segment.** Shows active model id (and provider when it disambiguates).\n- **R4 — Effort segment.** Shows current thinking level (off/low/medium/high). Hidden when the model is non-reasoning (`getThinkingLevel()` is `\"off\"` and model `reasoning` is false).\n- **R5 — Context segment.** Shows `NN.N%/<window>` e.g. `55.0%/1.0M` from `getContextUsage().percent` and `.contextWindow` (never recomputed from raw tokens, never from `ctx.model`). Window formatted compactly (128K, 200K, 1.0M). Color escalates by threshold (dim → warn → error). **Hidden when `percent` is `null`** (e.g. right after compaction) — no `NaN`, no crash.\n- **R6 — Session bars (conditional).** For providers exposing unified session-limit headers (Anthropic subscription): render a **5-hour** bar and a **weekly** bar, each a fixed-width ASCII loading bar filled in **light green**, followed by a percent number (e.g. `23%`). Fill = used fraction of the window. Entirely hidden when the headers are absent (R3-key: local, API-key, or non-supporting providers).\n- **R7 — Throughput segment.** Shows `↑ <n> t/s` (input rate) and `↓ <n> t/s` (output rate), computed from the most recent turn's token usage and duration. Persists last value while idle; hidden until at least one turn has produced a measurement.\n- **R8 — Applicability self-hide.** Any segment whose underlying data is unavailable for the current provider/model renders nothing (no placeholder), and the layout recomposes without gaps.\n- **R9 — Manual enable/disable.** Each segment has an on/off setting. A `/statusline` command lists current state and toggles segments. Settings persist across sessions. Defaults: project, model, effort, context, session-bars, throughput = **on**; all optional extras = **off**.\n- **R10 — Local + cloud parity.** All settings and applicable segments behave identically regardless of provider; only data availability (not code paths) differs.\n- **R11 — Non-destructive.** `/statusline off` (or disable) restores pi's built-in footer via `setFooter(undefined)`; enabling re-installs it. No crash if data hooks return undefined.\n- **R12 — Optional extras (default off), brainstormed additions:**\n  - **R12a — Session cost `$`:** cumulative `usage.cost.total` for the session.\n  - **R12b — Git branch + dirty flag:** branch name from `footerData.getGitBranch()`, optional `*` dirty marker.\n  - **R12c — Elapsed session time:** wall-clock since session start.\n  - **R12d — Queued/steering indicator:** small marker when `ctx.hasPendingMessages()`.\n  (Explicitly deferred, cheap to add later; listed so scope is visible.)\n\n### Key Flows\n- **F1 — Load:** extension loads → reads settings → installs footer → renders from current ctx. If a segment's data source isn't ready yet, that segment is blank until data arrives.\n- **F2 — Turn:** `turn_start` marks t0 → streaming updates → `turn_end` records tokens+duration → throughput segment updates → `tui.requestRender()`.\n- **F3 — Provider response:** `after_provider_response` parses rate-limit headers → updates session-bar state → re-render. Missing headers → bars stay hidden.\n- **F4 — Toggle:** `/statusline` command flips a segment, persists, re-renders.\n- **F5 — Model switch:** `model_select` → re-evaluate applicability (effort/context window/session bars) → re-render.\n\n### Acceptance Examples\n- **AE1:** Local Ollama `qwen2.5-coder`, medium effort, 55% context of 1M → footer:\n  `pi-statusline · qwen2.5-coder · medium · 55.0%/1.0M · ↑ 850 t/s ↓ 62 t/s` (no session bars).\n- **AE2:** Anthropic subscription `claude-sonnet-4-5`, 5h at 23% / weekly at 41% →\n  `pi-statusline · claude-sonnet-4-5 · high · 30.2%/200K · 5h [██░░░░░░] 23% · wk [███░░░░] 41% · ↑ 1.2k t/s ↓ 74 t/s`, the two bar fills rendered light green.\n- **AE3:** Cloud API-key provider without unified headers → same as AE1 shape (session bars omitted, throughput shown).\n- **AE4:** `/statusline toggle throughput` → throughput disappears, everything else recomposes on one line; persists to next session.\n- **AE5:** Non-reasoning model → effort segment absent.\n- **AE6:** Terminal narrowed to 40 cols → line truncates cleanly (no wrap, no crash).\n\n## Non-Goals\nMulti-line/stacked footer, history/sparkline graphs, clickable or mouse regions,\nper-project or themeable color schemes beyond theme roles, remote telemetry/analytics,\na full settings UI (command-line toggles only), cost budgeting/alerts. Add when a\nuser actually asks.\n\n## Architecture & Design Decisions\n\n- **D1 — One extension, pure-core split.** Ship one extension entry\n  (`extensions/statusline.ts`) that wires ctx/events to a set of **pure functions**\n  in `src/` (formatters, bar renderer, layout/truncation, throughput math, header\n  parsing, config merge). Rationale: pure functions are the only non-trivial logic\n  and the only thing worth testing without a TUI harness. ponytail: no plugin\n  framework, no segment class hierarchy — segments are just `{ id, enabled, render(state) }` entries in one array that defines order.\n- **D2 — Ship TypeScript source directly (no build step).** pi loads `.ts`\n  extensions; the npm package ships source under a conventional `extensions/`\n  dir + `src/` helpers, declared via the `pi` key. Rationale: no compile/dist\n  pipeline to maintain. ponytail: skipped tsc/bundler; add a build only if pi\n  ever requires precompiled JS.\n- **D3 — Settings storage: one JSON file at `~/.pi/agent/statusline.json`.**\n  Load on start, merge over defaults, write on toggle. Rationale: simplest\n  durable per-user store; no dependency. ponytail: user-scope only; add\n  project-scope override only if requested.\n- **D4 — Session bars are Anthropic-header-driven and best-effort.** Parse\n  `anthropic-ratelimit-unified-*` from `after_provider_response`; compute\n  used-fraction and reset window. If any required header is missing, keep the\n  bars hidden. Rationale: this is the only path to the data and it degrades to\n  the required \"hide when not applicable\" behavior automatically.\n- **D5 — Throughput definition (streaming-windowed, not whole-turn).**\n  The extension timestamps with `Date.now()` at three points — `turn_start` (t0),\n  first `message_update` (tFirst), `message_end` (tEnd) — because `TurnEndEvent`\n  carries no timestamp and whole-turn wall-time would fold in tool-execution\n  seconds. `↓` = output tokens ÷ (tEnd − tFirst) (**generation** window only,\n  excludes tool time); `↑` = input tokens ÷ (tFirst − t0) (prompt-processing\n  window). Falls back to hidden if a window is 0/unmeasurable. README documents\n  the definition; values are settings-tunable later. Rationale: uses only\n  confirmed events, and windowing on the streaming phase keeps `↓` an honest\n  generation rate for a tool-heavy coding agent.\n- **D6 — Light-green bar.** Use the theme's closest green role for the filled\n  cells (`theme.fg(\"success\", …)` or a green when the theme exposes one),\n  ASCII `█`/`░` cells, fixed width (default 8). Rationale: theme-consistent,\n  ANSI-safe, width-stable for truncation math.\n- **D7 — Render is cheap + event-driven.** Recompute state on the events that\n  change it (turn_end, after_provider_response, model_select, branch change,\n  toggle) and call `tui.requestRender()`; `render(width)` only formats cached\n  state. Rationale: no polling timers, no per-frame git/network calls.\n\n### File / Module Layout (repo-relative)\n- `package.json` — name `@shvax/pi-statusline`, `pi` manifest object `\"pi\": { \"extensions\": [\"./extensions\"] }` (dir/glob arrays — verified `docs/packages.md`; NOT a file path string), `peerDependencies` `{ \"@earendil-works/pi-tui\": \"*\", \"@earendil-works/pi-coding-agent\": \"*\", \"@earendil-works/pi-ai\": \"*\" }` (host-provided, never bundled), `publishConfig.access=public`.\n- `extensions/statusline.ts` — entry: registers footer + `/statusline` command, subscribes to events, owns cached render state.\n- `src/segments.ts` — ordered segment definitions + layout/compose/truncate.\n- `src/format.ts` — number/percent/window formatting (`k`/`M`, `NN.N%`).\n- `src/bar.ts` — ASCII loading-bar renderer (fraction → filled/empty cells).\n- `src/throughput.ts` — turn timing accumulator + t/s math.\n- `src/ratelimit.ts` — Anthropic unified-header parsing → `{ fiveHour?, weekly? }`.\n- `src/config.ts` — defaults, load/save/merge, segment enable/disable.\n- `test/*.test.ts` — pure-function checks (see Implementation Units).\n- `README.md`, `LICENSE` (MIT), `.gitignore`, `tsconfig.json` (types only).\n\n## Implementation Units\n\nEach feature-bearing unit names its test file and exact scenarios so an\nimplementer tests without inventing coverage.\n\n### IU1 — Package scaffold & pi manifest\nFiles: `package.json`, `tsconfig.json`, `.gitignore`, `LICENSE`, dir skeleton.\n- `package.json` `name=@shvax/pi-statusline`, `version=0.1.0`, `\"pi\": { \"extensions\": [\"./extensions\"] }`, `peerDependencies` for the three `@earendil-works/*` hosts set to `\"*\"` (must NOT appear in `dependencies`/`bundledDependencies`), `files` includes `extensions/`,`src/`, `publishConfig.access=public`, MIT, repo/keywords.\n- Verify pi discovers the extension AND resolves peer imports (`truncateToWidth`, `visibleWidth`, types): `pi -e . ` (or `pi install ./`) loads without a resolution error.\nProof: `npm pack --dry-run` lists intended files; manual `pi -e .` smoke (AC4).\nNo dedicated test (config-only, IU1 is smoke-verified).\n\n### IU2 — Segment framework, layout & formatting (pure)\nFiles: `src/segments.ts`, `src/format.ts`; test `test/format.test.ts`, `test/segments.test.ts`.\nScenarios:\n- format: 128000→`128K`, 200000→`200K`, 1000000→`1.0M`; 0.55→`55.0%`; t/s 1200→`1.2k`.\n- segment order is exactly project,model,effort,context,session,throughput.\n- a disabled or data-less segment produces `\"\"` and is dropped from the join (no double separators).\n- compose truncates to width via `truncateToWidth`, never exceeds `width`, never wraps.\n\n### IU3 — Live data collectors (model, effort, context, project)\nFiles: extend `extensions/statusline.ts`; unit-test the pure derivations in `test/derive.test.ts`.\nScenarios:\n- context percent = tokens/window; hides when `getContextUsage()` undefined.\n- effort hides when level `off` AND model non-reasoning (`ctx.model.reasoning === false`); shows label otherwise.\n- context uses `getContextUsage().percent`/`.contextWindow`; hides when `percent` is `null` or `getContextUsage()` is `undefined` (asserted).\n- project = cwd basename; model = `ctx.model.id`.\n\n### IU4 — Throughput meter (↑/↓ t/s)\nFiles: `src/throughput.ts`; test `test/throughput.test.ts`.\nScenarios:\n- tokens=620,output over 10.0s → `62 t/s`; input=8500 over 10s → `850 t/s` / formatted `1.2k` past 1000.\n- zero-duration guard (no divide-by-zero → segment hidden).\n- retains last value when idle; resets on new turn start.\n\n### IU5 — Session-limit bars (Anthropic unified headers)\nFiles: `src/ratelimit.ts`, `src/bar.ts`; tests `test/ratelimit.test.ts`, `test/bar.test.ts`.\nScenarios:\n- ratelimit: given a captured Anthropic header fixture, parse 5h + weekly used-fraction; given headers absent OR unrecognized names → returns `{}` (bars hidden). Parser matches by known header prefix only; any parse miss ⇒ hidden, never a guess.\n- NOTE: the fixture is authored only *after* IU5's one-time live capture (AC2); until captured, the parser ships defensive and the segment stays hidden.\n- bar: fraction 0.23, width 8 → 2 filled + 6 empty cells, `23%`; fraction 1.0 → all filled; fraction 0 → all empty; clamps >1 and <0.\n- filled cells carry the green theme role (assert the style wrapper is applied).\n\n### IU6 — Settings + `/statusline` command\nFiles: `src/config.ts`; extend entry; test `test/config.test.ts`.\nScenarios:\n- defaults merge: missing file → all core segments on, extras off.\n- toggle flips one segment and persists (round-trip load returns the new value).\n- unknown segment name is rejected (no silent corrupt write).\n- `/statusline` with no args returns a readable on/off listing (pure formatter tested).\n\n### IU7 — README, license, examples\nFiles: `README.md`, `LICENSE`.\n- README: what it is, install (`pi install npm:@shvax/pi-statusline`), the segment table, `/statusline` usage, provider applicability matrix (local vs Anthropic subscription vs other cloud), the throughput definition (D5), a text mock of AE1/AE2.\n- No test (docs).\n\n### IU8 — Publish to npm\n- `npm whoami` (expect `shvax`) → confirm scope; `npm publish --access public`.\n- Post-publish smoke: `pi install npm:@shvax/pi-statusline` in a scratch dir loads the footer.\n- Tag `v0.1.0`, push if a remote is configured (none currently — skip push, note it).\nProof: published version resolves via `npm view @shvax/pi-statusline version`.\n\n## Acceptance Contracts\n\n- **AC1 — Footer layout/behavior.**\n  - Source of truth: R1/R8 + AE1–AE6.\n  - Must match: single line; exact segment order; inapplicable segments omitted with clean recompose; truncates to width, never wraps.\n  - Must not regress: no crash when any data hook returns `undefined` **or `null`** (post-compaction context); `setFooter(undefined)` fully restores built-in footer.\n  - Regression guard: `test/derive.test.ts` includes a `getContextUsage()` = `{ tokens: null, percent: null, contextWindow: 200000 }` case → context segment renders `\"\"`.\n  - Proof: `test/segments.test.ts` + `test/format.test.ts` green; manual `pi -e .` at 40/80/120 cols.\n  - Approver: maintainer visual smoke + passing unit tests.\n\n- **AC2 — Session-bar data fidelity.**\n  - Source of truth: R6 + Anthropic `anthropic-ratelimit-unified-*` semantics + AE2/AE3.\n  - Must match: used-fraction and window parsed from real header shape; light-green fill; percent label.\n  - Must not regress: bars NEVER shown for providers/responses lacking the headers (local, API-key) — assert hidden-on-absent.\n  - Proof: `test/ratelimit.test.ts` header fixture (captured from a real Anthropic subscription response during IU5) + `test/bar.test.ts`.\n  - Approver: passing tests + one live Anthropic subscription smoke confirming real headers parse.\n\n- **AC3 — Throughput math.**\n  - Source of truth: R7 + D5 + AE1.\n  - Must match: t/s = tokens ÷ turn-seconds; formatting thresholds.\n  - Proof: `test/throughput.test.ts`.\n\n- **AC4 — Package installability.**\n  - Source of truth: R11 + IU1/IU8.\n  - Must match: `pi -e .` and `pi install npm:@shvax/pi-statusline` both load the extension and render the footer; `npm pack` contents = declared files only.\n  - Proof: `npm pack --dry-run` + install smoke.\n\n## Risks & Mitigations\n- **Anthropic header names/shape uncertain until observed live.** Mitigation: IU5 captures a real fixture before finalizing the parser; parser is defensive (missing → hidden), so a wrong guess degrades gracefully, never crashes. This is the single biggest unknown and is contained by AC2's live smoke.\n- **Throughput definition may not match user's mental model of \"up/down t/s\".** Mitigation: D5 now windows on the streaming phase (excludes tool-execution wall time) and documents it in README; values are settings-tunable later. Low risk (cosmetic).\n- **pi footer render contract (`render`/`invalidate`/`dispose`) details.** Mitigation: mirror the shipped `custom-footer.ts` example verbatim for the wiring; only the pure formatting is novel.\n- **Terminal width / ANSI width miscalc breaks truncation.** Mitigation: use `visibleWidth`/`truncateToWidth` from `@earendil-works/pi-tui` (as the example does); AC1 tests width bounds.\n\n## Sequencing\nIU1 → IU2 → IU3 → (IU4 ∥ IU5 ∥ IU6) → IU7 → IU8.\nIU2 is the backbone (all rendering flows through it). IU5 needs a live Anthropic\nresponse once to capture the header fixture; until then its parser+bar are built\nand tested against the fixture, and the segment simply stays hidden.\n\n## Resolved Decisions (no open questions remain)\nEvery design fork is settled as Decisions D1–D7; the two the user explicitly confirmed on 2026-07-15 are recorded here so nothing stays open:\n- npm scope = `@shvax` (from `npm whoami`); reconfirm at publish (IU8).\n- Throughput semantics CONFIRMED: `↑` = input/prompt rate over the prompt-processing window, `↓` = generation rate over the streaming window (tool time excluded), per D5; tunable in settings later.\n- Optional extras R12a–d CONFIRMED: built but shipped disabled by default; core segments ship enabled.\n- Session-bar header shape is resolved live in IU5 before the parser is finalized (AC2); it self-hides until then, so it is not an open blocker.\n\n## Advisor Hardening (folded in 2026-07-15)\nRead-only advisor pass against the installed pi 0.80.7 `.d.ts` corrected four grounding errors before implementation:\n- `ctx.model.context_window` → `contextWindow`; context now read from `getContextUsage().percent`/`.contextWindow` (BLOCKING, fixed R5/IU3/Grounding).\n- `getContextUsage()` `null` tokens/percent post-compaction now hide the segment instead of rendering `NaN` (BLOCKING, fixed R5/IU3/AC1).\n- Added `peerDependencies` (`\"*\"`, unbundled) for the three `@earendil-works/*` hosts (BLOCKING, fixed IU1/AC4).\n- `pi` manifest corrected to object form `{ \"extensions\": [\"./extensions\"] }` (fixed D2/IU1).\n- Throughput redefined to streaming windows since `TurnEndEvent` has no timestamp (fixed D5/AC3).\n"
       },
@@ -111,6 +115,10 @@
           "type": "parent-child"
         }
       ],
+      "displayMetadata": {
+        "schemaVersion": 1,
+        "title": "Plan next slice for pi-statusline footer extension"
+      },
       "evidence": [
         {
           "closeEvidence": "Sliced IU1 (pi-statusline-pdw.2, scaffold+manifest) and IU2 (pi-statusline-pdw.3, pure segment/format backbone) from docs/plans/pi-statusline-plan.md. IU2 depends on IU1. Remaining unsliced units IU3-IU8 to be sliced in later planning passes."
@@ -163,6 +171,10 @@
       "dependencies": [],
       "dependencyEdges": [],
       "description": "Idea created by /work-brainstorm.\n\nFull brainstorm request:\nlets brainstorm the new way for how the statusline looks like. i prefer with emoticons since they have much better visuals than ascii. first things which must be changed are the time and loading bar. also the ↑ 1.2k t/s ↓ 74 t/s is not present and it must be. & 'c:\\Users\\mtahli\\Desktop\\Screenshot 2026-07-16 105333.png' thats how it should look like the both loading bars but with green, orange, red, based on the usage, same with the t/s also numbers with colors if its slow to be red etc. also make all the text on the statusline match the PI theme its selected now, all the status line must be code no AI since we dont want to waste tokens. If you have something else to add for nice vision no mental exhaustion etc. All improvements for the project will be reviewed and if are good accepted ask me more questions if something is unclear",
+      "displayMetadata": {
+        "schemaVersion": 1,
+        "title": "Brainstorm emoji-based statusline redesign with color bars"
+      },
       "evidence": [],
       "id": "pi-statusline-pdw.10",
       "labels": [
@@ -189,6 +201,10 @@
       "dependencies": [],
       "dependencyEdges": [],
       "description": "Implement U1 from docs/plans/2026-07-16-001-feat-statusline-redesign-plan.md.",
+      "displayMetadata": {
+        "schemaVersion": 1,
+        "title": "U1 — Smooth utilization bars"
+      },
       "evidence": [
         {
           "closeEvidence": "Completed by coded inline work path"
@@ -213,6 +229,10 @@
       "dependencies": [],
       "dependencyEdges": [],
       "description": "Implement U2 from docs/plans/2026-07-16-001-feat-statusline-redesign-plan.md.",
+      "displayMetadata": {
+        "schemaVersion": 1,
+        "title": "U2 — Adaptive throughput fallbacks"
+      },
       "evidence": [
         {
           "closeEvidence": "Completed by coded inline work path"
@@ -239,6 +259,10 @@
       ],
       "dependencyEdges": [],
       "description": "Implement U3 from docs/plans/2026-07-16-001-feat-statusline-redesign-plan.md.",
+      "displayMetadata": {
+        "schemaVersion": 1,
+        "title": "U3 — Live time lifecycle"
+      },
       "evidence": [
         {
           "closeEvidence": "Completed by coded inline work path"
@@ -263,6 +287,10 @@
       "dependencies": [],
       "dependencyEdges": [],
       "description": "Implement U4 from docs/plans/2026-07-16-001-feat-statusline-redesign-plan.md.",
+      "displayMetadata": {
+        "schemaVersion": 1,
+        "title": "U4 — Width-priority composition"
+      },
       "evidence": [
         {
           "closeEvidence": "Completed by coded inline work path"
@@ -291,6 +319,10 @@
       ],
       "dependencyEdges": [],
       "description": "Implement U5 from docs/plans/2026-07-16-001-feat-statusline-redesign-plan.md.",
+      "displayMetadata": {
+        "schemaVersion": 1,
+        "title": "U5 — Emoji/theme footer wiring"
+      },
       "evidence": [
         {
           "closeEvidence": "Completed by coded inline work path"
@@ -317,6 +349,10 @@
       ],
       "dependencyEdges": [],
       "description": "Implement U6 from docs/plans/2026-07-16-001-feat-statusline-redesign-plan.md.",
+      "displayMetadata": {
+        "schemaVersion": 1,
+        "title": "U6 — Document redesigned footer"
+      },
       "evidence": [
         {
           "closeEvidence": "Completed by coded inline work path"
@@ -356,6 +392,10 @@
         }
       ],
       "description": "First slice of pi-statusline (see docs/plans/pi-statusline-plan.md, IU1). Create the publishable pi package skeleton: package.json (name=@shvax/pi-statusline, version=0.1.0), tsconfig.json (types-only), .gitignore, LICENSE (MIT), and the extensions/ + src/ directory skeleton. This unblocks every later IU. Scope = scaffold only; no segment logic yet.",
+      "displayMetadata": {
+        "schemaVersion": 1,
+        "title": "IU1 — Package scaffold & pi manifest"
+      },
       "evidence": [
         {
           "closeEvidence": "IU1 scaffold and manifest implemented; AC4 local pack/load smoke passed."
@@ -436,6 +476,10 @@
         }
       ],
       "description": "Second slice of pi-statusline (see docs/plans/pi-statusline-plan.md, IU2). Build the rendering backbone as pure functions: src/segments.ts (ordered segment definitions { id, enabled, render(state) } + compose/layout/truncate) and src/format.ts (number/percent/window/duration formatting). All later rendering flows through IU2 (D1 pure-core split). Uses truncateToWidth/visibleWidth from @earendil-works/pi-tui for width math.",
+      "displayMetadata": {
+        "schemaVersion": 1,
+        "title": "IU2 — Segment framework, layout & formatting (pure)"
+      },
       "evidence": [
         {
           "closeEvidence": "IU2 pure segment and formatting backbone implemented; tests passing."
@@ -519,6 +563,10 @@
         }
       ],
       "description": "Implement IU3 from docs/plans/pi-statusline-plan.md.",
+      "displayMetadata": {
+        "schemaVersion": 1,
+        "title": "IU3 — Live project/model/effort/context collectors"
+      },
       "evidence": [
         {
           "closeEvidence": "Implemented in working tree; typecheck/tests/review verification passed."
@@ -599,6 +647,10 @@
         }
       ],
       "description": "Implement IU4 from docs/plans/pi-statusline-plan.md.",
+      "displayMetadata": {
+        "schemaVersion": 1,
+        "title": "IU4 — Throughput and time meter"
+      },
       "evidence": [
         {
           "closeEvidence": "Implemented in working tree; typecheck/tests/review verification passed."
@@ -679,6 +731,10 @@
         }
       ],
       "description": "Implement IU5 from docs/plans/pi-statusline-plan.md.",
+      "displayMetadata": {
+        "schemaVersion": 1,
+        "title": "IU5 — Anthropic session-limit bars"
+      },
       "evidence": [
         {
           "closeEvidence": "IU5 implementation complete and fail-closed; user accepted 429-blocked live capture as v0.1.0 residual."
@@ -762,6 +818,10 @@
         }
       ],
       "description": "Implement IU6 from docs/plans/pi-statusline-plan.md.",
+      "displayMetadata": {
+        "schemaVersion": 1,
+        "title": "IU6 — Settings and /statusline command"
+      },
       "evidence": [
         {
           "closeEvidence": "Implemented in working tree; typecheck/tests/review verification passed."
@@ -860,6 +920,10 @@
         }
       ],
       "description": "Implement IU7 from docs/plans/pi-statusline-plan.md.",
+      "displayMetadata": {
+        "schemaVersion": 1,
+        "title": "IU7 — README, license, and usage examples"
+      },
       "evidence": [
         {
           "closeEvidence": "IU7 README, MIT license, provider matrix, command reference, definitions, and examples complete."
@@ -955,6 +1019,10 @@
         }
       ],
       "description": "Publish and verify IU8 from docs/plans/pi-statusline-plan.md.",
+      "displayMetadata": {
+        "schemaVersion": 1,
+        "title": "IU8 — Publish @shvax/pi-statusline v0.1.0"
+      },
       "evidence": [],
       "executionMode": "auto",
       "id": "pi-statusline-pdw.9",
@@ -1008,38 +1076,138 @@
       "updatedAt": "2026-07-16T09:06:48.994Z"
     },
     "work-1": {
+      "acceptance": "### Acceptance Examples\n\n- AE1. **Covers R1, R2, R3.** Given pi exposes configured models for Anthropic, Codex, GLM, and another provider, while its catalog also contains unauthenticated providers, the settings menu lists only the four configured providers. On first use after upgrade all four are selected, and each with fresh usage appears beneath the active-session line.\n- AE2. **Covers R2, R6.** Given the user deselected Codex and ordered GLM first, when Codex disappears from the configured set and later returns while a newly configured provider appears, Codex returns deselected in its old position and the new provider starts selected.\n- AE3. **Covers R4, R7, R8, R13.** Given shared defaults show usage and reset time, when the user moves GLM first and disables only Codex's reset time, GLM appears first and Codex still inherits usage. Canceling a later change or encountering a save failure preserves those prior settings and on-disk configuration.\n- AE4. **Covers R5.** Given Codex is active and its selected provider row is visible, its quota appears only on that row. When the stack is off or the Codex row is hidden, applicable quota returns to the active-session line.\n- AE5. **Covers R9, R10, R11.** Given a selected configured provider has no permitted fresh usage source, when the footer renders it has no provider row and the settings menu gives a sanitized source or eligibility explanation.\n- AE6. **Covers R12.** Given one selected provider times out while another returns usage, when the background refresh runs the responsive provider row updates, the failed row stays hidden, and footer rendering never waits for either request. A result older than its documented maximum age also hides until a fresh result arrives, and a later successful bounded retry restores the hidden row.\n- AE7. **Covers R14.** Given the feature ships, the README documents the interactive bare command, compatible argument commands, default-on migration, configured-provider filtering, metric inheritance, ordering, and unavailable-row behavior.",
       "createdAt": "2026-07-29T13:26:35.382Z",
       "dependencies": [],
       "dependencyEdges": [],
-      "description": "This roadmap covers simultaneous tracking across multiple model providers. It exists to let users choose which providers to monitor together through settings controls. Its scope includes selectable provider toggles and user-defined ordering. The intended outcome is a configurable, ordered view of tracking for multiple providers at once.",
+      "description": "This roadmap covers simultaneous tracking across multiple model providers. It exists to let users choose which providers to monitor together through settings controls. Its scope includes selectable provider toggles and user-defined ordering. The intended outcome is a configurable, ordered view of tracking for multiple providers at once.\n\n## Master plan\n\nMaster roadmap plan from docs/plans/2026-07-29-001-feat-multi-provider-model-tracking-plan.md.\n\n## Goal Capsule\n\n- **Objective:** Let pi-statusline users compare live available capacity across their configured model providers without switching models or sessions.\n- **Product authority:** pi-statusline user requirements captured for work-1.1.\n- **Open blockers:** Every visible quota row needs a provider-authorized live usage source. GLM additionally needs documented authorization for pi and the account's eligible plan before it can render live usage.\n\n---",
+      "displayMetadata": {
+        "schemaVersion": 1,
+        "title": "Multi-provider model tracking"
+      },
+      "documentLinks": {
+        "design": "docs/plans/2026-07-29-001-feat-multi-provider-model-tracking-plan.md"
+      },
       "evidence": [],
       "id": "work-1",
       "labels": [],
       "notes": [
-        "created by /work-brainstorm\nwo:brainstorm\nauto-created for standalone brainstorm\ntask: I want to create multi level simultaneous tracking for multiple provider of models. For example the user goes into settings and there sets with toggles which he wants to keep track of simultaneously. Also the user to be able to order them how he wants, since the models will be one under another. Those rows of models again to be customiseable just like they are now, to be able to go into the settings of the plugin and to toggle what metric you want to see and what not. lets clarify exactly how i imagine it, preferably with examples first then to create it\nRole liveness guidance: when a specialist is required, launch it async with control.needsAttentionAfterMs=30000 and use subagent_wait/status; never block the TUI on a foreground child. needsAttentionAfterMs=30000 is an attention notification, not a hard timeout. If a run needs an explicit timeout, planner/worker/reviewer/fixer/debugger/migrator get at least 10 minutes and committer gets at least 3 minutes. Treat timeout or startup/auth failure as infrastructure evidence, not implementation failure. Reviewer handoff guidance: do not handcraft a reviewer task when a coded handoff is available. A reviewer waiting on contact_supervisor is not an implementation or review failure. Delayed supervisor guidance: query intercom pending plus the subagent run and work-item state before replying. If no request is pending, the run is terminal, or the work item is closed, classify it as stale and do not reply, resume, append another verdict, or restart work. For a live request use intercom action reply; replyTo is a message ID, never a child session name."
+        "created by /work-brainstorm\nwo:brainstorm\nauto-created for standalone brainstorm\ntask: I want to create multi level simultaneous tracking for multiple provider of models. For example the user goes into settings and there sets with toggles which he wants to keep track of simultaneously. Also the user to be able to order them how he wants, since the models will be one under another. Those rows of models again to be customiseable just like they are now, to be able to go into the settings of the plugin and to toggle what metric you want to see and what not. lets clarify exactly how i imagine it, preferably with examples first then to create it\nRole liveness guidance: when a specialist is required, launch it async with control.needsAttentionAfterMs=30000 and use subagent_wait/status; never block the TUI on a foreground child. needsAttentionAfterMs=30000 is an attention notification, not a hard timeout. If a run needs an explicit timeout, planner/worker/reviewer/fixer/debugger/migrator get at least 10 minutes and committer gets at least 3 minutes. Treat timeout or startup/auth failure as infrastructure evidence, not implementation failure. Reviewer handoff guidance: do not handcraft a reviewer task when a coded handoff is available. A reviewer waiting on contact_supervisor is not an implementation or review failure. Delayed supervisor guidance: query intercom pending plus the subagent run and work-item state before replying. If no request is pending, the run is terminal, or the work item is closed, classify it as stale and do not reply, resume, append another verdict, or restart work. For a live request use intercom action reply; replyTo is a message ID, never a child session name.",
+        "created by /work-plan\nsource plan: docs/plans/2026-07-29-001-feat-multi-provider-model-tracking-plan.md"
       ],
       "status": "open",
       "title": "Multi-provider model tracking",
       "type": "epic",
-      "updatedAt": "2026-07-29T13:26:39.341Z"
+      "updatedAt": "2026-07-29T14:47:51.469Z"
     },
     "work-1.1": {
       "createdAt": "2026-07-29T13:26:35.451Z",
       "dependencies": [],
       "dependencyEdges": [],
       "description": "Idea created by /work-brainstorm.\n\nFull brainstorm request:\nI want to create multi level simultaneous tracking for multiple provider of models. For example the user goes into settings and there sets with toggles which he wants to keep track of simultaneously. Also the user to be able to order them how he wants, since the models will be one under another. Those rows of models again to be customiseable just like they are now, to be able to go into the settings of the plugin and to toggle what metric you want to see and what not. lets clarify exactly how i imagine it, preferably with examples first then to create it",
+      "displayMetadata": {
+        "schemaVersion": 1,
+        "title": "Brainstorm multi-provider simultaneous model tracking"
+      },
       "evidence": [],
       "id": "work-1.1",
       "labels": [],
       "notes": [
         "wo:idea schema=1 status=discussed",
-        "wo:failure-summary run=agent-ms64c7wl-3rox0j role=work action=brainstorm duration=26m 17s\nreason: unknown\nartifact: D:\\GitHubProjects\\pi-statusline\\.pi\\work-runs\\2026-07-29.jsonl\nlatest: toolResult: User answered: just one thing to change. since you can get the providers registered from in PI agent. get them from there and so we create it multi provider first. Not specific provider dependent. So the plan is to cover all providers by default. In settings o…\nlatest: toolResult: User cancelled the question\nnext: /work-report work-1.1"
+        "wo:failure-summary run=agent-ms64c7wl-3rox0j role=work action=brainstorm duration=26m 17s\nreason: unknown\nartifact: D:\\GitHubProjects\\pi-statusline\\.pi\\work-runs\\2026-07-29.jsonl\nlatest: toolResult: User answered: just one thing to change. since you can get the providers registered from in PI agent. get them from there and so we create it multi provider first. Not specific provider dependent. So the plan is to cover all providers by default. In settings o…\nlatest: toolResult: User cancelled the question\nnext: /work-report work-1.1",
+        "Superseded by planned execution slices work-1.3/work-1.4/work-1.5 derived from docs/plans/2026-07-29-001-feat-multi-provider-model-tracking-plan.md; idea captured and fully sliced, no longer independently executable."
+      ],
+      "parentId": "work-1",
+      "status": "closed",
+      "title": "I want to create multi level simultaneous tracking for multiple provider of models. For example the user goes into settings and there sets with toggles which he wants to… [y72nyo]",
+      "type": "task",
+      "updatedAt": "2026-07-29T14:52:25.445Z"
+    },
+    "work-1.2": {
+      "createdAt": "2026-07-29T14:47:51.469Z",
+      "dependencies": [],
+      "dependencyEdges": [],
+      "evidence": [],
+      "id": "work-1.2",
+      "labels": [],
+      "notes": [
+        "created by /work-plan\nwo:planning\nsource plan: docs/plans/2026-07-29-001-feat-multi-provider-model-tracking-plan.md\ncreate one executable slice by default\ntask: Multi-provider model tracking\nRole liveness guidance: when a specialist is required, launch it async with control.needsAttentionAfterMs=30000 and use subagent_wait/status; never block the TUI on a foreground child. needsAttentionAfterMs=30000 is an attention notification, not a hard timeout. If a run needs an explicit timeout, planner/worker/reviewer/fixer/debugger/migrator get at least 10 minutes and committer gets at least 3 minutes. Treat timeout or startup/auth failure as infrastructure evidence, not implementation failure. Reviewer handoff guidance: do not handcraft a reviewer task when a coded handoff is available. A reviewer waiting on contact_supervisor is not an implementation or review failure. Delayed supervisor guidance: query intercom pending plus the subagent run and work-item state before replying. If no request is pending, the run is terminal, or the work item is closed, classify it as stale and do not reply, resume, append another verdict, or restart work. For a live request use intercom action reply; replyTo is a message ID, never a child session name.",
+        "Planning complete. Created expand-contract execution chain work-1.3 -> work-1.4 -> work-1.5 covering R1-R14, AE1-AE7, and F1-F3 from docs/plans/2026-07-29-001-feat-multi-provider-model-tracking-plan.md. The first slice preserves current runtime behavior while adding discovery/reconciliation/atomic persistence; the second adds transactional interactive configuration and independent fresh/hidden provider health; the third consumes those seams for ordered footer rows, active-session dedupe, and README documentation. Provider rows remain fail-closed: no GLM row without documented authorization for pi and the account plan.",
+        "Executable dependency-linked slices work-1.3 through work-1.5 now durably cover the source plan; required plan artifact exists at its declared path."
+      ],
+      "parentId": "work-1",
+      "status": "closed",
+      "title": "Plan next slice for Multi-provider model tracking",
+      "type": "task",
+      "updatedAt": "2026-07-29T14:50:55.161Z"
+    },
+    "work-1.3": {
+      "acceptance": "1. A focused test with authenticated and unauthenticated registry models proves only unique providers returned by getAvailable() become tracking choices; full-catalog and user-invented providers do not (R1, AE1, F1). 2. Migration/reconciliation tests prove the stack defaults on, all first-seen providers start selected, explicit deselection survives disappearance/return, unavailable providers retain saved order/configuration, and newly available providers append selected (R2, R6, AE2, F1). 3. Shared usage/reset defaults start enabled and provider metric overrides are stored sparsely without changing inherited values (R7-R8 groundwork). 4. Atomic-save tests prove a successful save replaces the config as one complete JSON document and a write/rename failure leaves the prior on-disk document and runtime settings unchanged (R13, AE3, F2). 5. Existing config fixtures remain loadable and npm test plus npm run typecheck pass.",
+      "createdAt": "2026-07-29T14:50:01.032Z",
+      "dependencies": [],
+      "dependencyEdges": [],
+      "description": "Add the backward-compatible provider-tracking configuration seam: derive unique configured providers from ModelRegistry.getAvailable(), reconcile them with durable selection/order/metric state, and save confirmed settings atomically without changing current footer or command behavior yet.",
+      "evidence": [
+        {
+          "closeEvidence": "Completed by coded inline work path"
+        }
+      ],
+      "id": "work-1.3",
+      "labels": [],
+      "notes": [
+        "wo:execution-slice; source: docs/plans/2026-07-29-001-feat-multi-provider-model-tracking-plan.md; expand-contract slice 1/3. Covered plan parts: R1, R2, R6, R7-R8 configuration groundwork, R13; AE1 configuration subset, AE2, AE3 persistence subset; F1 reconciliation and F2 atomic commit seam. Keep the existing single active-provider footer and argument commands working; no interactive menu or provider rows in this slice.",
+        "wo:verify-check FAIL\nCommand: npm test && npm run typecheck\nn streams (0.1633ms)\\n✔ averages recent turns instead of freezing on the last one (0.1224ms)\\n✔ classifies rates with directional baselines and an output floor (0.0941ms)\\n✔ caps histories and resets displayed throughput on model changes (0.16ms)\\n✔ finalizes active time without preserving rates (0.1103ms)\\n✔ retains idle result, resets on turn start, and accumulates active time (0.2188ms)\\nℹ tests 40\\nℹ suites 0\\nℹ pass 40\\nℹ fail 0\\nℹ cancelled 0\\nℹ skipped 0\\nℹ todo 0\\nℹ duration_ms 317.8075\"",
+        "wo:review-scope [\"src/config.ts\",\"test/config.test.ts\"]",
+        "wo:review FAIL {\"findings\":[\"test/config.test.ts:64 - replace loadSettings() with loadSettings(join(tmpdir(), missing-path)) so reconciliation assertions do not read the real ~/.pi/agent/statusline.json; a machine with saved providerTracking.selected entries fails the deepEqual selected/order assertions\",\"test/config.test.ts:93 - same fix: build the saved document from a temp-path loadSettings or DEFAULT_SETTINGS instead of the real user config so the atomic-save test is deterministic\",\"test/config.test.ts:53 - add one merge/load test for a legacy config document without providerTracking and with a partial plus invalid overrides entry, proving defaults fill in (enabled/metrics on) and overrides stay sparse, per acceptance criteria 3 and 5\"]}",
+        "",
+        "wo:mechanical-fix PASS {\"dispositions\":[{\"finding\":\"test/config.test.ts:64 - replace loadSettings() with loadSettings(join(tmpdir(), missing-path)) so reconciliation assertions do not read the real ~/.pi/agent/statusline.json; a machine with saved providerTracking.selected entries fails the deepEqual selected/order assertions\",\"fix\":\"Replaced reconcileProviderTracking(loadSettings(), ...) baseline with DEFAULT_SETTINGS (imported from src/config.ts) so the test no longer reads the real user config file.\",\"evidence\":\"npm test: 41/41 pass; grep -n \\\"loadSettings()\\\" test/*.ts shows zero bare calls\"},{\"finding\":\"test/config.test.ts:93 - same fix: build the saved document from a temp-path loadSettings or DEFAULT_SETTINGS instead of the real user config so the atomic-save test is deterministic\",\"fix\":\"Replaced const before = loadSettings() with const before = DEFAULT_SETTINGS in the atomic-save test.\",\"evidence\":\"npm test: 41/41 pass, including saves provider tracking atomically\"},{\"finding\":\"test/config.test.ts:53 - add one merge/load test for a legacy config document without providerTracking and with a partial plus invalid overrides entry, proving defaults fill in (enabled/metrics on) and overrides stay sparse, per acceptance criteria 3 and 5\",\"fix\":\"Added test defaults legacy provider tracking and drops junk overrides: loads a temp legacy config with no top-level providerTracking key, and a second case with only overrides (one valid sparse override, one non-boolean value, one blank provider key), asserting default enabled/metrics/selected/order and that only the valid override survives.\",\"evidence\":\"npm test: 41/41 pass including new test defaults legacy provider tracking and drops junk overrides (2.2ms); npm run typecheck clean\"}]}",
+        "wo:verify-check PASS\nCommand: npm test && npm run typecheck\nOutput:  while a turn streams (0.1594ms)\n✔ averages recent turns instead of freezing on the last one (0.1177ms)\n✔ classifies rates with directional baselines and an output floor (0.1047ms)\n✔ caps histories and resets displayed throughput on model changes (0.1765ms)\n✔ finalizes active time without preserving rates (0.6484ms)\n✔ retains idle result, resets on turn start, and accumulates active time (0.2539ms)\nℹ tests 41\nℹ suites 0\nℹ pass 41\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 336.3266"
+      ],
+      "parentId": "work-1",
+      "status": "closed",
+      "title": "Persist discovered provider tracking defaults atomically",
+      "type": "task",
+      "updatedAt": "2026-07-29T22:09:03.476Z"
+    },
+    "work-1.4": {
+      "acceptance": "1. Bare /statusline opens an interactive menu containing only discovered configured providers and controls stack enablement, selection, order, shared usage/reset metrics, independent sparse provider overrides, reset-to-inherit, and latest sanitized hidden reason; existing on/off/toggle argument commands remain supported (R4, R7-R8, R11, AE3, F2). 2. Confirm applies runtime settings only after the atomic save succeeds; cancel and injected save failure preserve both prior runtime and on-disk settings (R13, AE3, F2). 3. Provider usage adapters use only credentials already available through pi, preserve source-specific windows/labels, and providers without a permitted source or eligible account produce a sanitized hidden state rather than fabricated quota (R9-R11, AE5). 4. Deterministic timer/fetch tests prove refresh is provider-scoped, bounded, independent of render and turn events, does not let one timeout delay another provider, hides results older than the documented maximum age, retries on a bounded cadence, and restores fresh health automatically (R12, AE6, F1, F3). 5. Error fixtures prove credentials and raw response bodies never reach menu health text; npm test and npm run typecheck pass.",
+      "createdAt": "2026-07-29T14:50:18.830Z",
+      "dependencies": [
+        "work-1.3"
+      ],
+      "dependencyEdges": [],
+      "description": "Build the first user-visible provider-tracking tracer bullet on the new configuration seam: bare /statusline opens a transactional interactive menu, and a provider-scoped background usage coordinator supplies fresh data or sanitized hidden reasons without coupling network refresh to footer rendering.",
+      "evidence": [],
+      "id": "work-1.4",
+      "labels": [],
+      "notes": [
+        "wo:execution-slice; source: docs/plans/2026-07-29-001-feat-multi-provider-model-tracking-plan.md; expand-contract slice 2/3. Covered plan parts: R4, R7-R9, R11-R13; AE3, AE5 menu/source subset, AE6; F1 refresh startup, F2, F3 health recovery. Only provider-authorized sources may become fresh; GLM stays hidden with a sanitized source/plan-eligibility reason unless equivalent authorization for pi and the account plan is documented. Keep legacy one-line footer rendering until slice 3."
       ],
       "parentId": "work-1",
       "status": "open",
-      "title": "I want to create multi level simultaneous tracking for multiple provider of models. For example the user goes into settings and there sets with toggles which he wants to… [y72nyo]",
+      "title": "Configure provider tracking with independent health refresh",
       "type": "task",
-      "updatedAt": "2026-07-29T13:52:58.542Z"
+      "updatedAt": "2026-07-29T14:50:43.546Z"
+    },
+    "work-1.5": {
+      "acceptance": "1. Footer tests prove the active-session line remains first and every fresh usable selected provider renders as one separately identifiable row in saved order; width adaptation may reduce row contents but never silently drops a usable row (R3, AE1, F1). 2. Rows apply shared usage/reset defaults plus sparse per-provider overrides, preserve provider-specific windows, and hide when no enabled available metric remains or data is missing, unauthorized, expired, unavailable, or stale (R8-R10, AE5, F3). 3. Active-provider quota is absent from the active-session line only while that provider row is actually returned; disabling the stack, deselecting the provider, disabling its available metrics, or any hidden/stale state restores applicable active-session quota (R5, AE4). 4. An integration fixture with one timed-out and one fresh provider proves rendering never waits for refresh, the fresh row updates independently, and a later successful retry restores the failed row in saved position (R12 consumption, AE6, F3). 5. README documents the default-on stack, getAvailable configured-provider filtering, interactive bare command and compatible argument commands, selection/order, shared defaults and sparse overrides, availability/staleness/hidden reasons, metric inheritance, and provider-specific authorized-source limitations (R14, AE7). 6. npm test and npm run typecheck pass.",
+      "createdAt": "2026-07-29T14:50:34.560Z",
+      "dependencies": [
+        "work-1.4"
+      ],
+      "dependencyEdges": [],
+      "description": "Complete the tracer bullet by rendering each fresh usable selected provider beneath the unchanged active-session line, applying saved order and metric inheritance, suppressing active-provider quota only when its row is actually visible, and documenting the shipped behavior and limitations.",
+      "evidence": [],
+      "id": "work-1.5",
+      "labels": [],
+      "notes": [
+        "wo:execution-slice; source: docs/plans/2026-07-29-001-feat-multi-provider-model-tracking-plan.md; expand-contract slice 3/3. Covered plan parts: R3, R5, R8-R10, R12 render integration, R14; AE1 display subset, AE4-AE7; F1 and F3 rendering. Reuse the discovery, config, and refresh states from slices 1-2; do not add a fixed provider catalog, synthetic quota, scraping, or extra credentials."
+      ],
+      "parentId": "work-1",
+      "status": "open",
+      "title": "Render fresh ordered provider rows with active quota dedupe",
+      "type": "task",
+      "updatedAt": "2026-07-29T14:50:43.657Z"
     }
   },
   "metadata": {
@@ -1049,7 +1217,7 @@
       "recordCount": 11,
       "sourceFingerprint": "716c6815dbadf79dc70c6d01af6a643e7bcf36809c4af4405175a0d2a56789f1"
     },
-    "updatedAt": "2026-07-29T13:52:58.542Z"
+    "updatedAt": "2026-07-29T22:09:03.476Z"
   },
   "schemaVersion": 1
 }
