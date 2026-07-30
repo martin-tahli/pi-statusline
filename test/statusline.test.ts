@@ -461,6 +461,72 @@ test("bare /statusline opens the interactive provider menu and lets Escape disca
   assert.equal(notifications.length, 0, "Escape must cancel without notifying or persisting");
 });
 
+test("tracks every selected provider's usage simultaneously, not just the active model's", async () => {
+  const handlers = new Map<string, (...args: any[]) => unknown>();
+  let footer: { dispose?: () => void; render: (width: number) => string[] } | undefined;
+  const originalFetch = globalThis.fetch;
+  const codexToken = `h.${Buffer.from(JSON.stringify({ "https://api.openai.com/auth": { chatgpt_account_id: "acct_1" } })).toString("base64url")}.s`;
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.includes("anthropic.com")) {
+      return new Response(JSON.stringify({
+        five_hour: { utilization: 10, resets_at: Date.now() + 3_600_000 },
+        seven_day: { utilization: 20, resets_at: Date.now() + 86_400_000 },
+      }), { status: 200 });
+    }
+    return new Response(JSON.stringify({
+      rate_limit: { primary_window: { used_percent: 30, limit_window_seconds: 3_600, reset_at: Math.floor(Date.now() / 1_000) + 3_600 } },
+    }), { status: 200 });
+  }) as typeof fetch;
+  try {
+    const pi = {
+      on: (event: string, handler: (...args: any[]) => unknown) => handlers.set(event, handler),
+      registerCommand: () => {},
+      getThinkingLevel: () => "off",
+      exec: async () => ({ code: 0, stdout: "", stderr: "" }),
+      appendEntry: () => {},
+    } as never;
+    const ctx = {
+      cwd: process.cwd(),
+      // The active model is Codex, not Anthropic. Before the fix, this alone hid Anthropic's row
+      // (and any provider row but the active one) no matter what the settings menu had selected.
+      model: { id: "gpt-5-codex", provider: "openai-codex", baseUrl: "https://chatgpt.com/backend-api/codex" },
+      modelRegistry: {
+        isUsingOAuth: (model: { provider: string }) => model.provider === "anthropic",
+        getApiKeyForProvider: async (provider: string) => (provider === "openai-codex" ? codexToken : "access-token"),
+        getAvailable: () => [
+          { provider: "anthropic", id: "claude" },
+          { provider: "openai-codex", id: "gpt-5-codex", baseUrl: "https://chatgpt.com/backend-api/codex" },
+        ],
+      },
+      getContextUsage: () => undefined,
+      hasPendingMessages: () => false,
+      sessionManager: { getBranch: () => [] },
+      ui: {
+        setFooter: (factory: any) => {
+          footer = factory?.(
+            { requestRender: () => {} },
+            { fg: (_: string, text: string) => text, getColorMode: () => "16" },
+            { getGitBranch: () => null, getAvailableProviderCount: () => 2, onBranchChange: () => () => {} },
+          );
+        },
+        notify: () => {},
+      },
+    } as never;
+
+    statusline(pi);
+    await handlers.get("session_start")!({}, ctx);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    const lines = footer!.render(500);
+    assert.ok(lines.some((line) => line.includes("anthropic") && line.includes("5h")), `expected an anthropic row despite Codex being active, got: ${JSON.stringify(lines)}`);
+    assert.ok(lines.some((line) => line.includes("openai-codex")), `expected an openai-codex row, got: ${JSON.stringify(lines)}`);
+  } finally {
+    footer?.dispose?.();
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("refreshes git status on an interval independent of turn activity", async () => {
   const handlers = new Map<string, (...args: any[]) => unknown>();
   let intervalCallback: (() => void) | undefined;

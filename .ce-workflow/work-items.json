@@ -1243,6 +1243,29 @@
       "title": "Render fresh ordered provider rows with active quota dedupe",
       "type": "task",
       "updatedAt": "2026-07-29T22:26:35.233Z"
+    },
+    "work-1.6": {
+      "acceptance": "Selecting and authenticating two or more providers shows fresh usage rows for all of them simultaneously, regardless of which model is currently active.",
+      "createdAt": "2026-07-30T14:46:24.726Z",
+      "dependencies": [],
+      "dependencyEdges": [],
+      "description": "refreshAnthropicLimits/refreshCodexLimits, reused as the multi-provider tracking adapters, gated on ctx.model.provider === <that provider>. Since only one model can be active at a time, provider rows for any non-active provider (e.g. openai-codex or anthropic when the other was active) never populated regardless of being selected in the settings menu, contradicting the epic's own objective ('...without switching models or sessions').",
+      "evidence": [
+        {
+          "closeEvidence": "Completed by coded inline work path"
+        }
+      ],
+      "id": "work-1.6",
+      "labels": [],
+      "notes": [
+        "wo:debug Root-caused directly (no debugger subagent needed): isAnthropicOAuth(ctx) and the ctx.model.provider!==\"openai-codex\" guard inside refresh*Limits assumed the fetch was always for the active session. Fix: extracted pure fetchAnthropicUsage(ctx, model)/fetchCodexUsage(ctx, model) with no side effects on the shared limits/tick/session-entry state, resolved via a new findAvailableModel(ctx, provider) helper instead of ctx.model. The session-line refresh*Limits wrappers keep their active-model gate (so a background provider fetch never clobbers the active session's own bars); the provider-tracking adapters in session_start now call the pure fetchers directly. Added a regression test that reproduces the bug (Codex active, Anthropic also selected+authenticated) and verified it fails on the pre-fix code and passes after.",
+        "wo:verify-check PASS\nCommand: npm test && npm run typecheck\nOutput:  while a turn streams (0.1675ms)\n✔ averages recent turns instead of freezing on the last one (0.1198ms)\n✔ classifies rates with directional baselines and an output floor (0.0969ms)\n✔ caps histories and resets displayed throughput on model changes (0.1583ms)\n✔ finalizes active time without preserving rates (0.109ms)\n✔ retains idle result, resets on turn start, and accumulates active time (0.2382ms)\nℹ tests 48\nℹ suites 0\nℹ pass 48\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 1111.9078"
+      ],
+      "parentId": "work-1",
+      "status": "closed",
+      "title": "Provider tracking only showed the active model's provider",
+      "type": "bug",
+      "updatedAt": "2026-07-30T14:46:34.813Z"
     }
   },
   "metadata": {
@@ -1252,7 +1275,7 @@
       "recordCount": 11,
       "sourceFingerprint": "716c6815dbadf79dc70c6d01af6a643e7bcf36809c4af4405175a0d2a56789f1"
     },
-    "updatedAt": "2026-07-30T14:30:29.875Z"
+    "updatedAt": "2026-07-30T14:46:34.813Z"
   },
   "schemaVersion": 1
 }

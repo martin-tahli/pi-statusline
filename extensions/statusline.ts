@@ -129,6 +129,12 @@ export default function statusline(pi: ExtensionAPI) {
   const isAnthropicOAuth = (ctx: ExtensionContext) =>
     ctx.model?.provider === "anthropic" && ctx.modelRegistry.isUsingOAuth(ctx.model);
 
+  // The active model's provider, not necessarily configured/authenticated, is irrelevant here:
+  // provider-tracking rows need usage for every *selected* provider, so resolve each provider's
+  // own model from the registry instead of assuming it's the one currently in use.
+  const findAvailableModel = (ctx: ExtensionContext, provider: string) =>
+    ctx.modelRegistry.getAvailable().find((model) => model.provider === provider);
+
   const codexAccountId = (token: string): string | undefined => {
     try {
       const payload = JSON.parse(atob(token.split(".")[1] ?? ""));
@@ -149,10 +155,12 @@ export default function statusline(pi: ExtensionAPI) {
     return [];
   };
 
-  // Returns the freshly fetched windows (empty when unavailable) so provider-scoped callers can use
-  // their own result instead of the shared session `limits` state.
-  const refreshAnthropicLimits = async (ctx: ExtensionContext): Promise<RateLimits> => {
-    if (!isAnthropicOAuth(ctx)) return [];
+  // Pure provider-scoped fetch: no side effects on the active session's `limits`/tick/persisted
+  // entry, so it's safe to call for a provider that isn't the currently active model. The
+  // provider-tracking rows need every *selected* provider's usage simultaneously, not just
+  // whichever one you happen to be talking to right now.
+  const fetchAnthropicUsage = async (ctx: ExtensionContext, model: ReturnType<typeof findAvailableModel>): Promise<RateLimits> => {
+    if (!model || !ctx.modelRegistry.isUsingOAuth(model)) return [];
     try {
       const access = await ctx.modelRegistry.getApiKeyForProvider("anthropic");
       if (!access) return [];
@@ -166,27 +174,21 @@ export default function statusline(pi: ExtensionAPI) {
         },
         signal: AbortSignal.timeout(3_000),
       });
-      if (!response.ok || !isAnthropicOAuth(ctx)) return [];
-      const next = parseAnthropicUsage(await response.json());
-      if (!next.length) return [];
-      limits = next;
-      pi.appendEntry(ANTHROPIC_LIMITS_ENTRY, limits);
-      syncTick();
-      requestRender?.();
-      return next;
+      if (!response.ok) return [];
+      return parseAnthropicUsage(await response.json());
     } catch {
       // Best effort: unavailable account usage falls back to response headers.
       return [];
     }
   };
 
-  const refreshCodexLimits = async (ctx: ExtensionContext): Promise<RateLimits> => {
-    if (ctx.model?.provider !== "openai-codex") return [];
+  const fetchCodexUsage = async (ctx: ExtensionContext, model: ReturnType<typeof findAvailableModel>): Promise<RateLimits> => {
+    if (!model?.baseUrl) return [];
     try {
       const access = await ctx.modelRegistry.getApiKeyForProvider("openai-codex");
       const accountId = access ? codexAccountId(access) : undefined;
       if (!access || !accountId) return [];
-      const origin = new URL(ctx.model.baseUrl).origin;
+      const origin = new URL(model.baseUrl).origin;
       const response = await fetch(`${origin}/backend-api/wham/usage`, {
         headers: {
           authorization: `Bearer ${access}`,
@@ -195,16 +197,35 @@ export default function statusline(pi: ExtensionAPI) {
         },
         signal: AbortSignal.timeout(3_000),
       });
-      if (!response.ok || ctx.model?.provider !== "openai-codex") return [];
-      const next = parseCodexUsage(await response.json());
-      limits = next;
-      syncTick();
-      requestRender?.();
-      return next;
+      if (!response.ok) return [];
+      return parseCodexUsage(await response.json());
     } catch {
-      // Best effort: unavailable account usage simply stays hidden.
       return [];
     }
+  };
+
+  // Active-session wrappers: only apply fetched usage to the shared `limits`/tick/persisted entry
+  // when the fetched provider is actually the active model, so a background provider-tracking
+  // fetch for a different provider never clobbers what the session line shows.
+  const refreshAnthropicLimits = async (ctx: ExtensionContext): Promise<RateLimits> => {
+    if (!isAnthropicOAuth(ctx)) return [];
+    const next = await fetchAnthropicUsage(ctx, ctx.model);
+    if (!next.length || !isAnthropicOAuth(ctx)) return [];
+    limits = next;
+    pi.appendEntry(ANTHROPIC_LIMITS_ENTRY, limits);
+    syncTick();
+    requestRender?.();
+    return next;
+  };
+
+  const refreshCodexLimits = async (ctx: ExtensionContext): Promise<RateLimits> => {
+    if (ctx.model?.provider !== "openai-codex") return [];
+    const next = await fetchCodexUsage(ctx, ctx.model);
+    if (ctx.model?.provider !== "openai-codex") return [];
+    limits = next;
+    syncTick();
+    requestRender?.();
+    return next;
   };
 
   // Sum token usage across the session's assistant messages. "input" folds cached and
@@ -459,8 +480,8 @@ export default function statusline(pi: ExtensionAPI) {
       const next = await fetchLimits();
       return next.length ? { limits: next } : undefined;
     };
-    if (providers.includes("anthropic")) adapters.set("anthropic", { refresh: () => scoped(() => refreshAnthropicLimits(ctx)) });
-    if (providers.includes("openai-codex")) adapters.set("openai-codex", { refresh: () => scoped(() => refreshCodexLimits(ctx)) });
+    if (providers.includes("anthropic")) adapters.set("anthropic", { refresh: () => scoped(() => fetchAnthropicUsage(ctx, findAvailableModel(ctx, "anthropic"))) });
+    if (providers.includes("openai-codex")) adapters.set("openai-codex", { refresh: () => scoped(() => fetchCodexUsage(ctx, findAvailableModel(ctx, "openai-codex"))) });
     providerRefresh?.stop();
     providerRefresh = new ProviderRefreshCoordinator(adapters, () => requestRender?.());
     providerRefresh.start(providers);
