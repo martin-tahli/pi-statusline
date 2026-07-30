@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { initTheme } from "@earendil-works/pi-coding-agent";
 import statusline from "../extensions/statusline.ts";
+
+// The interactive settings menu resolves colors from pi's global theme singleton
+// (getSettingsListTheme() throws "Theme not initialized" otherwise). Real pi sessions
+// call this at startup; tests must do it once too.
+initTheme();
 
 test("stops the live timer when settled or the footer is disposed", async () => {
   const handlers = new Map<string, (...args: any[]) => unknown>();
@@ -399,6 +405,60 @@ test("renders a fresh active provider beneath the session line without duplicate
     footer?.dispose?.();
     globalThis.fetch = originalFetch;
   }
+});
+
+test("bare /statusline opens the interactive provider menu and lets Escape discard unsaved toggles", async () => {
+  const handlers = new Map<string, (...args: any[]) => unknown>();
+  let commandHandler: ((args: string, ctx: any) => Promise<void>) | undefined;
+  const notifications: Array<[string, string]> = [];
+  let customOpened = false;
+  const pi = {
+    on: (event: string, handler: (...args: any[]) => unknown) => handlers.set(event, handler),
+    registerCommand: (_name: string, def: { handler: (args: string, ctx: any) => Promise<void> }) => { commandHandler = def.handler; },
+    getThinkingLevel: () => "off",
+    exec: async () => ({ code: 0, stdout: "", stderr: "" }),
+  } as never;
+  const ctx = {
+    cwd: process.cwd(),
+    model: { id: "claude", provider: "anthropic" },
+    modelRegistry: {
+      isUsingOAuth: () => false,
+      getApiKeyForProvider: async () => undefined,
+      getAvailable: () => [{ provider: "anthropic" }, { provider: "openai-codex" }],
+    },
+    getContextUsage: () => undefined,
+    hasPendingMessages: () => false,
+    sessionManager: { getBranch: () => [] },
+    ui: {
+      setFooter: () => {},
+      notify: (message: string, level: string) => notifications.push([message, level]),
+      custom: (factory: any) => new Promise((resolve) => {
+        customOpened = true;
+        const component = factory(
+          { requestRender: () => {} },
+          { fg: (_: string, text: string) => text, bold: (text: string) => text, getColorMode: () => "16" },
+          {},
+          resolve,
+        );
+        // Down x3 reaches the first provider's "selected" row (enabled, usage, reset, then per-provider rows).
+        component.handleInput("\x1b[B");
+        component.handleInput("\x1b[B");
+        component.handleInput("\x1b[B");
+        component.handleInput(" "); // toggle anthropic from selected -> hidden
+        const rendered = component.render(80).join("\n");
+        assert.ok(rendered.includes("anthropic") && rendered.includes("hidden"), `expected a togglable anthropic row, got: ${rendered}`);
+        component.handleInput("\x1b"); // Escape cancels
+      }),
+    },
+  } as never;
+
+  statusline(pi);
+  await handlers.get("session_start")!({}, ctx);
+  assert.ok(commandHandler, "expected /statusline to register a handler");
+  await commandHandler!("", ctx);
+
+  assert.ok(customOpened, "bare /statusline must open the interactive menu, not just print settings");
+  assert.equal(notifications.length, 0, "Escape must cancel without notifying or persisting");
 });
 
 test("refreshes git status on an interval independent of turn activity", async () => {
