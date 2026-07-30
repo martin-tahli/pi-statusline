@@ -6,8 +6,12 @@ import { SEGMENT_ORDER, type SegmentId } from "./segments.ts";
 export const EXTRA_NAMES = ["branch", "nerdFont", "cost", "sessionElapsed", "lastTurn", "pending"] as const;
 export type ExtraName = (typeof EXTRA_NAMES)[number];
 
+export const PROVIDER_METRICS = ["usage", "percent", "reset"] as const;
+export type ProviderMetricId = (typeof PROVIDER_METRICS)[number];
+
 export interface ProviderMetrics {
   usage: boolean;
+  percent: boolean;
   reset: boolean;
 }
 
@@ -30,7 +34,7 @@ const DEFAULT_PROVIDER_TRACKING: ProviderTrackingSettings = {
   enabled: true,
   selected: {},
   order: [],
-  metrics: { usage: true, reset: true },
+  metrics: { usage: true, percent: true, reset: true },
   overrides: {},
 };
 
@@ -76,7 +80,7 @@ function mergeProviderTracking(value: unknown): ProviderTrackingSettings {
   const metrics = record(input.metrics);
   const overrides = Object.fromEntries(Object.entries(record(input.overrides)).flatMap(([provider, override]) => {
     const values = record(override);
-    const sparse = Object.fromEntries(["usage", "reset"].flatMap((metric) =>
+    const sparse = Object.fromEntries(PROVIDER_METRICS.flatMap((metric) =>
       typeof values[metric] === "boolean" ? [[metric, values[metric]]] : []
     )) as Partial<ProviderMetrics>;
     return providerName(provider) && Object.keys(sparse).length ? [[provider, sparse]] : [];
@@ -85,10 +89,9 @@ function mergeProviderTracking(value: unknown): ProviderTrackingSettings {
     enabled: typeof input.enabled === "boolean" ? input.enabled : true,
     selected,
     order,
-    metrics: {
-      usage: typeof metrics.usage === "boolean" ? metrics.usage : true,
-      reset: typeof metrics.reset === "boolean" ? metrics.reset : true,
-    },
+    metrics: Object.fromEntries(PROVIDER_METRICS.map((metric) =>
+      [metric, typeof metrics[metric] === "boolean" ? metrics[metric] : true]
+    )) as unknown as ProviderMetrics,
     overrides,
   };
 }

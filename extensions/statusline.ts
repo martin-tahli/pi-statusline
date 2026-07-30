@@ -4,6 +4,7 @@ import { Container, type SettingItem, SettingsList, truncateToWidth } from "@ear
 import { renderBar, type BarStyle } from "../src/bar.ts";
 import {
   DEFAULT_CONFIG_PATH,
+  PROVIDER_METRICS,
   configuredProviders,
   formatSettings,
   loadSettings,
@@ -328,7 +329,7 @@ export default function statusline(pi: ExtensionAPI) {
             if (health?.state !== "fresh") return [];
             const metrics = { ...tracking.metrics, ...tracking.overrides[provider] };
             const windows = health.usage.limits.flatMap((limit) => {
-              const usage = metrics.usage ? renderBar(limit.used, 12, barStyle(limit.used)) : "";
+              const usage = metrics.usage ? renderBar(limit.used, 12, barStyle(limit.used), undefined, metrics.percent) : "";
               const reset = metrics.reset && limit.resetAt !== undefined
                 ? theme.fg("dim", ` ↻ ${formatResetCountdown(limit.resetAt)}`)
                 : "";
@@ -378,15 +379,17 @@ export default function statusline(pi: ExtensionAPI) {
       const tracking = draft.providerTracking;
       const items: SettingItem[] = [
         { id: "enabled", label: "Provider stack", currentValue: tracking.enabled ? "on" : "off", values: ["on", "off"] },
-        { id: "usage", label: "Shared usage", currentValue: tracking.metrics.usage ? "on" : "off", values: ["on", "off"] },
-        { id: "reset", label: "Shared reset", currentValue: tracking.metrics.reset ? "on" : "off", values: ["on", "off"] },
+        ...PROVIDER_METRICS.map((metric) => (
+          { id: metric, label: `Shared ${metric}`, currentValue: tracking.metrics[metric] ? "on" : "off", values: ["on", "off"] }
+        )),
         ...providers.flatMap((provider) => {
           const override = tracking.overrides[provider] ?? {};
           const health = providerRefresh?.get(provider);
           return [
             { id: `selected:${provider}`, label: provider, description: health?.state === "hidden" ? health.reason : "usage is fresh", currentValue: tracking.selected[provider] ? "selected" : "hidden", values: ["selected", "hidden"] },
-            { id: `usage:${provider}`, label: `${provider} usage`, currentValue: override.usage === undefined ? "inherit" : override.usage ? "on" : "off", values: ["inherit", "on", "off"] },
-            { id: `reset:${provider}`, label: `${provider} reset`, currentValue: override.reset === undefined ? "inherit" : override.reset ? "on" : "off", values: ["inherit", "on", "off"] },
+            ...PROVIDER_METRICS.map((metric) => (
+              { id: `${metric}:${provider}`, label: `${provider} ${metric}`, currentValue: override[metric] === undefined ? "inherit" : override[metric] ? "on" : "off", values: ["inherit", "on", "off"] }
+            )),
             { id: `order:${provider}`, label: `${provider} order`, currentValue: String(tracking.order.indexOf(provider) + 1), values: ["move up", "move down"] },
           ];
         }),
@@ -395,7 +398,7 @@ export default function statusline(pi: ExtensionAPI) {
       const list = new SettingsList(items, 14, getSettingsListTheme(), (id, value) => {
         if (id === "save") { accepted = true; done(undefined); return; }
         if (id === "enabled") tracking.enabled = value === "on";
-        else if (id === "usage" || id === "reset") tracking.metrics[id] = value === "on";
+        else if ((PROVIDER_METRICS as readonly string[]).includes(id)) tracking.metrics[id as typeof PROVIDER_METRICS[number]] = value === "on";
         else {
           const [kind, provider] = id.split(":");
           if (!provider) return;
@@ -404,9 +407,10 @@ export default function statusline(pi: ExtensionAPI) {
             const index = tracking.order.indexOf(provider), target = value === "move up" ? index - 1 : index + 1;
             if (index >= 0 && target >= 0 && target < tracking.order.length) [tracking.order[index], tracking.order[target]] = [tracking.order[target]!, tracking.order[index]!];
           }
-          if (kind === "usage" || kind === "reset") {
+          if ((PROVIDER_METRICS as readonly string[]).includes(kind)) {
+            const metric = kind as typeof PROVIDER_METRICS[number];
             const next = { ...(tracking.overrides[provider] ?? {}) };
-            if (value === "inherit") delete next[kind]; else next[kind] = value === "on";
+            if (value === "inherit") delete next[metric]; else next[metric] = value === "on";
             if (Object.keys(next).length) tracking.overrides[provider] = next; else delete tracking.overrides[provider];
           }
         }

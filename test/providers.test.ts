@@ -66,4 +66,5 @@ test("hides stale results and never invents GLM usage", async () => {
   await coordinator.refresh("anthropic");
   assert.deepEqual(coordinator.get("anthropic", Date.now() + 21), { state: "hidden", reason: "usage data is stale", updatedAt: coordinator.get("anthropic").updatedAt });
   assert.equal(sanitizedReason("glm"), "no documented usage source for pi");
+  assert.equal(sanitizedReason("openrouter"), "usage requires an OpenRouter management key pi doesn't manage");
 });

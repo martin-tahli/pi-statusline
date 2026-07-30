@@ -6,9 +6,11 @@ A configurable, single-line footer for [pi](https://github.com/earendil-works/pi
 📁 pi-statusline  main ✓ > 🤖 qwen36-coder > 🧠 medium > 🪟  55.0%/1.0M > ⚡↑1.2k ↓74 t/s > ⏳ 12m34s
 📁 pi-statusline  main ↑2 > 🤖 claude-sonnet-5 > 🧠 high > 🪟  30.2%/200K > 5h ╺━━────────╴ 23% ↻2h14m wk ╺━━━━──────╴ 41% ↻4d6h > ⏳ 8m02s
 📁 pi-statusline  main ✓ > 🤖 gpt-5 > 🧠 high > 🪟  12.0%/400K > 🧾 ↑128K ↓34K $0.512 > ⏳ 3m20s
+anthropic 5h ╺━━────────╴ 27% ↻2h49m >wk ╺━━━━━━━━──╴ 77% ↻5h19m
+openai-codex 5h ╺━━━━━────╴ 41% ↻3h02m
 ```
 
-The first line is a local model (live token rates), the second an Anthropic subscription (quota bars, no throughput at idle), the third an API-key provider (running token totals and session cost). See [Throughput and time](#throughput-and-time).
+The first line is a local model (live token rates), the second an Anthropic subscription (quota bars, no throughput at idle), the third an API-key provider (running token totals and session cost). See [Throughput and time](#throughput-and-time). The last two lines are provider-tracking rows: every provider you select in `/statusline` (not just your active model) gets its own row with its own live usage, so you can compare available capacity across providers without switching. See [Provider tracking](#provider-tracking).
 
 Usage is a thin continuous line with rounded half-line ends and a dark-gray track. Its bright truecolor fill gives a restrained glow, moving smoothly from neon green through vivid orange to blood red as usage rises. Each provider-reported window includes a compact live reset countdown.
 
@@ -55,9 +57,23 @@ The Git HUD defaults on inside repositories: `main ✓`. It shows `↓` incoming
 /statusline toggle lastTurn         show the latest turn duration
 ```
 
-Settings persist in `~/.pi/agent/statusline.json`. The provider stack is on by default: it includes only providers returned by pi's configured `getAvailable()` models, selects newly configured providers, and keeps saved selection and order. The bare command opens controls for the stack, selection, order, shared usage/reset defaults, and sparse per-provider overrides; the argument commands above remain compatible.
+Settings persist in `~/.pi/agent/statusline.json`.
 
-Fresh selected providers render in that saved order beneath the active-session line. Each row keeps its provider's own reported windows; an override changes only that metric and otherwise inherits the shared default. A row is hidden when both enabled metrics are unavailable, or when its authorized usage is missing, unavailable, expired, or stale; it returns after a successful background retry. The active provider's quota stays on its row while visible and returns to the session line otherwise.
+## Provider tracking
+
+The bare `/statusline` command opens an interactive menu, not a print-only summary—every row is a live control you change with Space/Enter and persist with **Confirm** (Escape discards). It has three kinds of rows:
+
+| Row | Meaning |
+|---|---|
+| `Provider stack` | Master on/off for every row below. Off restores the plain active-session line only. |
+| `Shared usage` / `Shared percent` / `Shared reset` | Defaults every provider inherits unless it has its own override: `usage` is the bar itself, `percent` is the trailing `NN%` number, `reset` is the `↻` countdown. Turn any of the three off to drop it from every row that inherits it. |
+| `<provider>` | Whether that provider is `selected` (shown) or `hidden`. Its description line shows why it has no row when hidden: no fresh data yet, unauthorized, or (for providers pi has no usage source for) a specific reason. |
+| `<provider> usage` / `<provider> percent` / `<provider> reset` | Per-provider override for that field: `inherit` (use the shared default), `on`, or `off`. |
+| `<provider> order` | Move that provider's row up/down among the other selected providers. |
+
+The provider stack includes every provider returned by pi's configured `getAvailable()` models (whatever you're authenticated with), not a fixed list—selects newly authenticated providers automatically and keeps your saved selection, order, and overrides.
+
+Fresh selected providers render in that saved order beneath the active-session line, **simultaneously and independently of which model is currently active**—selecting both Anthropic and Codex shows both rows at once even while you're talking to a third provider. A row is hidden when both enabled metrics are unavailable, or when its usage is missing, unauthorized, expired, or stale; it returns after a successful background retry (checked once a minute). The active provider's quota stays on its own row while visible and falls back to the plain session line otherwise, so it's never shown twice.
 
 ## Provider applicability
 
@@ -70,7 +86,9 @@ Fresh selected providers render in that saved order beneath the active-session l
 | Streaming `↓` speed pulse | ✓ | ✓ | ✓ | ✓ |
 | Time | ✓ | ✓ | ✓ | ✓ |
 
-Anthropic OAuth fetches its current `5h` and `wk` limits when the session starts, then updates them from response headers. Codex fetches its current account limits and shows only the windows returned by the account, labeled by duration. Reset countdowns appear for every Claude or Codex window that reports a reset time; absent data is omitted rather than rendered as `—`. Usage is shown only from provider-specific sources pi already authorizes; providers without a permitted source have no quota row.
+Anthropic OAuth fetches its current `5h` and `wk` limits when the session starts, then updates them from response headers, and again in the background for provider tracking. Codex fetches its current account limits and shows only the windows returned by the account, labeled by duration. Reset countdowns appear for every Claude or Codex window that reports a reset time; absent data is omitted rather than rendered as `—`.
+
+Any other provider you've authenticated (OpenRouter, GLM, custom endpoints, …) still appears in the provider-tracking menu, but has no adapter yet—pi-statusline only ever uses pi's own stored credentials for that provider, never a separate scraped or reverse-engineered source, so a row only ships once a documented usage endpoint accepts that same credential. Concretely: GLM has no documented usage API at all, and OpenRouter's only usage endpoint (`/api/v1/credits`) explicitly rejects the regular inference key pi stores and requires a separate management key pi doesn't manage. Both show their specific reason in the menu instead of a row.
 
 ## Throughput and time
 

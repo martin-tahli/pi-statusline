@@ -31,7 +31,7 @@ test("defaults core segments and Git HUD on", () => {
     enabled: true,
     selected: {},
     order: [],
-    metrics: { usage: true, reset: true },
+    metrics: { usage: true, percent: true, reset: true },
     overrides: {},
   });
 });
@@ -84,7 +84,7 @@ test("tracks only authenticated registry providers and reconciles their saved st
   assert.deepEqual(returned.providerTracking.selected, { anthropic: true, "openai-codex": false, glm: true });
   assert.deepEqual(returned.providerTracking.order, ["openai-codex", "anthropic", "glm"]);
   assert.deepEqual(returned.providerTracking.overrides, { "openai-codex": { reset: false } });
-  assert.deepEqual(returned.providerTracking.metrics, { usage: true, reset: true });
+  assert.deepEqual(returned.providerTracking.metrics, { usage: true, percent: true, reset: true });
 });
 
 test("defaults legacy provider tracking and drops junk overrides", () => {
@@ -104,7 +104,7 @@ test("defaults legacy provider tracking and drops junk overrides", () => {
     }), "utf8");
     const { providerTracking } = loadSettings(path);
     assert.equal(providerTracking.enabled, true);
-    assert.deepEqual(providerTracking.metrics, { usage: true, reset: true });
+    assert.deepEqual(providerTracking.metrics, { usage: true, percent: true, reset: true });
     assert.deepEqual(providerTracking.selected, {});
     assert.deepEqual(providerTracking.order, []);
     assert.deepEqual(providerTracking.overrides, { anthropic: { reset: false } });

@@ -17,6 +17,10 @@ test("draws one continuous rounded line without brackets or blocks", () => {
   for (const glyph of ["◖", "◗", "█", "▓", "▒", "░"]) assert.equal(line.includes(glyph), false);
 });
 
+test("omits the percent suffix when showPercent is false", () => {
+  assert.equal(renderBar(0.5, 4, style, stops, false), "<0,0,0>╺━</><->─╴</>");
+});
+
 test("clamps usage and minimum width", () => {
   assert.equal(renderBar(2, 1, style, stops).endsWith(" 100%"), true);
   assert.equal(renderBar(-1, 1, style, stops).endsWith(" 0%"), true);

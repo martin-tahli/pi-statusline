@@ -1266,6 +1266,31 @@
       "title": "Provider tracking only showed the active model's provider",
       "type": "bug",
       "updatedAt": "2026-07-30T14:46:34.813Z"
+    },
+    "work-1.7": {
+      "acceptance": "1) sanitizedReason names the concrete blocker for openrouter (management-key-only endpoint) same as glm. 2) A new 'percent' metric is independently toggleable shared+per-provider, wired through renderBar's existing bar without duplicating render logic. 3) README shows a real two-provider-simultaneously example and documents every settings menu row.",
+      "createdAt": "2026-07-30T14:59:37.854Z",
+      "dependencies": [],
+      "dependencyEdges": [],
+      "description": "User feedback after the multi-provider fix: (1) OpenRouter never shows a row and the reason wasn't explained; (2) usage/reset were the only per-row fields, no separate control for the bar's trailing percent number; (3) README described the pre-multi-provider single-row behavior and didn't document the settings menu fields.",
+      "evidence": [
+        {
+          "closeEvidence": "Completed by coded inline work path"
+        }
+      ],
+      "id": "work-1.7",
+      "labels": [],
+      "notes": [
+        "Researched OpenRouter's only usage endpoint (GET /api/v1/credits): docs explicitly state management key required, and it 403s regular inference keys - the same key pi already stores for chat completions. Implementing an adapter would require the user to mint and store a second, unrelated credential class pi doesn't otherwise manage, so left it unimplemented (same class of gap as GLM, now with an explicit reason string instead of a generic one). Extended ProviderMetrics from {usage,reset} to {usage,percent,reset} via a shared PROVIDER_METRICS tuple, driving both the settings-menu item generation/handler and mergeProviderTracking generically instead of hardcoded per-field branches, so future metrics only touch one list. renderBar gained an optional showPercent param (default true, fully backward compatible) rather than string-surgery on its output.",
+        "wo:review-scope [\"README.md\",\"extensions/statusline.ts\",\"src/bar.ts\",\"src/config.ts\",\"src/providers.ts\",\"test/bar.test.ts\",\"test/config.test.ts\",\"test/providers.test.ts\",\"test/statusline.test.ts\"]",
+        "wo:review PASS - openrouter+glm sanitizedReason explicit (providers.ts), percent metric added to PROVIDER_METRICS tuple wired through renderBar(showPercent) and settings menu (config.ts/statusline.ts), README documents two-provider example + settings table; 49/49 tests + typecheck pass",
+        "wo:verify-check PASS\nCommand: npm test && npm run typecheck\nOutput: while a turn streams (0.1767ms)\n✔ averages recent turns instead of freezing on the last one (0.1394ms)\n✔ classifies rates with directional baselines and an output floor (0.1079ms)\n✔ caps histories and resets displayed throughput on model changes (0.1715ms)\n✔ finalizes active time without preserving rates (0.1175ms)\n✔ retains idle result, resets on turn start, and accumulates active time (0.4071ms)\nℹ tests 49\nℹ suites 0\nℹ pass 49\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 1121.4069"
+      ],
+      "parentId": "work-1",
+      "status": "closed",
+      "title": "Per-field provider-row toggles, honest OpenRouter/GLM reasons, docs refresh",
+      "type": "task",
+      "updatedAt": "2026-07-30T15:03:53.807Z"
     }
   },
   "metadata": {
@@ -1275,7 +1300,7 @@
       "recordCount": 11,
       "sourceFingerprint": "716c6815dbadf79dc70c6d01af6a643e7bcf36809c4af4405175a0d2a56789f1"
     },
-    "updatedAt": "2026-07-30T14:46:34.813Z"
+    "updatedAt": "2026-07-30T15:03:53.808Z"
   },
   "schemaVersion": 1
 }

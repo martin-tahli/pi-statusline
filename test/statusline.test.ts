@@ -440,7 +440,8 @@ test("bare /statusline opens the interactive provider menu and lets Escape disca
           {},
           resolve,
         );
-        // Down x3 reaches the first provider's "selected" row (enabled, usage, reset, then per-provider rows).
+        // Down x4 reaches the first provider's "selected" row (enabled, usage, percent, reset, then per-provider rows).
+        component.handleInput("\x1b[B");
         component.handleInput("\x1b[B");
         component.handleInput("\x1b[B");
         component.handleInput("\x1b[B");

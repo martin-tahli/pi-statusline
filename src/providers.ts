@@ -18,6 +18,9 @@ export interface ProviderAdapter {
 /** Never surface thrown provider data; these are deliberately short UI-safe reasons. */
 export function sanitizedReason(provider: string, error?: unknown): string {
   if (provider === "glm") return "no documented usage source for pi";
+  // OpenRouter's only usage endpoint requires a separate management key pi doesn't manage
+  // (the inference key pi already stores is explicitly rejected by that endpoint).
+  if (provider === "openrouter") return "usage requires an OpenRouter management key pi doesn't manage";
   if (error instanceof DOMException && error.name === "TimeoutError") return "usage refresh timed out";
   return "usage unavailable";
 }

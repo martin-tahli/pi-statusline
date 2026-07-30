@@ -23,7 +23,7 @@ export function usageColor(fraction: number, stops: ColorStops = DEFAULT_STOPS):
   return mix(stops[1], stops[2], (value - 0.85) / 0.15);
 }
 
-export function renderBar(fraction: number, width: number, style: BarStyle, stops: ColorStops = DEFAULT_STOPS): string {
+export function renderBar(fraction: number, width: number, style: BarStyle, stops: ColorStops = DEFAULT_STOPS, showPercent = true): string {
   const value = Math.min(1, Math.max(0, fraction));
   const length = Math.max(2, Math.floor(width));
   const filled = Math.round(value * length);
@@ -34,5 +34,5 @@ export function renderBar(fraction: number, width: number, style: BarStyle, stop
       : style.fill(`╺${"━".repeat(filled - 1)}`, usageColor(value, stops))
         + style.track(`${"─".repeat(length - filled - 1)}╴`);
 
-  return `${line} ${Math.round(value * 100)}%`;
+  return showPercent ? `${line} ${Math.round(value * 100)}%` : line;
 }
