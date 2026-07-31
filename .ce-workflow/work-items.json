@@ -1317,12 +1317,13 @@
       "id": "work-2",
       "labels": [],
       "notes": [
-        "created by /work-plan\nsource plan: docs/plans/2026-07-31-001-feat-new-statusline-settings-ui-plan.md"
+        "created by /work-plan\nsource plan: docs/plans/2026-07-31-001-feat-new-statusline-settings-ui-plan.md",
+        "Roadmap complete. All 23 children closed: plan units U1-U13 (versioned settings core, provider services, resolver/preview, refresh policy, extras/metrics parity, extension composition root, settings UI shell, provider/separators/emojis screens, /statusline command+runtime integration, and the three regression matrices) plus README docs (U13) and the deferred src/config.ts legacy removal. 206 tests pass, typecheck clean, README matches shipped behavior, no legacy runtime/menu/config code remains (DoD met)."
       ],
       "status": "closed",
       "title": "New Pi Statusline Settings UI - Plan",
       "type": "epic",
-      "updatedAt": "2026-07-31T21:37:37.888Z"
+      "updatedAt": "2026-07-31T22:03:28.964Z"
     },
     "work-2.1": {
       "createdAt": "2026-07-31T17:16:28.525Z",
@@ -1935,7 +1936,7 @@
       "recordCount": 11,
       "sourceFingerprint": "716c6815dbadf79dc70c6d01af6a643e7bcf36809c4af4405175a0d2a56789f1"
     },
-    "updatedAt": "2026-07-31T22:02:59.899Z"
+    "updatedAt": "2026-07-31T22:03:28.964Z"
   },
   "schemaVersion": 1
 }
