@@ -1479,6 +1479,29 @@
       "title": "Settings-driven resolver and preview",
       "type": "task",
       "updatedAt": "2026-07-31T18:23:10.561Z"
+    },
+    "work-2.8": {
+      "acceptance": "- src/settings/refresh.ts exists and exports resolveProviderRefreshPolicy, resolveRefreshEligibility, resolveRefreshHealth.\n- npm run typecheck passes; npm test passes including new test/settings-refresh.test.ts.\n- src/providers.ts and src/provider-cache.ts remain unmodified and all pre-U4 tests stay green.\n- No network in tests; eligibility for unsupported/unauthenticated providers is false (no adapter call).",
+      "createdAt": "2026-07-31T18:23:46.936Z",
+      "dependencies": [],
+      "dependencyEdges": [],
+      "description": "Build the settings-driven refresh policy + eligibility resolver (plan U4, reqs R14, R16, R18, R27-R28) as a NEW module. Do NOT modify src/providers.ts or src/provider-cache.ts (U5/U9 wires the coordinator); keep them green. Depends on U1, U2.\n\nFile to create:\n- src/settings/refresh.ts: pure resolution over StatuslineSettings + ProviderCapability.\n  * resolveProviderRefreshPolicy(settings, providerId, capability) -> { intervalMs (>=10000), maxAgeMs (finite, >= intervalMs), useCache, keepAfterFailure, refreshWhileActive, refreshDisabledProvider }: merges settings.providers.defaults with per-provider overrides where present; bounds interval/maxAge.\n  * resolveRefreshEligibility(settings, providerId, capability, { providerEnabled, isActive }) -> boolean: requires global providers.enabled AND providerEnabled AND capability.quotaSupport !== \"none\" AND policy permits (refreshDisabledProvider gates disabled providers; refreshWhileActive gates active-idle). Unsupported/unauthenticated providers are never eligible.\n  * resolveRefreshHealth(previousFreshAt, now, policy) -> { state: \"fresh\"|\"stale\"|\"unknown\", reason? }: fresh within maxAge, stale after maxAge while keepAfterFailure retains last value, unknown when never refreshed. Reasons sanitized (no secrets/raw errors).\n- test/settings-refresh.test.ts: policy merge + bounding (interval<10000->10000, maxAge<interval->interval); eligibility matrix (global off, provider off, no adapter, disabled-provider policy, refreshWhileActive); health transitions (fresh->stale at maxAge, keepAfterFailure retains, unknown when never); sanitized reasons contain no credential fragments; an unsupported provider makes no adapter/network call (eligibility false).",
+      "evidence": [
+        {
+          "closeEvidence": "Completed by coded inline work path"
+        }
+      ],
+      "id": "work-2.8",
+      "labels": [],
+      "notes": [
+        "wo:execution-slice; source: docs/plans/2026-07-31-001-feat-new-statusline-settings-ui-plan.md; plan unit U4 (depends on U1,U2). Additive; coordinator wiring deferred to U5/U9.",
+        "wo:verify-check PASS\nCommand: npm test && npm run typecheck\nOutput: reezing on the last one (0.097929ms)\n✔ classifies rates with directional baselines and an output floor (0.076508ms)\n✔ caps histories and resets displayed throughput on model changes (0.139947ms)\n✔ finalizes active time without preserving rates (0.089794ms)\n✔ retains idle result, resets on turn start, and accumulates active time (0.158209ms)\nℹ tests 171\nℹ suites 0\nℹ pass 171\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 686.615205\n\n> @shvax/pi-statusline@0.7.4 typecheck\n> tsc --noEmit"
+      ],
+      "parentId": "work-2",
+      "status": "closed",
+      "title": "Settings-aware refresh policy and eligibility",
+      "type": "task",
+      "updatedAt": "2026-07-31T18:24:27.070Z"
     }
   },
   "metadata": {
@@ -1488,7 +1511,7 @@
       "recordCount": 11,
       "sourceFingerprint": "716c6815dbadf79dc70c6d01af6a643e7bcf36809c4af4405175a0d2a56789f1"
     },
-    "updatedAt": "2026-07-31T18:23:10.562Z"
+    "updatedAt": "2026-07-31T18:24:27.070Z"
   },
   "schemaVersion": 1
 }
