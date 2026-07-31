@@ -99,11 +99,44 @@ function throughputLabel(runtime: RuntimeSnapshot): string {
   return parts.join(" ");
 }
 
-function sessionLabel(runtime: RuntimeSnapshot): string {
+function icon(settings: StatuslineSettings, name: string): string {
+  const override = settings.icons.symbols[name];
+  if (override !== undefined) return override;
+  const presets: Record<StatuslineSettings["icons"]["style"], Record<string, string>> = {
+    emoji: { project: "📁", model: "🤖", thinking: "💭", context: "🪟", session: "📊", throughput: "⚡", time: "⏱", provider: "🔌" },
+    unicode: { project: "◆", model: "◇", thinking: "◌", context: "▣", session: "▥", throughput: "↕", time: "◷", provider: "●" },
+    ascii: { project: "P", model: "M", thinking: "T", context: "C", session: "Q", throughput: "R", time: "@", provider: "*" },
+    nerdfont: { project: "󰉋", model: "󰧑", thinking: "󰔟", context: "󰍛", session: "󰄬", throughput: "󰓅", time: "󰥔", provider: "󰒋" },
+    minimal: { project: "·", model: "·", thinking: "·", context: "·", session: "·", throughput: "·", time: "·", provider: "·" },
+    none: {},
+    custom: {},
+  };
+  return presets[settings.icons.style][name] ?? "";
+}
+
+function withIcon(settings: StatuslineSettings, name: string, value: string): string {
+  const symbol = icon(settings, name);
+  return symbol ? `${symbol}${settings.separators.iconLabel}${value}` : value;
+}
+
+function providerIcon(settings: StatuslineSettings, providerId: string | undefined): string {
+  if (!providerId) return "";
+  const configured = settings.icons.providers[providerId];
+  if (configured?.mode === "hidden") return "";
+  if (configured?.mode === "custom") return configured.value;
+  return icon(settings, "provider");
+}
+
+function sessionLabel(settings: StatuslineSettings, runtime: RuntimeSnapshot): string {
   const windows = runtime.sessionWindows ?? [];
-  return windows
-    .map((window) => `${window.label} ${formatPercent(window.used)}`)
-    .join(" ");
+  const bar = resolveBarConfig(settings);
+  const separator = settings.layout.providerRows === "newline" ? settings.separators.provider : settings.separators.window;
+  return windows.map((window) => {
+    const used = Math.max(0, Math.min(1, window.used));
+    const filled = Math.round(used * bar.width);
+    const track = `${bar.capLeft}${bar.fill.repeat(filled)}${bar.empty.repeat(bar.width - filled)}${bar.capRight}`;
+    return `${window.label}${settings.separators.labelValue}${track}${bar.showPercent ? settings.separators.labelValue + formatPercent(used) : ""}`;
+  }).join(separator);
 }
 
 /** Resolved bar configuration derived (and bounded) from settings.bars. */
@@ -144,14 +177,29 @@ export function composeFooterLine(
   const visibility = resolveSegmentVisibility(settings, ctx);
   const { runtime } = ctx;
   const renderers = {
-    project: () => deriveProject(runtime.cwd ?? ""),
-    model: () => deriveModel(runtime.model),
-    effort: () => deriveEffort(runtime.thinkingLevel ?? "off", runtime.model),
-    context: () => deriveContext(runtime.contextUsage)?.label ?? "",
-    session: () => sessionLabel(runtime),
-    throughput: () => throughputLabel(runtime),
-    time: () => formatTime(runtime.activeMs ?? 0, runtime.elapsedMs, runtime.lastTurnMs),
+    project: () => withIcon(settings, "project", deriveProject(runtime.cwd ?? "")),
+    model: () => {
+      const value = deriveModel(runtime.model);
+      const provider = providerIcon(settings, runtime.activeProvider);
+      return withIcon(settings, "model", provider ? `${provider}${settings.separators.iconLabel}${value}` : value);
+    },
+    effort: () => withIcon(settings, "thinking", deriveEffort(runtime.thinkingLevel ?? "off", runtime.model)),
+    context: () => {
+      const derived = deriveContext(runtime.contextUsage)?.label ?? "";
+      const rawPercent = runtime.contextUsage?.percent;
+      const percent = typeof rawPercent === "number" && rawPercent <= 1 ? rawPercent * 100 : rawPercent;
+      const state = typeof percent === "number" && percent >= settings.thresholds.contextCrit ? "!!"
+        : typeof percent === "number" && percent >= settings.thresholds.contextWarn ? "!" : "";
+      return withIcon(settings, "context", `${derived}${state}`);
+    },
+    session: () => withIcon(settings, "session", sessionLabel(settings, runtime)),
+    throughput: () => withIcon(settings, "throughput", throughputLabel(runtime)),
+    time: () => withIcon(settings, "time", formatTime(runtime.activeMs ?? 0, runtime.elapsedMs, runtime.lastTurnMs)),
   } as const;
-  const segments = createSegments(visibility, renderers);
-  return composeSegments(segments, width, settings.separators.main || " · ");
+  const order = resolveOrder(settings).segmentOrder;
+  const rank = new Map(order.map((id, index) => [id, index]));
+  const segments = createSegments(visibility, renderers).sort((a, b) => (rank.get(a.id) ?? order.length) - (rank.get(b.id) ?? order.length));
+  const separator = `${settings.separators.padding}${" ".repeat(settings.separators.spacingBefore)}${settings.separators.main || " · "}${" ".repeat(settings.separators.spacingAfter)}`;
+  const trailingSpacing = Math.min(settings.separators.trailingSpacing, Math.max(0, width));
+  return composeSegments(segments, width - trailingSpacing, separator) + " ".repeat(trailingSpacing);
 }

@@ -27,6 +27,8 @@ import {
   type ProviderUiContext,
 } from "../src/settings/provider-ui.ts";
 import type { ProviderCapability } from "../src/settings/providers/capabilities.ts";
+import { buildSeparatorsScreen } from "../src/settings/separators-screen.ts";
+import { buildEmojisScreen, ICON_SYMBOLS } from "../src/settings/emojis-screen.ts";
 
 test("root rows and keyboard routing are exact and deterministic", () => {
   assert.deepEqual(ROOT_ROWS.map(({ label }) => label), ["Providers", "Separators", "Emojis"]);
@@ -355,6 +357,153 @@ test("provider detail renders only capability-applicable rows", () => {
   assert.ok(api.includes("  API token ledger: Available"));
   assert.ok(api.includes("  API cost ledger: Available"));
   assert.equal(api.some((line) => /Local throughput|Refresh interval|Not available/.test(line)), false);
+});
+
+test("R19-R25 separators screen makes every schema-backed presentation domain reachable", () => {
+  let state = createSettingsUi(DEFAULT_STATUSLINE_SETTINGS);
+  state.selected = 1;
+  state = routeSettingsKey(state, "Enter", providerContext).state;
+  assert.equal(state.openRow, "separators");
+
+  const ids = buildSeparatorsScreen(state.draft).map(({ id }) => id);
+  for (const id of [
+    ...Object.keys(DEFAULT_STATUSLINE_SETTINGS.segments).map((key) => `segments.${key}`),
+    ...Object.keys(DEFAULT_STATUSLINE_SETTINGS.extras).map((key) => `extras.${key}`),
+    "layout.segmentOrder.project", "layout.narrowPriority.time", "layout.providerRows", "layout.placement", "layout.maxWidth",
+    ...Object.keys(DEFAULT_STATUSLINE_SETTINGS.separators).map((key) => `separators.${key}`),
+    ...Object.keys(DEFAULT_STATUSLINE_SETTINGS.bars).map((key) => `bars.${key}`),
+    ...Object.keys(DEFAULT_STATUSLINE_SETTINGS.thresholds).map((key) => `thresholds.${key}`),
+    ...Object.keys(DEFAULT_STATUSLINE_SETTINGS.timing).map((key) => `timing.${key}`),
+  ]) assert.ok(ids.includes(id), `missing settings row ${id}`);
+
+  const select = (id: string) => ({ ...state, selected: buildSeparatorsScreen(state.draft).findIndex((row) => row.id === id) });
+  state = routeSettingsKey(select("segments.project"), "Space", providerContext).state;
+  assert.equal(state.draft.segments.project, false);
+  assert.equal(DEFAULT_STATUSLINE_SETTINGS.segments.project, true);
+
+  state = routeSettingsKey(select("layout.segmentOrder.model"), "Ctrl+ArrowUp", providerContext).state;
+  assert.deepEqual(state.draft.layout.segmentOrder.slice(0, 2), ["model", "project"]);
+  state = routeSettingsKey(select("layout.narrowPriority.throughput"), "Ctrl+ArrowUp", providerContext).state;
+  assert.deepEqual(state.draft.layout.narrowPriority.slice(0, 2), ["throughput", "time"]);
+
+  state = routeSettingsKey(select("separators.main"), "X", providerContext).state;
+  assert.equal(state.draft.separators.main, " · X");
+  assert.equal(state.draft.separators.provider, "\n", "editing one field must not normalize another");
+  state.draft.bars.width = 99;
+  state = routeSettingsKey(select("reset.separators"), "Enter", providerContext).state;
+  assert.deepEqual(state.draft.separators, DEFAULT_STATUSLINE_SETTINGS.separators);
+  assert.equal(state.draft.bars.width, 99, "section reset must be isolated");
+
+  const original = structuredClone(state.original);
+  state = routeSettingsKey(state, "Escape", providerContext).state;
+  state = routeSettingsKey(state, "Escape", providerContext).state;
+  assert.equal(state.confirmClose, true);
+  assert.deepEqual(state.original, original);
+});
+
+test("text rows accept printable navigation letters and space before key actions", () => {
+  let separators = createSettingsUi(DEFAULT_STATUSLINE_SETTINGS);
+  separators.openRow = "separators";
+  separators.selected = buildSeparatorsScreen(separators.draft).findIndex(({ id }) => id === "separators.main");
+  const separatorRow = separators.selected;
+  for (const key of ["h", "j", "k", "l", " "]) {
+    separators = routeSettingsKey(separators, key, providerContext).state;
+    assert.equal(separators.selected, separatorRow);
+  }
+  assert.equal(separators.draft.separators.main, " · hjkl ");
+
+  let emojis = createSettingsUi(DEFAULT_STATUSLINE_SETTINGS);
+  emojis.openRow = "emojis";
+  const select = (id: string) => buildEmojisScreen(emojis.draft, providerContext.descriptors.map(({ id }) => id)).findIndex((row) => row.id === id);
+  emojis.selected = select("icons.symbols.project");
+  const symbolRow = emojis.selected;
+  for (const key of ["h", "j", "k", "l", " "]) {
+    emojis = routeSettingsKey(emojis, key, providerContext).state;
+    assert.equal(emojis.selected, symbolRow);
+  }
+  assert.equal(emojis.draft.icons.symbols.project, "hjkl ");
+
+  emojis.selected = select("icons.providers.dynamic-a.value");
+  const providerValueRow = emojis.selected;
+  for (const key of ["h", "j", "k", "l", " "]) {
+    emojis = routeSettingsKey(emojis, key, providerContext).state;
+    assert.equal(emojis.selected, providerValueRow);
+  }
+  assert.deepEqual(emojis.draft.icons.providers["dynamic-a"], { mode: "custom", value: "hjkl " });
+});
+
+test("text rows normalize the Space key and reject named command keys", () => {
+  let separators = createSettingsUi(DEFAULT_STATUSLINE_SETTINGS);
+  separators.openRow = "separators";
+  separators.selected = buildSeparatorsScreen(separators.draft).findIndex(({ id }) => id === "separators.main");
+  const sepRow = separators.selected;
+  const sepBefore = separators.draft.separators.main;
+  for (const key of ["Tab", "F1", "Ctrl+ArrowUp", "Ctrl+Down"]) {
+    separators = routeSettingsKey(separators, key, providerContext).state;
+    assert.equal(separators.draft.separators.main, sepBefore, `${key} must not append as text`);
+    assert.equal(separators.selected, sepRow, `${key} must not move selection on a text row`);
+  }
+  separators = routeSettingsKey(separators, "Space", providerContext).state;
+  separators = routeSettingsKey(separators, " ", providerContext).state;
+  assert.equal(separators.draft.separators.main, sepBefore + "  ", "both Space key forms append a single space");
+
+  let emojis = createSettingsUi(DEFAULT_STATUSLINE_SETTINGS);
+  emojis.openRow = "emojis";
+  const ids = providerContext.descriptors.map(({ id }) => id);
+  const pick = (id: string) => buildEmojisScreen(emojis.draft, ids).findIndex((row) => row.id === id);
+  emojis.selected = pick("icons.symbols.project");
+  for (const key of ["Tab", "F1", "Ctrl+ArrowUp"]) {
+    emojis = routeSettingsKey(emojis, key, providerContext).state;
+    assert.equal(emojis.draft.icons.symbols.project ?? "", "", `${key} must not append as text on a symbol row`);
+  }
+  emojis = routeSettingsKey(emojis, "Space", providerContext).state;
+  emojis = routeSettingsKey(emojis, " ", providerContext).state;
+  assert.equal(emojis.draft.icons.symbols.project, "  ", "both Space key forms append a single space on a symbol row");
+
+  emojis.selected = pick("icons.providers.dynamic-a.value");
+  for (const key of ["Tab", "Ctrl+ArrowUp"]) {
+    emojis = routeSettingsKey(emojis, key, providerContext).state;
+    assert.deepEqual(emojis.draft.icons.providers["dynamic-a"] ?? { mode: "default", value: "" }, { mode: "default", value: "" }, `${key} must not append as text on a provider-value row`);
+  }
+  emojis = routeSettingsKey(emojis, "Space", providerContext).state;
+  assert.deepEqual(emojis.draft.icons.providers["dynamic-a"], { mode: "custom", value: " " }, "named Space normalizes to a single space on a provider-value row");
+
+  // a single hostile char that passes the allowlist is still stripped by validation (UI -> validation sanitization)
+  emojis.selected = pick("icons.symbols.model");
+  emojis = routeSettingsKey(emojis, "\u202e", providerContext).state;
+  assert.equal(emojis.draft.icons.symbols.model ?? "", "", "bidi override stripped by validation");
+});
+
+test("R26 emojis routes styles, named symbols, and dynamic provider icons through one draft path", () => {
+  let state = createSettingsUi(DEFAULT_STATUSLINE_SETTINGS);
+  state.selected = 2;
+  state = routeSettingsKey(state, "Enter", providerContext).state;
+  assert.equal(state.openRow, "emojis");
+  const initialRows = buildEmojisScreen(state.draft, providerContext.descriptors.map(({ id }) => id));
+  const ids = initialRows.map(({ id }) => id);
+  for (const symbol of ICON_SYMBOLS) assert.ok(ids.includes(`icons.symbols.${symbol}`));
+  for (const providerId of ["dynamic-a", "stored-x"]) {
+    assert.ok(ids.includes(`icons.providers.${providerId}.mode`));
+    assert.ok(ids.includes(`icons.providers.${providerId}.value`));
+  }
+
+  const select = (id: string) => ({
+    ...state,
+    selected: buildEmojisScreen(state.draft, providerContext.descriptors.map(({ id }) => id)).findIndex((row) => row.id === id),
+  });
+  state = routeSettingsKey(select("icons.style"), "ArrowLeft", providerContext).state;
+  assert.equal(state.draft.icons.style, "custom");
+  state = routeSettingsKey(select("icons.symbols.project"), "P", providerContext).state;
+  assert.equal(state.draft.icons.symbols.project, "P");
+  state = routeSettingsKey(select("icons.providers.dynamic-a.mode"), "Enter", providerContext).state;
+  assert.equal(state.draft.icons.providers["dynamic-a"].mode, "global");
+  state = routeSettingsKey(select("icons.providers.dynamic-a.value"), "D", providerContext).state;
+  assert.deepEqual(state.draft.icons.providers["dynamic-a"], { mode: "custom", value: "D" });
+
+  const detail = buildProviderDetail(state.draft, providerContext, "dynamic-a")!;
+  assert.deepEqual(detail.providerIcon, state.draft.icons.providers["dynamic-a"]);
+  state = routeSettingsKey(select("reset.icons"), "Enter", providerContext).state;
+  assert.deepEqual(state.draft.icons, DEFAULT_STATUSLINE_SETTINGS.icons);
 });
 
 test("default to custom snapshots every effective provider and window value", () => {

@@ -1410,6 +1410,10 @@
       "dependencies": [],
       "dependencyEdges": [],
       "description": "Inspect the roadmap plan and completed children through work-2.11, then create exactly one next executable delivery slice under work-2. The slice must be dependency-ordered, independently verifiable, and contain concrete file scope and acceptance. Do not implement product code.",
+      "displayMetadata": {
+        "schemaVersion": 1,
+        "title": "Plan next slice for New Pi Statusline Settings UI"
+      },
       "evidence": [],
       "id": "work-2.12",
       "labels": [
@@ -1454,6 +1458,10 @@
       "dependencies": [],
       "dependencyEdges": [],
       "description": "Inspect the roadmap plan and completed children through work-2.13, then create exactly one next executable delivery slice under work-2. Do not implement product code.",
+      "displayMetadata": {
+        "schemaVersion": 1,
+        "title": "Plan next slice for New Pi Statusline Settings UI"
+      },
       "evidence": [],
       "id": "work-2.14",
       "labels": [
@@ -1498,6 +1506,64 @@
       "title": "Dynamic provider settings: truthful rows, detail, windows, and refresh actions",
       "type": "task",
       "updatedAt": "2026-07-31T20:33:21.940Z"
+    },
+    "work-2.16": {
+      "acceptance": "Exactly one ready executable child with concrete scope/acceptance/dependency context; planning item closed.",
+      "createdAt": "2026-07-31T20:33:30.505Z",
+      "dependencies": [],
+      "dependencyEdges": [],
+      "description": "Create exactly one next executable delivery slice after U7; do not implement product code.",
+      "displayMetadata": {
+        "schemaVersion": 1,
+        "title": "Plan next slice for New Pi Statusline Settings UI"
+      },
+      "evidence": [],
+      "id": "work-2.16",
+      "labels": [
+        "wo:planning"
+      ],
+      "notes": [
+        "wo:planning; JIT after U7",
+        "Planned U8 as exactly one dependency-ordered executable slice work-2.17; concrete scope, falsifiable acceptance, verification contract, and wo:execution-slice handoff recorded."
+      ],
+      "parentId": "work-2",
+      "status": "closed",
+      "title": "Plan next slice for New Pi Statusline Settings UI",
+      "type": "task",
+      "updatedAt": "2026-07-31T20:35:08.596Z"
+    },
+    "work-2.17": {
+      "acceptance": "1. Focused screen tests navigate from each of the three fixed root rows into Separators and Emojis and map every R19-R26 domain to a reachable selected row: project/Git/model/thinking/context/session/throughput/time/pending visibility, extras, segment order, narrow priority, provider layout/placement/max width, every separator/spacing/padding field and preset, every bar field, context thresholds, timing values, global icon style/symbols, and provider icon records. 2. Keyboard tests prove toggles and bounded numeric/cycle/text edits mutate only the cloned draft; Ctrl+Up/Down reorders both segment order and narrow priority; custom separator/icon input is sanitized through existing validation rules; reset of a section restores only that section defaults; Escape/discard leaves original settings unchanged. 3. Provider icon edits from Emojis and provider detail update the same icons.providers record, and fake custom/stored providers remain dynamically addressable without provider-ID branching. 4. Rendering tests prove representative separator, layout, bar, threshold, no-icon/ASCII/Nerd Font, and provider-icon draft changes alter the existing production preview immediately; navigation and rendering perform no I/O. 5. node --test test/settings-ui.test.ts test/settings-render.test.ts passes; npm test passes; npm run typecheck passes. Maintainer keyboard smoke with pi -e . remains part of the roadmap AC1/AC5 gate, not an automation claim for this child.",
+      "createdAt": "2026-07-31T20:34:44.566Z",
+      "dependencies": [
+        "work-2.15"
+      ],
+      "dependencyEdges": [],
+      "description": "Deliver U8 as one end-to-end settings-UI slice: make every remaining footer presentation control reachable and draft-editable under the existing Separators and Emojis roots, while continuing to use the production preview and preserving save/discard isolation. Concrete file scope: add src/settings/separators-screen.ts for section visibility/extras, segment order and narrow priority, provider-row layout, separators/spacing/padding/presets, bars, thresholds, and timing controls; add src/settings/emojis-screen.ts for global icon styles/symbol values and provider icon modes/values; integrate both screen stacks and keyboard routing in src/settings/ui.ts; update test/settings-ui.test.ts with an R19-R26 reachability/action matrix and test/settings-render.test.ts only where needed to prove draft changes affect the shared preview. Reuse the existing schema, defaults, validation, provider icon draft path, and preview renderer; do not change command/runtime lifecycle (U9), add a parallel preview renderer, or widen into later regression/documentation units.",
+      "displayMetadata": {
+        "schemaVersion": 1,
+        "title": "U8: Separators and Emojis settings screens"
+      },
+      "evidence": [
+        {
+          "closeEvidence": "Completed by coded inline work path"
+        }
+      ],
+      "id": "work-2.17",
+      "labels": [],
+      "notes": [
+        "wo:execution-slice; Covers U8 and R19-R26 only. Dependency context: follows closed U7 work-2.15 and reuses its shared draft/provider-icon path. U9 command/runtime integration and U10-U13 regression/docs remain unsliced. Acceptance fails before this child because Separators and Emojis currently have no routed screen and render as the root list.",
+        "wo:review-scope [\"src/settings/resolve.ts\",\"src/settings/ui.ts\",\"test/settings-render.test.ts\",\"test/settings-ui.test.ts\",\"src/settings/emojis-screen.ts\",\"src/settings/separators-screen.ts\"]",
+        "wo:review FAIL {\"findings\":[\"high: src/settings/separators-screen.ts:107 - Printable h/j/k/l and space are intercepted as navigation/actions before text-row editing, so valid custom separators, padding, and bar strings cannot be entered; prioritize text input on text rows (or add an explicit edit mode) and add coverage for these characters.\",\"high: src/settings/emojis-screen.ts:68 - Printable h/j/k/l and space are intercepted as navigation/actions before symbol/provider-value editing, so valid custom icon values cannot be entered; prioritize text input on editable value rows (or add an explicit edit mode) and add coverage for these characters.\",\"high: src/settings/resolve.ts:203 - trailingSpacing is appended after composeSegments enforces the width, so an allowed draft can exceed the requested footer width (40-column narrow preview measured 52 columns with trailingSpacing=20); include trailing spacing inside the width budget and test a nonzero value.\"]}",
+        "wo:review FAIL {\"findings\":[\"high: src/settings/separators-screen.ts:97 - The named Space key is still excluded from text input, while other unknown named keys are accepted as literal text; normalize Space to a single space, accept only printable text plus Backspace, and cover both space key forms and ignored command-key names.\",\"high: src/settings/emojis-screen.ts:57 - The named Space key is still excluded from symbol/provider-value input and Ctrl+ArrowUp is appended literally; normalize Space to a single space, accept only printable text plus Backspace, and cover both editable row types against space and named command keys.\"]}",
+        "wo:residual-fix PASS {\"dispositions\":[{\"finding\":\"high: src/settings/separators-screen.ts:97 - The named Space key is still excluded from text input, while other unknown named keys are accepted as literal text; normalize Space to a single space, accept only printable text plus Backspace, and cover both space key forms and ignored command-key names.\",\"fix\":\"src/settings/separators-screen.ts: replaced the denylist isTextInput with an allowlist (Backspace; Space and literal space normalized to a single space; a single printable char with code>=0x20 and !=0x7f). Named command keys (Tab, F1, Ctrl+ArrowUp, Ctrl+Down, ...) are no longer accepted as literal text on separator/bar text rows.\",\"evidence\":\"node --test test/settings-ui.test.ts -> 17/17 pass; npm test -> 196/196 pass; npm run typecheck clean. New test \\\"text rows normalize the Space key and reject named command keys\\\" covers both Space key forms (named and literal) appending a space and Tab/F1/Ctrl+ArrowUp/Ctrl+Down being ignored on the separators.main text row.\"},{\"finding\":\"high: src/settings/emojis-screen.ts:57 - The named Space key is still excluded from symbol/provider-value input and Ctrl+ArrowUp is appended literally; normalize Space to a single space, accept only printable text plus Backspace, and cover both editable row types against space and named command keys.\",\"fix\":\"src/settings/emojis-screen.ts: applied the same allowlist to the symbol and provider-value editable rows; Ctrl+ArrowUp and other named keys are no longer appended, and the named Space key normalizes to a single space via a shared ch variable.\",\"evidence\":\"node --test test/settings-ui.test.ts -> 17/17 pass; npm test -> 196/196 pass; npm run typecheck clean. The new test covers both Space key forms and ignored command keys (Tab, F1, Ctrl+ArrowUp) on the symbol row and the provider-value row, plus a single bidi char that passes the allowlist being stripped by validation (UI->validation sanitization preserved).\"}]}",
+        "wo:verify-check PASS\nCommand: npm test && npm run typecheck\nOutput:  freezing on the last one (0.201598ms)\n✔ classifies rates with directional baselines and an output floor (0.166293ms)\n✔ caps histories and resets displayed throughput on model changes (0.24512ms)\n✔ finalizes active time without preserving rates (0.182457ms)\n✔ retains idle result, resets on turn start, and accumulates active time (0.28906ms)\nℹ tests 196\nℹ suites 0\nℹ pass 196\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 750.765913\n\n> @shvax/pi-statusline@0.7.4 typecheck\n> tsc --noEmit"
+      ],
+      "parentId": "work-2",
+      "status": "closed",
+      "title": "U8: Separators and Emojis settings screens",
+      "type": "task",
+      "updatedAt": "2026-07-31T21:10:00.935Z"
     },
     "work-2.2": {
       "acceptance": "",
@@ -1721,7 +1787,7 @@
       "recordCount": 11,
       "sourceFingerprint": "716c6815dbadf79dc70c6d01af6a643e7bcf36809c4af4405175a0d2a56789f1"
     },
-    "updatedAt": "2026-07-31T20:33:21.940Z"
+    "updatedAt": "2026-07-31T21:10:00.936Z"
   },
   "schemaVersion": 1
 }

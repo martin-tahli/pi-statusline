@@ -135,6 +135,14 @@ test("resolution: composeFooterLine never exceeds the requested width", () => {
   }
 });
 
+test("resolution: trailing spacing stays inside the requested width budget", () => {
+  const settings = structuredClone(DEFAULT_STATUSLINE_SETTINGS);
+  settings.separators.trailingSpacing = 3;
+  const line = composeFooterLine(settings, { capability: localCapability, runtime: localRuntime() }, 5);
+  assert.ok(visibleWidth(line) <= 5, `${visibleWidth(line)} > 5`);
+  assert.equal(line.slice(-3), "   ");
+});
+
 test("preview: produces a labelled, width-bounded line for each fixture mode", () => {
   for (const mode of ["local", "subscription", "api", "narrow"] as const) {
     const width = mode === "narrow" ? 40 : 100;
@@ -151,6 +159,40 @@ test("preview: parity — equals composeFooterLine for the same fixture/settings
   const preview = renderPreview({ settings: DEFAULT_STATUSLINE_SETTINGS, mode: "subscription", width: 100 })[1];
   const direct = composeFooterLine(DEFAULT_STATUSLINE_SETTINGS, ctx, 100);
   assert.equal(preview, direct);
+});
+
+test("preview: representative U8 draft presentation settings alter the shared resolver immediately", () => {
+  const line = (settings: StatuslineSettings, mode: "local" | "subscription" = "local") => renderPreview({ settings, mode, width: 160 })[1];
+  const baseline = line(DEFAULT_STATUSLINE_SETTINGS);
+
+  const separators = structuredClone(DEFAULT_STATUSLINE_SETTINGS);
+  separators.separators.main = " | ";
+  assert.notEqual(line(separators), baseline);
+
+  const layout = structuredClone(DEFAULT_STATUSLINE_SETTINGS);
+  layout.layout.segmentOrder = [...layout.layout.segmentOrder].reverse();
+  assert.notEqual(line(layout), baseline);
+
+  const bars = structuredClone(DEFAULT_STATUSLINE_SETTINGS);
+  bars.bars.width = 3;
+  assert.notEqual(line(bars, "subscription"), line(DEFAULT_STATUSLINE_SETTINGS, "subscription"));
+
+  const thresholds = structuredClone(DEFAULT_STATUSLINE_SETTINGS);
+  thresholds.thresholds.contextWarn = 50;
+  assert.notEqual(line(thresholds), baseline);
+
+  const ascii = structuredClone(DEFAULT_STATUSLINE_SETTINGS);
+  ascii.icons.style = "ascii";
+  const none = structuredClone(DEFAULT_STATUSLINE_SETTINGS);
+  none.icons.style = "none";
+  const nerd = structuredClone(DEFAULT_STATUSLINE_SETTINGS);
+  nerd.icons.style = "nerdfont";
+  assert.notEqual(line(ascii), line(none));
+  assert.notEqual(line(nerd), line(ascii));
+
+  const provider = structuredClone(DEFAULT_STATUSLINE_SETTINGS);
+  provider.icons.providers.ollama = { mode: "custom", value: "LOCAL" };
+  assert.notEqual(line(provider), baseline);
 });
 
 test("preview: is pure — does not mutate fixtures or settings", () => {

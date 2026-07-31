@@ -1,5 +1,7 @@
 import { DEFAULT_STATUSLINE_SETTINGS } from "./defaults.ts";
+import { buildEmojisScreen, routeEmojisKey } from "./emojis-screen.ts";
 import { renderPreview } from "./preview.ts";
+import { buildSeparatorsScreen, routeSeparatorsKey } from "./separators-screen.ts";
 import {
   buildProviderDetail,
   buildProviderScreen,
@@ -244,6 +246,17 @@ export function routeSettingsKey(
       : { state, action: "close" };
   }
 
+  if (state.openRow === "separators") {
+    const routed = routeSeparatorsKey(state.draft, state.selected, key);
+    return { state: { ...state, ...routed }, action: "none" };
+  }
+
+  if (state.openRow === "emojis") {
+    const providerIds = providers?.descriptors.map(({ id }) => id) ?? [];
+    const routed = routeEmojisKey(state.draft, state.selected, key, providerIds);
+    return { state: { ...state, ...routed }, action: "none" };
+  }
+
   if (state.openRow === "providers" && providers) {
     if (state.selectedProviderId) return routeProviderDetail(state, key, providers);
     const providerRows = buildProviderScreen(state.draft, providers).rows;
@@ -337,7 +350,18 @@ export interface RenderSettingsUiOptions {
 /** Pure component rendering; previews use the production footer renderer. */
 export function renderSettingsUi(state: SettingsUiState, options: RenderSettingsUiOptions): string[] {
   const lines = ["Statusline settings"];
-  if (state.openRow === "providers" && options.providers) {
+  if (state.openRow === "separators") {
+    lines.push("Separators");
+    for (const [index, row] of buildSeparatorsScreen(state.draft).entries()) {
+      lines.push(`${state.selected === index ? ">" : " "} ${row.label}`);
+    }
+  } else if (state.openRow === "emojis") {
+    lines.push("Emojis");
+    const providerIds = options.providers?.descriptors.map(({ id }) => id) ?? [];
+    for (const [index, row] of buildEmojisScreen(state.draft, providerIds).entries()) {
+      lines.push(`${state.selected === index ? ">" : " "} ${row.label}`);
+    }
+  } else if (state.openRow === "providers" && options.providers) {
     const screen = buildProviderScreen(state.draft, options.providers);
     if (state.selectedProviderId) {
       const detail = buildProviderDetail(state.draft, options.providers, state.selectedProviderId);
