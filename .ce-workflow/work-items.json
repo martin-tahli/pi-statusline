@@ -1710,6 +1710,32 @@
       "type": "task",
       "updatedAt": "2026-07-31T21:58:14.823Z"
     },
+    "work-2.23": {
+      "acceptance": "1. src/config.ts and test/config.test.ts no longer exist; `grep -rn \"config.ts\\|from ['\\\"]../config\\|from ['\\\"]./config['\\\"]\" src/ extensions/ test/` returns no source import of the old config module.\n2. mergeSettings lives in src/settings/legacy.ts with only the legacy types/consts it needs; src/settings/migrations.ts imports it from there; legacy->new migration output is byte-for-byte unchanged (existing test/settings-migrations.test.ts assertions still pass).\n3. mergeSettings normalization is still covered by a named test (valid, partial, invalid, and default-fallback legacy input).\n4. npm test passes; npm run typecheck passes (no dangling imports, no orphaned types).",
+      "createdAt": "2026-07-31T21:59:33.691Z",
+      "dependencies": [],
+      "dependencyEdges": [],
+      "description": "Final cleanup deferred by work-2.11 (U5): remove the legacy src/config.ts settings hierarchy so the roadmap Definition of Done (\"no abandoned legacy runtime/menu/config code remains\") holds. src/config.ts is now the ONLY legacy settings artifact; its sole consumer is src/settings/migrations.ts importing `mergeSettings` (everything else — configuredProviders, applyToggle, formatStatusSummary, reconcileProviders, AvailableModelRegistry — already lives in src/settings/runtime.ts).\n\nConcrete steps:\n- Create src/settings/legacy.ts and move into it ONLY what migration needs: `mergeSettings` plus the legacy types/consts it references (the legacy `Settings` shape, `DEFAULT_SETTINGS`, and any of EXTRA_NAMES/PROVIDER_METRICS/ProviderMetrics/ProviderTrackingSettings mergeSettings actually uses). Trim unused exports (loadSettings, saveSettings, toggleSetting, formatSettings, configuredProviders, reconcileProviderTracking, DEFAULT_CONFIG_PATH) — do not carry dead code over.\n- Repoint src/settings/migrations.ts: `import { mergeSettings } from \"./legacy.ts\";` (was `../config.ts`). Migration behavior must be unchanged.\n- Delete src/config.ts.\n- Migrate test/config.test.ts: move the `mergeSettings` normalization coverage into a new test/settings-legacy.test.ts (or extend test/settings-migrations.test.ts) and delete test/config.test.ts. Do not lose normalization coverage (valid/partial/invalid legacy input, defaults fallback).",
+      "evidence": [
+        {
+          "closeEvidence": "Completed by coded inline work path"
+        }
+      ],
+      "id": "work-2.23",
+      "labels": [],
+      "notes": [
+        "wo:execution-slice; closes the work-2.11 (U5) deferred follow-up: remove the legacy config hierarchy so the roadmap DoD (no abandoned legacy config code) holds.",
+        "Files changed:\n- CREATED: src/settings/legacy.ts (mergeSettings + only its needed types/consts: EXTRA_NAMES, PROVIDER_METRICS, ProviderMetrics, ProviderTrackingSettings, Settings, DEFAULT_SETTINGS)\n- UPDATED: src/settings/migrations.ts (import repointed from ../config.ts to ./legacy.ts)\n- DELETED: src/config.ts\n- CREATED: test/settings-legacy.test.ts (5 tests: valid, partial/missing, invalid types, default-fallback, dedupe)\n- DELETED: test/config.test.ts\n\nVerification:\n- grep -rn \"from [...]../config|from [...]./config\" src/ extensions/ test/ → no matches (exit 1)\n- npm test: 206 passed, 0 failed\n- npm run typecheck: clean\n\nReady for review.",
+        "wo:review-scope [\"src/config.ts\",\"src/settings/migrations.ts\",\"test/config.test.ts\",\"src/settings/legacy.ts\",\"test/settings-legacy.test.ts\"]",
+        "wo:review PASS - mergeSettings/mergeProviderTracking in src/settings/legacy.ts diff-identical to old src/config.ts (only trailing blank line); no dead exports carried (loadSettings/saveSettings/toggleSetting/formatSettings/configuredProviders/reconcileProviderTracking/DEFAULT_CONFIG_PATH absent); migrations.ts change is import source only; no ../config imports remain; npm test 206/206 pass, typecheck clean",
+        "wo:verify-check PASS\nCommand: npm test && npm run typecheck\nOutput: reezing on the last one (0.143206ms)\n✔ classifies rates with directional baselines and an output floor (0.110778ms)\n✔ caps histories and resets displayed throughput on model changes (0.193682ms)\n✔ finalizes active time without preserving rates (0.145524ms)\n✔ retains idle result, resets on turn start, and accumulates active time (0.244748ms)\nℹ tests 206\nℹ suites 0\nℹ pass 206\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 646.749592\n\n> @shvax/pi-statusline@0.7.4 typecheck\n> tsc --noEmit"
+      ],
+      "parentId": "work-2",
+      "status": "closed",
+      "title": "Remove legacy src/config.ts (move mergeSettings to src/settings/legacy.ts)",
+      "type": "task",
+      "updatedAt": "2026-07-31T22:02:59.899Z"
+    },
     "work-2.3": {
       "acceptance": "SHORT ACC",
       "createdAt": "2026-07-31T17:27:36.848Z",
@@ -1909,7 +1935,7 @@
       "recordCount": 11,
       "sourceFingerprint": "716c6815dbadf79dc70c6d01af6a643e7bcf36809c4af4405175a0d2a56789f1"
     },
-    "updatedAt": "2026-07-31T21:58:14.823Z"
+    "updatedAt": "2026-07-31T22:02:59.899Z"
   },
   "schemaVersion": 1
 }

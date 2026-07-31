@@ -1,7 +1,4 @@
-import { mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { dirname, join } from "node:path";
-import { SEGMENT_ORDER, type SegmentId } from "./segments.ts";
+import { SEGMENT_ORDER, type SegmentId } from "../segments.ts";
 
 export const EXTRA_NAMES = ["branch", "nerdFont", "cost", "sessionElapsed", "lastTurn", "pending"] as const;
 export type ExtraName = (typeof EXTRA_NAMES)[number];
@@ -60,8 +57,6 @@ export const DEFAULT_SETTINGS: Settings = {
   providerTracking: DEFAULT_PROVIDER_TRACKING,
 };
 
-export const DEFAULT_CONFIG_PATH = join(homedir(), ".pi", "agent", "statusline.json");
-
 function record(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
 }
@@ -112,77 +107,4 @@ export function mergeSettings(value: unknown): Settings {
     ])) as Record<ExtraName, boolean>,
     providerTracking: mergeProviderTracking(input.providerTracking),
   };
-}
-
-export interface AvailableModelRegistry {
-  getAvailable(): Array<{ provider: string }>;
-}
-
-/** Providers with configured pi authentication, in registry order. */
-export function configuredProviders(registry: AvailableModelRegistry): string[] {
-  return Array.from(new Set(registry.getAvailable().map((model) => providerName(model.provider))
-    .filter((provider): provider is string => provider !== undefined)));
-}
-
-/** Preserve saved providers while appending newly authenticated providers as selected. */
-export function reconcileProviderTracking(settings: Settings, registry: AvailableModelRegistry): Settings {
-  const providers = configuredProviders(registry);
-  const tracking = settings.providerTracking;
-  const selected = { ...tracking.selected };
-  const order = [...tracking.order];
-  for (const provider of providers) {
-    if (!(provider in selected)) selected[provider] = true;
-    if (!order.includes(provider)) order.push(provider);
-  }
-  return { ...settings, providerTracking: { ...tracking, selected, order } };
-}
-
-export function loadSettings(path = DEFAULT_CONFIG_PATH): Settings {
-  try {
-    return mergeSettings(JSON.parse(readFileSync(path, "utf8")));
-  } catch {
-    return mergeSettings(undefined);
-  }
-}
-
-export interface SaveOperations {
-  mkdir(path: string, options: { recursive: true }): void;
-  writeFile(path: string, data: string, encoding: "utf8"): void;
-  rename(from: string, to: string): void;
-  unlink(path: string): void;
-}
-
-const saveOperations: SaveOperations = { mkdir: mkdirSync, writeFile: writeFileSync, rename: renameSync, unlink: unlinkSync };
-
-export function saveSettings(settings: Settings, path = DEFAULT_CONFIG_PATH, operations = saveOperations): void {
-  const temporary = `${path}.tmp`;
-  operations.mkdir(dirname(path), { recursive: true });
-  try {
-    operations.writeFile(temporary, `${JSON.stringify(settings, null, 2)}\n`, "utf8");
-    operations.rename(temporary, path);
-  } catch (error) {
-    try { operations.unlink(temporary); } catch { /* The original document remains untouched. */ }
-    throw error;
-  }
-}
-
-export function toggleSetting(settings: Settings, name: string): Settings {
-  if ((SEGMENT_ORDER as readonly string[]).includes(name)) {
-    const id = name as SegmentId;
-    return { ...settings, segments: { ...settings.segments, [id]: !settings.segments[id] } };
-  }
-  if ((EXTRA_NAMES as readonly string[]).includes(name)) {
-    const id = name as ExtraName;
-    return { ...settings, extras: { ...settings.extras, [id]: !settings.extras[id] } };
-  }
-  throw new Error(`Unknown statusline segment: ${name}`);
-}
-
-export function formatSettings(settings: Settings): string {
-  const rows = [
-    ["footer", settings.footerEnabled],
-    ...SEGMENT_ORDER.map((name) => [name, settings.segments[name]] as const),
-    ...EXTRA_NAMES.map((name) => [name, settings.extras[name]] as const),
-  ];
-  return rows.map(([name, enabled]) => `${name}: ${enabled ? "on" : "off"}`).join("\n");
 }

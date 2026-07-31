@@ -1,6 +1,6 @@
 import type { StatuslineSettings, ProviderConfiguration, WindowConfiguration, SegmentId } from "./schema.ts";
 import { DEFAULT_STATUSLINE_SETTINGS, createProviderConfig, createWindowConfig } from "./defaults.ts";
-import { mergeSettings } from "../config.ts";
+import { mergeSettings } from "./legacy.ts";
 import { SEGMENT_ORDER } from "../segments.ts";
 
 /** Legacy settings shape (from src/config.ts). */
