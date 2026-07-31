@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { parseAnthropicUsage, parseCodexUsage, parseRateLimits, parseStoredRateLimits } from "../src/ratelimit.ts";
+import { parseAnthropicUsage, parseCodexUsage, parseRateLimits, parseStoredRateLimits, parseZaiUsage } from "../src/ratelimit.ts";
 
 const fixture = {
   "anthropic-ratelimit-unified-5h-utilization": "0.23",
@@ -55,6 +55,45 @@ test("parses Codex account usage by the windows returned by the account", () => 
     },
   }), [{ label: "wk", used: 0.63, resetAt: 1_784_246_400_000 }]);
   assert.deepEqual(parseCodexUsage({ rate_limit: null }), []);
+});
+
+test("parses Z.AI TOKENS_LIMIT windows, ordering the untouched/sooner-resetting one as 5h", () => {
+  assert.deepEqual(parseZaiUsage({
+    data: {
+      limits: [
+        { type: "TIME_LIMIT", unit: 5, number: 1, percentage: 0, nextResetTime: 1_787_999_449_996 },
+        { type: "TOKENS_LIMIT", unit: 3, number: 5, percentage: 0 },
+        { type: "TOKENS_LIMIT", unit: 6, number: 1, percentage: 5, nextResetTime: 1_785_753_049_998 },
+      ],
+      level: "pro",
+    },
+    success: true,
+  }), [
+    { label: "5h", used: 0 },
+    { label: "wk", used: 0.05, resetAt: 1_785_753_049_998 },
+  ]);
+});
+
+test("orders two reset-bearing Z.AI windows by which resets sooner", () => {
+  assert.deepEqual(parseZaiUsage({
+    data: {
+      limits: [
+        { type: "TOKENS_LIMIT", percentage: 40, nextResetTime: 1_785_753_049_998 },
+        { type: "TOKENS_LIMIT", percentage: 10, nextResetTime: 1_785_000_049_998 },
+      ],
+    },
+  }), [
+    { label: "5h", used: 0.1, resetAt: 1_785_000_049_998 },
+    { label: "wk", used: 0.4, resetAt: 1_785_753_049_998 },
+  ]);
+});
+
+test("hides Z.AI usage on any unexpected shape rather than guessing", () => {
+  assert.deepEqual(parseZaiUsage({ data: { limits: [{ type: "TOKENS_LIMIT", percentage: 10 }] } }), []);
+  assert.deepEqual(parseZaiUsage({ data: { limits: [] } }), []);
+  assert.deepEqual(parseZaiUsage({ data: { limits: [{ type: "TOKENS_LIMIT", percentage: 101 }, { type: "TOKENS_LIMIT", percentage: 5 }] } }), []);
+  assert.deepEqual(parseZaiUsage({}), []);
+  assert.deepEqual(parseZaiUsage(null), []);
 });
 
 test("restores only valid saved windows", () => {

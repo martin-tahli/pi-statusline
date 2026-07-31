@@ -67,6 +67,41 @@ export function parseCodexUsage(payload: unknown): RateLimits {
   });
 }
 
+// Z.AI has not published this endpoint in its own API docs (docs.z.ai); it's only known from a
+// third-party reverse-engineered tool. Used anyway at the user's request because it works with
+// pi's own stored GLM key and reports the same 5h/weekly credit windows Z.AI documents for the
+// Coding Plan (docs.z.ai/devpack/teamplan). Upgrade path: drop this if Z.AI ever breaks/replaces it.
+export function parseZaiUsage(payload: unknown): RateLimits {
+  if (!payload || typeof payload !== "object") return [];
+  const data = (payload as Record<string, unknown>).data;
+  if (!data || typeof data !== "object") return [];
+  const rawLimits = (data as Record<string, unknown>).limits;
+  if (!Array.isArray(rawLimits)) return [];
+
+  // Only TOKENS_LIMIT entries are the coding-plan credit windows; TIME_LIMIT entries are an
+  // unrelated MCP tool-call budget (search-prime/web-reader/zread), not the model quota.
+  const windows = rawLimits.flatMap((entry) => {
+    if (!entry || typeof entry !== "object") return [];
+    const window = entry as Record<string, unknown>;
+    if (window.type !== "TOKENS_LIMIT") return [];
+    const percentage = window.percentage;
+    if (typeof percentage !== "number" || !Number.isFinite(percentage) || percentage < 0 || percentage > 100) return [];
+    return [{ used: percentage / 100, resetAt: reset(typeof window.nextResetTime === "number" ? window.nextResetTime : undefined) }];
+  });
+  // The response has no documented field naming which window is 5h vs weekly. A window with no
+  // active reset countdown hasn't been touched since its last reset (Z.AI docs: 5h credits reset
+  // 5 hours *after consumption*, so an untouched window has no countdown; weekly credits always
+  // count down once subscribed), so it's the 5h window; otherwise the sooner-resetting window is
+  // the 5h one. Fail closed (no row) unless exactly two windows come back, since that's the only
+  // shape this heuristic was verified against.
+  if (windows.length !== 2) return [];
+  const [first, second] = [...windows].sort((a, b) => (a.resetAt ?? -Infinity) - (b.resetAt ?? -Infinity));
+  return [
+    { label: "5h", used: first!.used, ...(first!.resetAt === undefined ? {} : { resetAt: first!.resetAt }) },
+    { label: "wk", used: second!.used, ...(second!.resetAt === undefined ? {} : { resetAt: second!.resetAt }) },
+  ];
+}
+
 export function parseStoredRateLimits(value: unknown): RateLimits {
   if (!Array.isArray(value)) return [];
   return value.flatMap((window) => {

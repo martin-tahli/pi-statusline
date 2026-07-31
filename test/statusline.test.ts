@@ -1,12 +1,20 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import test, { after } from "node:test";
 import { initTheme } from "@earendil-works/pi-coding-agent";
 import statusline from "../extensions/statusline.ts";
+import { ProviderUsageCache } from "../src/provider-cache.ts";
 
 // The interactive settings menu resolves colors from pi's global theme singleton
 // (getSettingsListTheme() throws "Theme not initialized" otherwise). Real pi sessions
 // call this at startup; tests must do it once too.
 initTheme();
+const cacheRoot = mkdtempSync(join(tmpdir(), "pi-statusline-test-"));
+let cacheNumber = 0;
+const testCache = () => new ProviderUsageCache(join(cacheRoot, String(cacheNumber++)));
+after(() => rmSync(cacheRoot, { recursive: true, force: true }));
 
 test("stops the live timer when settled or the footer is disposed", async () => {
   const handlers = new Map<string, (...args: any[]) => unknown>();
@@ -37,7 +45,7 @@ test("stops the live timer when settled or the footer is disposed", async () => 
       },
     } as never;
 
-    statusline(pi);
+    statusline(pi, testCache());
     await handlers.get("session_start")!({}, ctx);
     const now = Date.now();
     handlers.get("turn_start")!({ timestamp: now });
@@ -99,7 +107,7 @@ test("renders emoji segments with themed semantic colors", async () => {
     },
   } as never;
 
-  statusline(pi);
+  statusline(pi, testCache());
   await handlers.get("session_start")!({}, ctx);
   const initial = footer!.render(500)[0]!;
   // Subscription (openai-codex + OAuth) hides the throughput ledger at idle; quota bars carry it.
@@ -189,7 +197,7 @@ test("loads Anthropic limits at session start", async () => {
       },
     } as never;
 
-    statusline(pi);
+    statusline(pi, testCache());
     await handlers.get("session_start")!({}, ctx);
     await new Promise<void>((resolve) => setImmediate(resolve));
 
@@ -201,6 +209,62 @@ test("loads Anthropic limits at session start", async () => {
     assert.equal(entries.length, 1);
   } finally {
     footer?.dispose?.();
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("ignores provider refreshes from a replaced session", async () => {
+  const handlers = new Map<string, (...args: any[]) => unknown>();
+  let release!: (response: Response) => void;
+  let stale = false;
+  let staleReads = 0;
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (() => new Promise<Response>((resolve) => { release = resolve; })) as typeof fetch;
+  try {
+    const pi = {
+      on: (event: string, handler: (...args: any[]) => unknown) => handlers.set(event, handler),
+      registerCommand: () => {},
+      getThinkingLevel: () => "off",
+      exec: async () => ({ code: 0, stdout: "", stderr: "" }),
+      appendEntry: () => {},
+    } as never;
+    const context = (trackStaleness = false) => ({
+      cwd: process.cwd(),
+      get model() {
+        if (trackStaleness && stale) staleReads++;
+        return { id: "claude", provider: "anthropic" };
+      },
+      modelRegistry: {
+        isUsingOAuth: () => true,
+        getApiKeyForProvider: async () => "access-token",
+        getAvailable: () => [{ provider: "anthropic", id: "claude" }],
+      },
+      getContextUsage: () => undefined,
+      hasPendingMessages: () => false,
+      sessionManager: { getBranch: () => [] },
+      ui: {
+        setFooter: (factory: any) => factory?.(
+          { requestRender: () => {} },
+          { fg: (_: string, text: string) => text, getColorMode: () => "16" },
+          { getGitBranch: () => null, getAvailableProviderCount: () => 1, onBranchChange: () => () => {} },
+        ),
+        notify: () => {},
+      },
+    }) as never;
+
+    statusline(pi, testCache());
+    await handlers.get("session_start")!({}, context(true));
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    stale = true;
+    await handlers.get("session_start")!({}, context());
+    release(new Response(JSON.stringify({
+      five_hour: { utilization: 25, resets_at: Date.now() + 3_600_000 },
+      seven_day: { utilization: 50, resets_at: Date.now() + 86_400_000 },
+    }), { status: 200 }));
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(staleReads, 0, "a late refresh must not read a stale extension context");
+    handlers.get("session_shutdown")!({});
+  } finally {
     globalThis.fetch = originalFetch;
   }
 });
@@ -235,7 +299,7 @@ test("restores Anthropic limits when a session reloads", async () => {
     },
   } as never;
 
-  statusline(pi);
+  statusline(pi, testCache());
   await handlers.get("session_start")!({}, ctx);
   const resetAt = String(Math.floor((Date.now() + 3_600_000) / 1_000));
   handlers.get("after_provider_response")!({ headers: {
@@ -285,7 +349,7 @@ test("estimates throughput from response text when a provider reports no usage",
     },
   } as never;
 
-  statusline(pi);
+  statusline(pi, testCache());
   await handlers.get("session_start")!({}, ctx);
   handlers.get("context")!({ messages: [{ role: "user", content: "a".repeat(400) }] });
   const now = Date.now();
@@ -336,7 +400,7 @@ test("shows an API token ledger (not a bogus prompt rate) for hosted providers w
     },
   } as never;
 
-  statusline(pi);
+  statusline(pi, testCache());
   await handlers.get("session_start")!({}, ctx);
   handlers.get("context")!({ messages: [{ role: "user", content: "a".repeat(30_000) }] });
   const now = Date.now();
@@ -392,8 +456,9 @@ test("renders a fresh active provider beneath the session line without duplicate
       },
     } as never;
 
-    statusline(pi);
+    statusline(pi, testCache());
     await handlers.get("session_start")!({}, ctx);
+    assert.ok(footer!.render(500)[1]?.includes("anthropic 5h — wk —"), "provider should render before its usage fetch completes");
     await new Promise<void>((resolve) => setImmediate(resolve));
     const lines = footer!.render(500);
     assert.equal(lines.length, 2);
@@ -401,6 +466,100 @@ test("renders a fresh active provider beneath the session line without duplicate
     assert.ok(lines[1]!.includes("anthropic 5h"), `missing provider row: ${lines[1]}`);
     assert.ok(lines[1]!.includes("wk"), `provider windows were not preserved: ${lines[1]}`);
     assert.equal(footer!.render(1).length, 2, "narrow widths must retain the provider row");
+  } finally {
+    footer?.dispose?.();
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("shows a tracked provider's fresh cross-session cache at startup", async () => {
+  const handlers = new Map<string, (...args: any[]) => unknown>();
+  let footer: { dispose?: () => void; render: (width: number) => string[] } | undefined;
+  const configPath = join(cacheRoot, "tracked-cache.json");
+  writeFileSync(configPath, JSON.stringify({ providerTracking: { selected: { anthropic: true }, order: ["anthropic"] } }));
+  const cache = testCache();
+  await cache.refresh("anthropic", async () => ({ limits: [{ label: "5h", used: 0.25 }] }));
+  const pi = {
+    on: (event: string, handler: (...args: any[]) => unknown) => handlers.set(event, handler),
+    registerCommand: () => {},
+    getThinkingLevel: () => "off",
+    exec: async () => ({ code: 0, stdout: "", stderr: "" }),
+  } as never;
+  const ctx = {
+    cwd: process.cwd(),
+    model: { id: "glm", provider: "zai" },
+    modelRegistry: {
+      isUsingOAuth: () => false,
+      getApiKeyForProvider: async () => undefined,
+      // Anthropic is intentionally absent: another pi process supplied its cached quota.
+      getAvailable: () => [{ provider: "zai", id: "glm" }],
+    },
+    getContextUsage: () => undefined,
+    hasPendingMessages: () => false,
+    sessionManager: { getBranch: () => [] },
+    ui: {
+      setFooter: (factory: any) => {
+        footer = factory?.(
+          { requestRender: () => {} },
+          { fg: (_: string, text: string) => text, getColorMode: () => "16" },
+          { getGitBranch: () => null, getAvailableProviderCount: () => 1, onBranchChange: () => () => {} },
+        );
+      },
+      notify: () => {},
+    },
+  } as never;
+
+  statusline(pi, cache, configPath);
+  await handlers.get("session_start")!({}, ctx);
+  assert.ok(footer!.render(500)[1]!.includes("anthropic 5h"));
+  footer?.dispose?.();
+});
+
+test("keeps active quota on the session line when provider tracking is disabled", async () => {
+  const handlers = new Map<string, (...args: any[]) => unknown>();
+  let footer: { dispose?: () => void; render: (width: number) => string[] } | undefined;
+  const configPath = join(cacheRoot, "tracking-disabled.json");
+  writeFileSync(configPath, JSON.stringify({ providerTracking: { enabled: false } }));
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () => new Response(JSON.stringify({
+    five_hour: { utilization: 25, resets_at: Date.now() + 3_600_000 },
+    seven_day: { utilization: 50, resets_at: Date.now() + 86_400_000 },
+  }), { status: 200 })) as typeof fetch;
+  try {
+    const pi = {
+      on: (event: string, handler: (...args: any[]) => unknown) => handlers.set(event, handler),
+      registerCommand: () => {},
+      getThinkingLevel: () => "off",
+      exec: async () => ({ code: 0, stdout: "", stderr: "" }),
+      appendEntry: () => {},
+    } as never;
+    const ctx = {
+      cwd: process.cwd(),
+      model: { id: "claude", provider: "anthropic" },
+      modelRegistry: {
+        isUsingOAuth: () => true,
+        getApiKeyForProvider: async () => "access-token",
+        getAvailable: () => [{ provider: "anthropic" }],
+      },
+      getContextUsage: () => undefined,
+      hasPendingMessages: () => false,
+      sessionManager: { getBranch: () => [] },
+      ui: {
+        setFooter: (factory: any) => {
+          footer = factory?.(
+            { requestRender: () => {} },
+            { fg: (_: string, text: string) => text, getColorMode: () => "16" },
+            { getGitBranch: () => null, getAvailableProviderCount: () => 1, onBranchChange: () => () => {} },
+          );
+        },
+        notify: () => {},
+      },
+    } as never;
+
+    statusline(pi, testCache(), configPath);
+    await handlers.get("session_start")!({}, ctx);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.ok(footer!.render(500)[0]!.includes("5h"));
   } finally {
     footer?.dispose?.();
     globalThis.fetch = originalFetch;
@@ -453,7 +612,7 @@ test("bare /statusline opens the interactive provider menu and lets Escape disca
     },
   } as never;
 
-  statusline(pi);
+  statusline(pi, testCache());
   await handlers.get("session_start")!({}, ctx);
   assert.ok(commandHandler, "expected /statusline to register a handler");
   await commandHandler!("", ctx);
@@ -515,7 +674,7 @@ test("tracks every selected provider's usage simultaneously, not just the active
       },
     } as never;
 
-    statusline(pi);
+    statusline(pi, testCache());
     await handlers.get("session_start")!({}, ctx);
     await new Promise<void>((resolve) => setImmediate(resolve));
     await new Promise<void>((resolve) => setImmediate(resolve));
@@ -565,7 +724,7 @@ test("refreshes git status on an interval independent of turn activity", async (
       },
     } as never;
 
-    statusline(pi);
+    statusline(pi, testCache());
     await handlers.get("session_start")!({}, ctx);
     const countAfterStart = execCount;
     assert.ok(intervalCallback, "expected a periodic git refresh interval");

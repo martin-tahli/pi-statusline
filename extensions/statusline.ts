@@ -16,7 +16,8 @@ import {
 import { billingMode, contextSeverity, deriveContext, deriveEffort, deriveModel, deriveProject, isLocalEndpoint } from "../src/derive.ts";
 import { formatRate, formatResetCountdown, formatTime, formatWindow } from "../src/format.ts";
 import { gitBranchSymbol, gitStatusTokens, parseGitStatus, type GitStatusState, type GitTokenKind } from "../src/git.ts";
-import { parseAnthropicUsage, parseCodexUsage, parseRateLimits, parseStoredRateLimits, type RateLimits, type RateLimitWindow } from "../src/ratelimit.ts";
+import { parseAnthropicUsage, parseCodexUsage, parseRateLimits, parseStoredRateLimits, parseZaiUsage, type RateLimits, type RateLimitWindow } from "../src/ratelimit.ts";
+import { ProviderUsageCache } from "../src/provider-cache.ts";
 import { ProviderRefreshCoordinator, type ProviderAdapter } from "../src/providers.ts";
 import { composeSegments, createSegments } from "../src/segments.ts";
 import { estimateTokens, sumTextLength, TurnMeter } from "../src/throughput.ts";
@@ -29,8 +30,8 @@ const GIT_ROLES: Record<GitTokenKind, "accent" | "success" | "warning" | "error"
   error: "error",
 };
 
-export default function statusline(pi: ExtensionAPI) {
-  let settings = loadSettings();
+export default function statusline(pi: ExtensionAPI, providerUsageCache = new ProviderUsageCache(), settingsPath = DEFAULT_CONFIG_PATH) {
+  let settings = loadSettings(settingsPath);
   let meter = new TurnMeter();
   let limits: RateLimits = [];
   let gitStatus: GitStatusState | undefined;
@@ -42,8 +43,10 @@ export default function statusline(pi: ExtensionAPI) {
   let lastContextChars = 0;
   let lastRenderedTime = "";
   let sessionActive = false;
+  let sessionEpoch = 0;
   let turnActive = false;
   let providerRefresh: ProviderRefreshCoordinator | undefined;
+  const isCurrentSession = (epoch: number) => sessionActive && epoch === sessionEpoch;
   const ANTHROPIC_RETRY_DELAYS_MS = [1_500, 3_000];
 
   const timeLabel = () => {
@@ -86,15 +89,18 @@ export default function statusline(pi: ExtensionAPI) {
     else if (!shouldTick && tick) stopTick();
   };
 
-  const refreshGit = async (ctx: ExtensionContext) => {
+  const refreshGit = async (ctx: ExtensionContext, epoch = sessionEpoch) => {
+    if (!isCurrentSession(epoch)) return;
     if (!settings.extras.branch) {
       gitStatus = undefined;
       return;
     }
     try {
       const result = await pi.exec("git", ["status", "--porcelain=v2", "--branch", "-z"], { cwd: ctx.cwd, timeout: 2_000 });
+      if (!isCurrentSession(epoch)) return;
       gitStatus = result.code === 0 ? parseGitStatus(result.stdout) : "error";
     } catch {
+      if (!isCurrentSession(epoch)) return;
       gitStatus = "error";
     }
     requestRender?.();
@@ -104,10 +110,10 @@ export default function statusline(pi: ExtensionAPI) {
     if (gitTick) clearInterval(gitTick);
     gitTick = undefined;
   };
-  const syncGitTick = (ctx: ExtensionContext) => {
-    const shouldTick = sessionActive && settings.footerEnabled && settings.extras.branch;
+  const syncGitTick = (ctx: ExtensionContext, epoch = sessionEpoch) => {
+    const shouldTick = isCurrentSession(epoch) && settings.footerEnabled && settings.extras.branch;
     if (shouldTick && !gitTick) {
-      gitTick = setInterval(() => void refreshGit(ctx), 10_000);
+      gitTick = setInterval(() => void refreshGit(ctx, epoch), 10_000);
       gitTick.unref?.();
     } else if (!shouldTick) stopGitTick();
   };
@@ -116,13 +122,13 @@ export default function statusline(pi: ExtensionAPI) {
     if (anthropicRetryTimer) clearTimeout(anthropicRetryTimer);
     anthropicRetryTimer = undefined;
   };
-  const scheduleAnthropicRetry = (ctx: ExtensionContext, attempt = 0) => {
+  const scheduleAnthropicRetry = (ctx: ExtensionContext, attempt = 0, epoch = sessionEpoch) => {
     stopAnthropicRetry();
-    if (attempt >= ANTHROPIC_RETRY_DELAYS_MS.length) return;
+    if (!isCurrentSession(epoch) || attempt >= ANTHROPIC_RETRY_DELAYS_MS.length) return;
     anthropicRetryTimer = setTimeout(() => {
       anthropicRetryTimer = undefined;
-      if (!sessionActive || limits.length || !isAnthropicOAuth(ctx)) return;
-      void refreshAnthropicLimits(ctx).then((next) => { if (!next.length) scheduleAnthropicRetry(ctx, attempt + 1); });
+      if (!isCurrentSession(epoch) || limits.length || !isAnthropicOAuth(ctx)) return;
+      void refreshAnthropicLimits(ctx, epoch).then((next) => { if (!next.length) scheduleAnthropicRetry(ctx, attempt + 1, epoch); });
     }, ANTHROPIC_RETRY_DELAYS_MS[attempt]);
     anthropicRetryTimer.unref?.();
   };
@@ -183,6 +189,23 @@ export default function statusline(pi: ExtensionAPI) {
     }
   };
 
+  // Undocumented by Z.AI (see src/ratelimit.ts parseZaiUsage), used anyway at the user's request.
+  const fetchZaiUsage = async (ctx: ExtensionContext, model: ReturnType<typeof findAvailableModel>): Promise<RateLimits> => {
+    if (!model) return [];
+    try {
+      const access = await ctx.modelRegistry.getApiKeyForProvider("zai");
+      if (!access) return [];
+      const response = await fetch("https://api.z.ai/api/monitor/usage/quota/limit", {
+        headers: { authorization: `Bearer ${access}`, accept: "application/json", "user-agent": "pi-statusline" },
+        signal: AbortSignal.timeout(3_000),
+      });
+      if (!response.ok) return [];
+      return parseZaiUsage(await response.json());
+    } catch {
+      return [];
+    }
+  };
+
   const fetchCodexUsage = async (ctx: ExtensionContext, model: ReturnType<typeof findAvailableModel>): Promise<RateLimits> => {
     if (!model?.baseUrl) return [];
     try {
@@ -205,13 +228,20 @@ export default function statusline(pi: ExtensionAPI) {
     }
   };
 
+  const refreshProviderUsage = (provider: string, fetchLimits: () => Promise<RateLimits>) =>
+    providerUsageCache.refresh(provider, async () => {
+      const next = await fetchLimits();
+      return next.length ? { limits: next } : undefined;
+    });
+
   // Active-session wrappers: only apply fetched usage to the shared `limits`/tick/persisted entry
   // when the fetched provider is actually the active model, so a background provider-tracking
   // fetch for a different provider never clobbers what the session line shows.
-  const refreshAnthropicLimits = async (ctx: ExtensionContext): Promise<RateLimits> => {
-    if (!isAnthropicOAuth(ctx)) return [];
-    const next = await fetchAnthropicUsage(ctx, ctx.model);
-    if (!next.length || !isAnthropicOAuth(ctx)) return [];
+  const refreshAnthropicLimits = async (ctx: ExtensionContext, epoch = sessionEpoch): Promise<RateLimits> => {
+    if (!isCurrentSession(epoch) || !isAnthropicOAuth(ctx)) return [];
+    const usage = await refreshProviderUsage("anthropic", () => fetchAnthropicUsage(ctx, ctx.model));
+    const next = usage?.limits ?? [];
+    if (!next.length || !isCurrentSession(epoch) || !isAnthropicOAuth(ctx)) return [];
     limits = next;
     pi.appendEntry(ANTHROPIC_LIMITS_ENTRY, limits);
     syncTick();
@@ -219,10 +249,11 @@ export default function statusline(pi: ExtensionAPI) {
     return next;
   };
 
-  const refreshCodexLimits = async (ctx: ExtensionContext): Promise<RateLimits> => {
-    if (ctx.model?.provider !== "openai-codex") return [];
-    const next = await fetchCodexUsage(ctx, ctx.model);
-    if (ctx.model?.provider !== "openai-codex") return [];
+  const refreshCodexLimits = async (ctx: ExtensionContext, epoch = sessionEpoch): Promise<RateLimits> => {
+    if (!isCurrentSession(epoch) || ctx.model?.provider !== "openai-codex") return [];
+    const usage = await refreshProviderUsage("openai-codex", () => fetchCodexUsage(ctx, ctx.model));
+    const next = usage?.limits ?? [];
+    if (!next.length || !isCurrentSession(epoch) || ctx.model?.provider !== "openai-codex") return [];
     limits = next;
     syncTick();
     requestRender?.();
@@ -244,13 +275,14 @@ export default function statusline(pi: ExtensionAPI) {
     return { input, output, cost };
   };
 
-  const installFooter = (ctx: ExtensionContext) => {
+  const installFooter = (ctx: ExtensionContext, epoch = sessionEpoch) => {
+    if (!isCurrentSession(epoch)) return;
     ctx.ui.setFooter((tui, theme, footerData) => {
       requestRender = () => tui.requestRender();
       const unsubscribe = footerData.onBranchChange(() => {
         gitStatus = undefined;
         tui.requestRender();
-        void refreshGit(ctx);
+        void refreshGit(ctx, epoch);
       });
       return {
         dispose() {
@@ -326,8 +358,14 @@ export default function statusline(pi: ExtensionAPI) {
           const providerRows = !tracking.enabled ? [] : tracking.order.flatMap((provider) => {
             if (!tracking.selected[provider]) return [];
             const health = providerRefresh?.get(provider);
-            if (health?.state !== "fresh") return [];
             const metrics = { ...tracking.metrics, ...tracking.overrides[provider] };
+            if (health?.state !== "fresh") {
+              const registry = ctx.modelRegistry as unknown as { getAvailable?: () => Array<{ provider: string }> };
+              const model = provider === "anthropic" && registry.getAvailable ? findAvailableModel(ctx, provider) : undefined;
+              return provider === "anthropic" && model && ctx.modelRegistry.isUsingOAuth(model) && (metrics.usage || metrics.reset)
+                ? [{ provider, line: theme.fg("muted", "anthropic 5h — wk —") }]
+                : [];
+            }
             const windows = health.usage.limits.flatMap((limit) => {
               const usage = metrics.usage ? renderBar(limit.used, 12, barStyle(limit.used), undefined, metrics.percent) : "";
               const reset = metrics.reset && limit.resetAt !== undefined
@@ -363,7 +401,7 @@ export default function statusline(pi: ExtensionAPI) {
     syncTick();
   };
 
-  const persist = () => saveSettings(settings, DEFAULT_CONFIG_PATH);
+  const persist = () => saveSettings(settings, settingsPath);
   const availableProviders = (ctx: ExtensionContext) => {
     const registry = ctx.modelRegistry as unknown as { getAvailable?: () => Array<{ provider: string }> } | undefined;
     return registry?.getAvailable ? configuredProviders(registry as { getAvailable(): Array<{ provider: string }> }) : [];
@@ -421,7 +459,7 @@ export default function statusline(pi: ExtensionAPI) {
       return { render: (width) => container.render(width), invalidate: () => container.invalidate(), handleInput: (data) => { list.handleInput?.(data); tui.requestRender(); } };
     });
     if (!accepted) return;
-    try { saveSettings(draft, DEFAULT_CONFIG_PATH); settings = draft; ctx.ui.notify("Provider tracking saved", "info"); requestRender?.(); }
+    try { saveSettings(draft, settingsPath); settings = draft; ctx.ui.notify("Provider tracking saved", "info"); requestRender?.(); }
     catch { ctx.ui.notify("Could not save provider tracking", "error"); }
   };
 
@@ -466,35 +504,52 @@ export default function statusline(pi: ExtensionAPI) {
   });
 
   pi.on("session_start", async (_event, ctx) => {
+    const epoch = ++sessionEpoch;
     sessionActive = true;
     turnActive = false;
     stopTick();
     stopAnthropicRetry();
-    settings = loadSettings();
+    settings = loadSettings(settingsPath);
     if (availableProviders(ctx).length) settings = reconcileProviderTracking(settings, ctx.modelRegistry);
     meter = new TurnMeter();
     limits = isAnthropicOAuth(ctx) ? restoreAnthropicLimits(ctx) : [];
+    if (!limits.length) limits = providerUsageCache.getFresh(ctx.model?.provider ?? "")?.limits ?? [];
     gitStatus = undefined;
-    if (settings.footerEnabled) installFooter(ctx);
-    void refreshAnthropicLimits(ctx).then((next) => { if (!next.length) scheduleAnthropicRetry(ctx); });
-    void refreshCodexLimits(ctx);
     const providers = availableProviders(ctx);
+    // Saved providers may not be available in this process yet. Keep their last fresh cross-session
+    // snapshot visible while a session that can authenticate them refreshes it.
+    const trackedProviders = Array.from(new Set([...providers, ...settings.providerTracking.order]));
     const adapters = new Map<string, ProviderAdapter>();
-    const scoped = async (fetchLimits: () => Promise<RateLimits>) => {
-      const next = await fetchLimits();
-      return next.length ? { limits: next } : undefined;
-    };
-    if (providers.includes("anthropic")) adapters.set("anthropic", { refresh: () => scoped(() => fetchAnthropicUsage(ctx, findAvailableModel(ctx, "anthropic"))) });
-    if (providers.includes("openai-codex")) adapters.set("openai-codex", { refresh: () => scoped(() => fetchCodexUsage(ctx, findAvailableModel(ctx, "openai-codex"))) });
+    if (providers.includes("anthropic")) adapters.set("anthropic", { refresh: () => refreshProviderUsage("anthropic", () => fetchAnthropicUsage(ctx, findAvailableModel(ctx, "anthropic"))) });
+    if (providers.includes("openai-codex")) adapters.set("openai-codex", { refresh: () => refreshProviderUsage("openai-codex", () => fetchCodexUsage(ctx, findAvailableModel(ctx, "openai-codex"))) });
+    if (providers.includes("zai")) adapters.set("zai", { refresh: () => refreshProviderUsage("zai", () => fetchZaiUsage(ctx, findAvailableModel(ctx, "zai"))) });
     providerRefresh?.stop();
-    providerRefresh = new ProviderRefreshCoordinator(adapters, () => requestRender?.());
-    providerRefresh.start(providers);
-    syncGitTick(ctx);
-    await refreshGit(ctx);
+    providerRefresh = new ProviderRefreshCoordinator(adapters, () => {
+      if (!isCurrentSession(epoch)) return;
+      const health = providerRefresh?.get(ctx.model?.provider ?? "");
+      if (health?.state === "fresh") {
+        limits = health.usage.limits;
+        syncTick();
+      }
+      requestRender?.();
+    });
+    for (const provider of trackedProviders) {
+      const cached = providerUsageCache.getFresh(provider);
+      if (cached) providerRefresh.prime(provider, cached, cached.updatedAt);
+    }
+    if (settings.footerEnabled) installFooter(ctx, epoch);
+    providerRefresh.start(trackedProviders);
+    if (!providers.includes(ctx.model?.provider ?? "")) {
+      void refreshAnthropicLimits(ctx, epoch).then((next) => { if (!next.length) scheduleAnthropicRetry(ctx, 0, epoch); });
+      void refreshCodexLimits(ctx, epoch);
+    }
+    syncGitTick(ctx, epoch);
+    await refreshGit(ctx, epoch);
   });
 
   pi.on("session_shutdown", () => {
     sessionActive = false;
+    sessionEpoch++;
     turnActive = false;
     stopTick();
     stopGitTick();

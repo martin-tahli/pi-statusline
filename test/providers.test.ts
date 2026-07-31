@@ -21,6 +21,49 @@ test("refreshes providers independently and recovers after a failure", async () 
   assert.equal(anthro, 2);
 });
 
+test("renders cached usage before its background refresh completes", () => {
+  const coordinator = new ProviderRefreshCoordinator(new Map([
+    ["anthropic", { refresh: () => new Promise<never>(() => {}) }],
+  ]), () => {}, 10, 20);
+  coordinator.prime("anthropic", usage, Date.now());
+  assert.equal(coordinator.get("anthropic").state, "fresh");
+  coordinator.prime("future", usage, Date.now() + 60_000);
+  assert.equal(coordinator.get("future").state, "hidden");
+});
+
+test("keeps a cached provider visible when this process cannot refresh it", async () => {
+  const coordinator = new ProviderRefreshCoordinator(new Map(), () => {}, 10, 20);
+  coordinator.prime("anthropic", usage, Date.now());
+  await coordinator.refresh("anthropic");
+  assert.equal(coordinator.get("anthropic").state, "fresh");
+});
+
+test("keeps default provider usage visible through missed refreshes", async () => {
+  const coordinator = new ProviderRefreshCoordinator(new Map([
+    ["anthropic", { refresh: async () => usage }],
+  ]), () => {});
+  await coordinator.refresh("anthropic");
+  const fresh = coordinator.get("anthropic");
+  assert.equal(coordinator.get("anthropic", fresh.updatedAt! + 30_000).state, "fresh");
+});
+
+test("keeps the last fresh usage through a transient refresh failure", async () => {
+  let available = true;
+  const coordinator = new ProviderRefreshCoordinator(new Map([
+    ["anthropic", { refresh: async () => available ? usage : undefined }],
+  ]), () => {}, 10, 20);
+  await coordinator.refresh("anthropic");
+  const fresh = coordinator.get("anthropic");
+  available = false;
+  await coordinator.refresh("anthropic");
+  assert.deepEqual(coordinator.get("anthropic"), fresh);
+  assert.deepEqual(coordinator.get("anthropic", fresh.updatedAt! + 21), {
+    state: "hidden",
+    reason: "usage data is stale",
+    updatedAt: fresh.updatedAt,
+  });
+});
+
 test("publishes a fast provider's usage without waiting on a hanging refresh", async () => {
   const coordinator = new ProviderRefreshCoordinator(new Map([
     ["anthropic", { refresh: () => new Promise<never>(() => {}) }],
@@ -61,10 +104,10 @@ test("recovers a failed provider on a later scheduled refresh", async () => {
   }
 });
 
-test("hides stale results and never invents GLM usage", async () => {
+test("hides stale results and reports specific reasons for providers without an adapter", async () => {
   const coordinator = new ProviderRefreshCoordinator(new Map([["anthropic", { refresh: async () => usage }]]), () => {}, 10, 20);
   await coordinator.refresh("anthropic");
   assert.deepEqual(coordinator.get("anthropic", Date.now() + 21), { state: "hidden", reason: "usage data is stale", updatedAt: coordinator.get("anthropic").updatedAt });
-  assert.equal(sanitizedReason("glm"), "no documented usage source for pi");
+  assert.equal(sanitizedReason("zai"), "usage unavailable");
   assert.equal(sanitizedReason("openrouter"), "usage requires an OpenRouter management key pi doesn't manage");
 });

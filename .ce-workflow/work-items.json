@@ -1250,6 +1250,10 @@
       "dependencies": [],
       "dependencyEdges": [],
       "description": "refreshAnthropicLimits/refreshCodexLimits, reused as the multi-provider tracking adapters, gated on ctx.model.provider === <that provider>. Since only one model can be active at a time, provider rows for any non-active provider (e.g. openai-codex or anthropic when the other was active) never populated regardless of being selected in the settings menu, contradicting the epic's own objective ('...without switching models or sessions').",
+      "displayMetadata": {
+        "schemaVersion": 1,
+        "title": "Fix provider usage tracking to update all providers, not just active"
+      },
       "evidence": [
         {
           "closeEvidence": "Completed by coded inline work path"
@@ -1273,6 +1277,10 @@
       "dependencies": [],
       "dependencyEdges": [],
       "description": "User feedback after the multi-provider fix: (1) OpenRouter never shows a row and the reason wasn't explained; (2) usage/reset were the only per-row fields, no separate control for the bar's trailing percent number; (3) README described the pre-multi-provider single-row behavior and didn't document the settings menu fields.",
+      "displayMetadata": {
+        "schemaVersion": 1,
+        "title": "Add per-field provider toggles, honest blocker reasons, refreshed docs"
+      },
       "evidence": [
         {
           "closeEvidence": "Completed by coded inline work path"
@@ -1300,7 +1308,7 @@
       "recordCount": 11,
       "sourceFingerprint": "716c6815dbadf79dc70c6d01af6a643e7bcf36809c4af4405175a0d2a56789f1"
     },
-    "updatedAt": "2026-07-30T15:03:53.808Z"
+    "updatedAt": "2026-07-31T08:15:41.498Z"
   },
   "schemaVersion": 1
 }

@@ -1,7 +1,8 @@
 import type { RateLimits } from "./ratelimit.ts";
 
-export const PROVIDER_REFRESH_MS = 60_000;
-export const PROVIDER_MAX_AGE_MS = PROVIDER_REFRESH_MS * 2;
+export const PROVIDER_REFRESH_MS = 10_000;
+// Keep the last quota during a brief provider/API outage instead of flickering to unavailable.
+export const PROVIDER_MAX_AGE_MS = 5 * 60_000;
 
 export interface ProviderUsage {
   limits: RateLimits;
@@ -17,7 +18,6 @@ export interface ProviderAdapter {
 
 /** Never surface thrown provider data; these are deliberately short UI-safe reasons. */
 export function sanitizedReason(provider: string, error?: unknown): string {
-  if (provider === "glm") return "no documented usage source for pi";
   // OpenRouter's only usage endpoint requires a separate management key pi doesn't manage
   // (the inference key pi already stores is explicitly rejected by that endpoint).
   if (provider === "openrouter") return "usage requires an OpenRouter management key pi doesn't manage";
@@ -65,23 +65,27 @@ export class ProviderRefreshCoordinator {
     return value?.state === "hidden" ? value : { state: "hidden", reason: "usage data is stale", updatedAt: value?.updatedAt };
   }
 
+  prime(provider: string, usage: ProviderUsage, updatedAt: number): void {
+    if (usage.limits.length && Number.isFinite(updatedAt) && updatedAt <= Date.now()) this.health.set(provider, { state: "fresh", usage, updatedAt });
+  }
+
   async refresh(provider: string): Promise<void> {
     if (this.running.has(provider)) return;
     this.running.add(provider);
     const adapter = this.adapters.get(provider);
+    const previous = this.health.get(provider);
     if (!adapter) {
-      this.health.set(provider, { state: "hidden", reason: sanitizedReason(provider) });
+      if (previous?.state !== "fresh") this.health.set(provider, { state: "hidden", reason: sanitizedReason(provider) });
       this.running.delete(provider);
       this.onUpdate();
       return;
     }
     try {
       const usage = await adapter.refresh(AbortSignal.timeout(Math.min(this.cadenceMs, 3_000)));
-      this.health.set(provider, usage?.limits.length
-        ? { state: "fresh", usage, updatedAt: Date.now() }
-        : { state: "hidden", reason: "usage unavailable" });
+      if (usage?.limits.length) this.health.set(provider, { state: "fresh", usage, updatedAt: Date.now() });
+      else if (previous?.state !== "fresh") this.health.set(provider, { state: "hidden", reason: "usage unavailable" });
     } catch (error) {
-      this.health.set(provider, { state: "hidden", reason: sanitizedReason(provider, error) });
+      if (previous?.state !== "fresh") this.health.set(provider, { state: "hidden", reason: sanitizedReason(provider, error) });
     } finally {
       this.running.delete(provider);
       this.onUpdate();
