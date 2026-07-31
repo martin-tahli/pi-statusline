@@ -1352,6 +1352,10 @@
       "dependencies": [],
       "dependencyEdges": [],
       "description": "Close the second migration-parity gap blocking a safe U5 render rewire. migrateLegacySettings currently seeds a provider's windows.default ONLY when it has per-provider overrides; providers relying on the shared tracking.metrics {usage,percent,reset} lose those toggles after migration. Fix: seed windows.default from the shared metrics for EVERY migrated selected provider, overlaying per-provider overrides on top. No schema change (the new per-window model is richer; migration populates the default window). Same class as the extras-parity fix.\n\nFiles:\n- src/settings/migrations.ts: in the selected-providers loop, always create windows.default; showBar=overrides.usage ?? shared.metrics.usage; showPercent=overrides.percent ?? shared.metrics.percent; showReset=overrides.reset ?? shared.metrics.reset.\n- test/settings-migrations.test.ts: assert a selected provider WITHOUT overrides now inherits the shared metrics (previously lost); existing override assertions still hold (overlay semantics).",
+      "displayMetadata": {
+        "schemaVersion": 1,
+        "title": "Preserve shared provider metrics during migration"
+      },
       "evidence": [
         {
           "closeEvidence": "Completed by coded inline work path"
@@ -1377,6 +1381,10 @@
       "dependencies": [],
       "dependencyEdges": [],
       "description": "U5 extension composition-root refactor: the extension now sources settings exclusively from the new core (src/settings/*). src/config.ts is no longer imported by the extension (the file itself is retained only as a legacy-parse helper for migration; its removal is a tracked follow-up slice).\n\n- src/settings/runtime.ts (NEW): DEFAULT_STATUSLINE_CONFIG_PATH; loadRuntimeSettings(path) auto-migrates legacy (unversioned) docs then normalizes; reconcileProviders (new-shape, seeds a default window for newly-authenticated providers); configuredProviders (moved from config.ts); applyToggle (segments + extras + nerdFont<->icons.style, with aliases); formatStatusSummary.\n- extensions/statusline.ts: settings typed StatuslineSettings; read sites remapped (footerEnabled->enabled; extras.nerdFont->icons.style==='nerdfont'; providerTracking->providers records/windows with per-window showBar/showPercent/showReset); openProviderMenu REMOVED -> bare /statusline shows a deterministic unavailable-settings facade notice; on/off/toggle operate on the new shape; load/save via loadRuntimeSettings/saveStatuslineSettings. SettingsList/Container/SettingItem/getSettingsListTheme imports dropped.\n- src/settings/migrations.ts FIX: result.enabled = footerEnabled only (was && providerTracking.enabled, which conflated two independent toggles and broke footer-on/tracking-off).\n- test/statusline.test.ts: the interactive-menu test migrated (not deleted) to assert the facade notice (no custom UI opened, one deterministic notify). All other integration tests pass unchanged via legacy auto-migrate.\n\nDeferred to a follow-up slice: remove src/config.ts itself (move mergeSettings to src/settings/legacy.ts, migrate/remove test/config.test.ts, add runtime unit tests for configuredProviders/applyToggle/reconcileProviders).",
+      "displayMetadata": {
+        "schemaVersion": 1,
+        "title": "Refactor extension composition root to use the new settings core"
+      },
       "evidence": [
         {
           "closeEvidence": "Completed by coded inline work path"
@@ -1395,6 +1403,50 @@
       "title": "U5: extension composition-root refactor (new settings core)",
       "type": "task",
       "updatedAt": "2026-07-31T18:48:01.378Z"
+    },
+    "work-2.12": {
+      "acceptance": "Exactly one new open executable child exists under work-2 with concrete scope, acceptance, and dependency context; this planning item is closed with a summary note.",
+      "createdAt": "2026-07-31T19:50:28.047Z",
+      "dependencies": [],
+      "dependencyEdges": [],
+      "description": "Inspect the roadmap plan and completed children through work-2.11, then create exactly one next executable delivery slice under work-2. The slice must be dependency-ordered, independently verifiable, and contain concrete file scope and acceptance. Do not implement product code.",
+      "evidence": [],
+      "id": "work-2.12",
+      "labels": [
+        "wo:planning"
+      ],
+      "notes": [
+        "wo:planning; just-in-time next-slice planning after U5",
+        "Planning complete: created exactly one next executable child, work-2.13, for dependency-unblocked U6 settings-shell behavior after closed U5/work-2.11. Scope and falsifiable fake-TUI acceptance cover root navigation, draft isolation, production-path preview, safe save/discard/reset, narrow rendering, and I/O purity; U7-U13 remain unsliced."
+      ],
+      "parentId": "work-2",
+      "status": "closed",
+      "title": "Plan next slice for New Pi Statusline Settings UI",
+      "type": "task",
+      "updatedAt": "2026-07-31T19:52:36.716Z"
+    },
+    "work-2.13": {
+      "acceptance": "1. A fake TUI mounts the shell and observes exactly Providers, Separators, and Emojis at the root; Up/Down, Left/Right, Enter, Space, Ctrl+Up/Down, Tab, S, R, Shift+R, D, Esc, Q, and ? are routed deterministically, with a textual selected marker/status that remains understandable without color. 2. Opening deep-clones the supplied runtime settings; edits and selected/provider/section/all resets affect only the draft and live preview, with provider/section/all resets confirmed, while the supplied runtime object and save/apply callback remain untouched before Save. 3. Preview uses renderPreview, visibly labels fixture modes, and hides/collapses preview and help before navigation or selected values at narrow widths; render/navigation under an I/O trap performs no filesystem, network, Git, session-scan, cache-refresh, or timer work. 4. Esc/Q with dirty state presents Save, Discard, Cancel; discard returns the original semantic settings, cancel retains the draft, save failure keeps the dialog/draft open and leaves runtime/persisted input unchanged, and save success returns/applies the saved settings once with a success outcome. 5. node --test test/settings-ui.test.ts, npm test, and npm run typecheck pass.",
+      "createdAt": "2026-07-31T19:52:23.169Z",
+      "dependencies": [],
+      "dependencyEdges": [],
+      "description": "Deliver the first end-to-end terminal-settings behavior after the closed U5 composition-root refactor. Add src/settings/ui.ts as the cohesive Pi TUI shell (root screen, screen stack, keyboard routing, contextual help/selection rendering, preview pane, text edit state, and confirmation dialogs) and add test/settings-ui.test.ts with a fake TUI. Reuse src/settings/state.ts for cloned drafts/resets, src/settings/preview.ts for production-path previews, and the existing settings types/defaults; do not duplicate parsing, rendering, or persistence logic. This slice is component-level: extension command wiring and removal of legacy command arguments remain for U9.",
+      "evidence": [
+        {
+          "closeEvidence": "Completed by coded inline work path"
+        }
+      ],
+      "id": "work-2.13",
+      "labels": [],
+      "notes": [
+        "wo:execution-slice; source: docs/plans/2026-07-31-001-feat-new-statusline-settings-ui-plan.md; covered plan unit: U6 (R1-R5, R29 at component boundary). Dependency context: follows closed work-2.11/U5 and is now unblocked; U7/U8 add concrete settings screens, while U9 owns /statusline command integration and legacy-argument removal.",
+        "wo:verify-check PASS\nCommand: npm test && npm run typecheck\nOutput: freezing on the last one (0.188245ms)\n✔ classifies rates with directional baselines and an output floor (0.15447ms)\n✔ caps histories and resets displayed throughput on model changes (0.236142ms)\n✔ finalizes active time without preserving rates (0.173003ms)\n✔ retains idle result, resets on turn start, and accumulates active time (0.279268ms)\nℹ tests 177\nℹ suites 0\nℹ pass 177\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 714.853727\n\n> @shvax/pi-statusline@0.7.4 typecheck\n> tsc --noEmit"
+      ],
+      "parentId": "work-2",
+      "status": "closed",
+      "title": "Settings UI shell: root navigation, isolated draft, and safe save/discard/reset",
+      "type": "task",
+      "updatedAt": "2026-07-31T20:04:48.013Z"
     },
     "work-2.2": {
       "acceptance": "",
@@ -1587,6 +1639,10 @@
       "dependencies": [],
       "dependencyEdges": [],
       "description": "Close the feature-parity gap blocking U5: add a minimal `extras` group to StatuslineSettings for the 5 toggles the live render path reads but the new schema lacked (branch, cost, sessionElapsed, lastTurn, pending). User decision: \"Add a minimal extras group (recommended)\". Behavior-preserving, reversible; UI exposure deferred to U8.\n\nFiles:\n- schema.ts: ExtrasSettings { branch, cost, sessionElapsed, lastTurn, pending }; add `extras: ExtrasSettings` to StatuslineSettings.\n- defaults.ts: DEFAULT_EXTRAS matching current config.ts defaults (branch:true, cost:false, sessionElapsed:false, lastTurn:false, pending:false); add to DEFAULT_STATUSLINE_SETTINGS.\n- validation.ts: parseExtras (boolean coercion, falls back to defaults); add \"extras\" to KNOWN_TOP_LEVEL_FIELDS; wire into parseStatuslineSettings.\n- migrations.ts: migrate legacy extras.{branch,cost,sessionElapsed,lastTurn,pending} into result.extras.\n- tests: extend settings-schema, settings-validation, settings-migrations, settings-defaults to cover the extras group + migration.",
+      "displayMetadata": {
+        "schemaVersion": 1,
+        "title": "Add settings parity for status line extras"
+      },
       "evidence": [
         {
           "closeEvidence": "Completed by coded inline work path"
@@ -1614,7 +1670,7 @@
       "recordCount": 11,
       "sourceFingerprint": "716c6815dbadf79dc70c6d01af6a643e7bcf36809c4af4405175a0d2a56789f1"
     },
-    "updatedAt": "2026-07-31T18:48:01.378Z"
+    "updatedAt": "2026-07-31T20:04:48.014Z"
   },
   "schemaVersion": 1
 }
