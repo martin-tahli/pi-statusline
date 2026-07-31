@@ -1,0 +1,110 @@
+import type { StatuslineSettings, ProviderConfiguration, WindowConfiguration, SegmentId } from "./schema.ts";
+import { DEFAULT_STATUSLINE_SETTINGS, createProviderConfig, createWindowConfig } from "./defaults.ts";
+import { mergeSettings } from "../config.ts";
+import { SEGMENT_ORDER } from "../segments.ts";
+
+/** Legacy settings shape (from src/config.ts). */
+interface LegacySettings {
+  footerEnabled?: boolean;
+  segments?: Record<SegmentId, boolean>;
+  extras?: Record<string, boolean>;
+  providerTracking?: {
+    enabled?: boolean;
+    selected?: Record<string, boolean>;
+    order?: string[];
+    metrics?: Record<string, boolean>;
+    overrides?: Record<string, Record<string, boolean>>;
+  };
+}
+
+/** Migrate legacy settings to new schema (partial, for merging). */
+export function migrateLegacySettings(legacy: unknown): Partial<StatuslineSettings> {
+  const input = legacy && typeof legacy === "object" ? legacy as LegacySettings : {};
+  const merged = mergeSettings(input); // Use existing safe merge for legacy shape
+
+  const result: Partial<StatuslineSettings> = {};
+
+  // Global enabled: footerEnabled + providerTracking.enabled
+  result.enabled = merged.footerEnabled && merged.providerTracking.enabled;
+
+  // Provider settings
+  const providers: StatuslineSettings["providers"] = {
+    enabled: merged.providerTracking.enabled,
+    order: [...merged.providerTracking.order],
+    defaults: structuredClone(DEFAULT_STATUSLINE_SETTINGS.providers.defaults),
+    records: {},
+  };
+
+  // Migrate selected providers to records
+  for (const [providerId, enabled] of Object.entries(merged.providerTracking.selected)) {
+    const cleanId = providerId.trim();
+    if (!cleanId) continue;
+    const providerConfig = createProviderConfig();
+    providerConfig.enabled = enabled;
+    // Map metrics overrides to window/segment config
+    const overrides = merged.providerTracking.overrides[providerId];
+    if (overrides) {
+      // Default window config gets bar/percent/reset from metrics
+      const windowConfig = createWindowConfig();
+      windowConfig.showBar = overrides.usage ?? true;
+      windowConfig.showPercent = overrides.percent ?? true;
+      windowConfig.showReset = overrides.reset ?? true;
+      providerConfig.windows["default"] = windowConfig;
+    }
+    providers.records[cleanId] = providerConfig;
+  }
+
+  // Preserve unknown legacy provider keys as disabled/stored records
+  for (const providerId of merged.providerTracking.order) {
+    if (!(providerId in providers.records)) {
+      const providerConfig = createProviderConfig();
+      providerConfig.enabled = false;
+      providers.records[providerId] = providerConfig;
+    }
+  }
+
+  result.providers = providers;
+
+  // Layout: segments -> segmentOrder, narrowPriority from compact behavior
+  result.layout = {
+    providerRows: "newline",
+    placement: "below",
+    maxWidth: 0,
+    segmentOrder: SEGMENT_ORDER.map((id) => id),
+    narrowPriority: ["time", "throughput", "project", "effort", "model", "session"] as SegmentId[],
+  };
+
+  // Segments global visibility
+  result.segments = { ...merged.segments };
+
+  // Separators from extras (clone so future nested fields can't alias the singleton)
+  const separators = structuredClone(DEFAULT_STATUSLINE_SETTINGS.separators);
+  if (merged.extras.nerdFont) {
+    separators.preset = "Unicode";
+  }
+  result.separators = separators;
+
+  // Icons from extras (deep clone: symbols/providers are nested objects)
+  const icons = structuredClone(DEFAULT_STATUSLINE_SETTINGS.icons);
+  if (merged.extras.nerdFont) {
+    icons.style = "nerdfont";
+  }
+  result.icons = icons;
+
+  // Timing: providerTracking refresh interval would be in provider defaults
+  // (legacy had no timing config, use defaults)
+  result.timing = structuredClone(DEFAULT_STATUSLINE_SETTINGS.timing);
+
+  // Bars, thresholds remain defaults
+  result.bars = structuredClone(DEFAULT_STATUSLINE_SETTINGS.bars);
+  result.thresholds = structuredClone(DEFAULT_STATUSLINE_SETTINGS.thresholds);
+
+  // Preview remains default
+  result.preview = structuredClone(DEFAULT_STATUSLINE_SETTINGS.preview);
+
+  // NEVER copy secrets - no API keys, tokens, or auth data migrated
+  // No fake provider adapter created
+  // Unknown legacy provider keys preserved as disabled records above
+
+  return result;
+}

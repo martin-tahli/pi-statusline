@@ -1299,6 +1299,135 @@
       "title": "Per-field provider-row toggles, honest OpenRouter/GLM reasons, docs refresh",
       "type": "task",
       "updatedAt": "2026-07-30T15:03:53.807Z"
+    },
+    "work-2": {
+      "acceptance": "### Acceptance Examples\n\n- AE1. Root always contains only Providers, Separators, Emojis; a selected row is visually distinct, disabled/partial/unavailable states retain textual meaning, and a full-width preview uses the current theme.\n- AE2. A provider list with Anthropic, Codex, Z.AI, Ollama, OpenRouter, a custom provider, active-only provider, and stored-but-unavailable provider has stable saved ordering; only configured/active/stored sources appear; no catalog-only provider appears.\n- AE3. A local active model renders configurable local `↑`/`↓` rates; a streaming hosted model renders configurable `↓` only; idle API model renders configured actual token/cost ledger; subscription quota appears only through an adapter-supported current window set.\n- AE4. A provider without an adapter presents `Provider quota: Not available` and a sanitized reason. No test fixture can reveal its token, raw response, authorization header, or key.\n- AE5. Switching a provider from default to custom leaves the preview unchanged until a selected supported setting changes. An unknown provider and new `monthly` window retain/reconcile configuration without array-index corruption.\n- AE6. Toggling a provider in a draft, reordering it, editing an icon/separator, and then Escape leaves the runtime/footer/file byte-for-byte at its pre-open semantic configuration. Save changes only after atomic write success.\n- AE7. At narrow width, whole low-priority segments drop before truncation, separators recompute without gaps, ANSI styles remain valid, a wide emoji is not split, and provider rows truncate safely.",
+      "createdAt": "2026-07-31T17:16:28.518Z",
+      "dependencies": [],
+      "dependencyEdges": [],
+      "description": "Master roadmap plan from docs/plans/2026-07-31-001-feat-new-statusline-settings-ui-plan.md.\n\n## Goal Capsule\n\n- **Objective:** Replace the bare `/statusline` provider-only list with a complete keyboard-driven Pi terminal settings application that controls the complete existing statusline without losing its data sources, cache behavior, or terminal correctness.\n- **Authority:** The user request in this session is the product contract. Existing runtime behavior is an authoritative non-regression source where the request says to preserve it.\n- **Execution profile:** Deep, cross-cutting TypeScript refactor with a new versioned user configuration, modular TUI, renderer integration, provider services, migration, and full test coverage.\n- **Resolved scope decision:** Bare `/statusline` is UI-only. The old `on`, `off`, and `toggle` argument shortcuts are removed rather than retained as compatibility aliases.\n\n---",
+      "displayMetadata": {
+        "schemaVersion": 1,
+        "title": "New Pi Statusline Settings UI - Plan"
+      },
+      "documentLinks": {
+        "design": "docs/plans/2026-07-31-001-feat-new-statusline-settings-ui-plan.md"
+      },
+      "evidence": [],
+      "id": "work-2",
+      "labels": [],
+      "notes": [
+        "created by /work-plan\nsource plan: docs/plans/2026-07-31-001-feat-new-statusline-settings-ui-plan.md"
+      ],
+      "status": "open",
+      "title": "New Pi Statusline Settings UI - Plan",
+      "type": "epic",
+      "updatedAt": "2026-07-31T17:16:28.518Z"
+    },
+    "work-2.1": {
+      "createdAt": "2026-07-31T17:16:28.525Z",
+      "dependencies": [],
+      "dependencyEdges": [],
+      "displayMetadata": {
+        "schemaVersion": 1,
+        "title": "Plan next slice for New Pi Statusline Settings UI"
+      },
+      "evidence": [],
+      "id": "work-2.1",
+      "labels": [],
+      "notes": [
+        "created by /work-plan\nwo:planning\nsource plan: docs/plans/2026-07-31-001-feat-new-statusline-settings-ui-plan.md\ncreate one executable slice by default\ntask: New Pi Statusline Settings UI - Plan\nRole liveness guidance: when a specialist is required, launch it async with control.needsAttentionAfterMs=30000 and use subagent_wait/status; never block the TUI on a foreground child. needsAttentionAfterMs=30000 is an attention notification, not a hard timeout. If a run needs an explicit timeout, planner/worker/reviewer/fixer/debugger/migrator get at least 10 minutes and committer gets at least 3 minutes. Treat timeout or startup/auth failure as infrastructure evidence, not implementation failure. Reviewer handoff guidance: do not handcraft a reviewer task when a coded handoff is available. A reviewer waiting on contact_supervisor is not an implementation or review failure. Delayed supervisor guidance: use intercom list-cwd only for operator peer discovery; target trust-sensitive or ambiguous-name coordination by exact session ID. Query intercom pending plus the subagent run and work-item state before replying. If no request is pending, the run is terminal, or the work item is closed, classify it as stale and do not reply, resume, append another verdict, or restart work. For a live request use intercom action reply; replyTo is a message ID, never a child session name. Timeout is not cancellation: cancel only a known queued message ID, use supersedes for an authored replacement, use retryOf for an authored retry, and never assume cancellation can undo injected work.",
+        "Planning complete. Created executable slice work-2.5 (U1: Versioned settings core and migration, no deps) covering R4,R5,R7-R10,R25-R26 from docs/plans/2026-07-31-001-feat-new-statusline-settings-ui-plan.md. Subsequent units U2..U13 will be planned as follow-on slices once U1 lands. Note: transient CLI desc/acceptance loss produced closed stubs work-2.2/work-2.4; canonical slice is work-2.5.",
+        "Planning complete: created U1 slice work-2.5"
+      ],
+      "parentId": "work-2",
+      "status": "closed",
+      "title": "Plan next slice for New Pi Statusline Settings UI - Plan",
+      "type": "task",
+      "updatedAt": "2026-07-31T17:28:28.502Z"
+    },
+    "work-2.2": {
+      "acceptance": "",
+      "createdAt": "2026-07-31T17:25:43.479Z",
+      "dependencies": [],
+      "dependencyEdges": [],
+      "description": "",
+      "evidence": [],
+      "id": "work-2.2",
+      "labels": [],
+      "notes": [
+        "wo:execution-slice; source: docs/plans/2026-07-31-001-feat-new-statusline-settings-ui-plan.md; plan unit U1 (no deps). Covered reqs: R4,R5,R7-R10,R25-R26.",
+        "superseded; recreated with full description/acceptance"
+      ],
+      "parentId": "work-2",
+      "status": "closed",
+      "title": "Versioned settings core and migration",
+      "type": "task",
+      "updatedAt": "2026-07-31T17:28:19.698Z"
+    },
+    "work-2.3": {
+      "acceptance": "SHORT ACC",
+      "createdAt": "2026-07-31T17:27:36.848Z",
+      "dependencies": [],
+      "dependencyEdges": [],
+      "description": "SHORT INLINE DESC",
+      "evidence": [],
+      "id": "work-2.3",
+      "labels": [],
+      "notes": [
+        "test slice; superseded by work-2.2"
+      ],
+      "parentId": "work-2",
+      "status": "closed",
+      "title": "TESTSLICE",
+      "type": "task",
+      "updatedAt": "2026-07-31T17:28:04.615Z"
+    },
+    "work-2.4": {
+      "acceptance": "- src/settings/{schema,defaults,validation,migrations,storage,state}.ts exist and export the versioned StatuslineSettings types + functions.\n- npm run typecheck passes against installed Pi 0.80.7 types.\n- npm test passes, including new focused settings tests covering: defaults; valid parse; invalid JSON/types/ranges/enums; hostile control/ANSI/bidi/newline input and hostile provider labels (rejected/sanitized); unknown top-level/provider/window fields preserved semantically; unknown/missing provider preservation; migration mapping (footerEnabled/segments/extras/providerTracking -> new groups) + explicit-save durability; future-version document is read-only (parse returns it unchanged, save refuses); new provider reconciliation adds default config preserving order; no runtime/draft aliasing (mutating draft does not touch defaults or parsed doc); selected/provider/section/all reset only changes draft; successful atomic save; concurrent temp names / cleanup on write failure; write/rename failure leaves original/runtime untouched; refresh interval <10s normalizes to 10s; max-age finite and >= interval.\n- src/config.ts and test/config.test.ts remain green (temporary compatibility facade, not yet removed).\n- No secrets/credentials parsed or migrated; no fake provider adapter created.",
+      "createdAt": "2026-07-31T17:28:04.668Z",
+      "dependencies": [],
+      "dependencyEdges": [],
+      "description": "Establish the new versioned settings core that the rest of the settings UI refactor builds on, WITHOUT yet removing src/config.ts (kept as a temporary compatibility facade until U5 migrates its consumers). Add src/settings/ modules: schema.ts, defaults.ts, validation.ts, migrations.ts, storage.ts, state.ts plus focused tests.\n\nScope (plan U1, reqs R4, R5, R7-R10, R25-R26):\n- schema.ts: versioned StatuslineSettings shape (version, enabled, providers{enabled,order,defaults,Record<string,ProviderConfiguration>}, layout, separators, segments, bars, thresholds, timing, icons, preview). providers and dynamic windows use stable Record<string,...> keyed by string, never fixed provider unions or array-index window positions. ProviderConfiguration + WindowConfiguration enums/types.\n- defaults.ts: global defaults reproducing current behavior where meaningful (footer enabled; project/model/effort/context/session/throughput/time order; compact narrow priority time,throughput,project,effort,model,session retaining context; rounded width-12 bars; new-line provider rows; 80/95 thresholds; 10s refresh min/default; 5min cache max; Emoji default icon style).\n- validation.ts: one safe parser/normalizer. Validates/normalizes/bounds, falls back to new defaults for invalid docs. Rejects unsafe control/ANSI/newline/bidi input and unsafe external display strings. Preserves recognized unknown provider records and practical unknown/future fields semantically via an opaque unknown bag. Unsupported future schema version -> read-only (never normalized/saved/overwritten).\n- migrations.ts: one-time migration from current unversioned ~/.pi/agent/statusline.json (footerEnabled, segment toggles, extras, providerTracking selection/order/metrics/overrides) into new groups. Never copies secrets, no fake adapter, preserves unknown legacy provider keys as disabled/stored. Migration becomes durable only on explicit successful save. Refresh <10s normalizes to 10s; max-age finite and >= interval.\n- storage.ts: validate/normalize first, write uniquely-named sibling temp file, atomic rename, clean temp failures, only then expose success. Injected ops for failure tests. Original/runtime untouched on write/rename failure.\n- state.ts: deep-clone draft isolation (structuredClone), selected/provider/section/all reset operate on draft only, no runtime/draft aliasing.",
+      "evidence": [],
+      "id": "work-2.4",
+      "labels": [],
+      "notes": [
+        "probe; rebuilt as canonical U1 slice"
+      ],
+      "parentId": "work-2",
+      "status": "closed",
+      "title": "PROBE $(cat)",
+      "type": "task",
+      "updatedAt": "2026-07-31T17:28:19.644Z"
+    },
+    "work-2.5": {
+      "acceptance": "- src/settings/{schema,defaults,validation,migrations,storage,state}.ts exist and export the versioned StatuslineSettings types + functions.\n- npm run typecheck passes against installed Pi 0.80.7 types.\n- npm test passes, including new focused settings tests covering: defaults; valid parse; invalid JSON/types/ranges/enums; hostile control/ANSI/bidi/newline input and hostile provider labels (rejected/sanitized); unknown top-level/provider/window fields preserved semantically; unknown/missing provider preservation; migration mapping (footerEnabled/segments/extras/providerTracking -> new groups) + explicit-save durability; future-version document is read-only (parse returns it unchanged, save refuses); new provider reconciliation adds default config preserving order; no runtime/draft aliasing (mutating draft does not touch defaults or parsed doc); selected/provider/section/all reset only changes draft; successful atomic save; concurrent temp names / cleanup on write failure; write/rename failure leaves original/runtime untouched; refresh interval <10s normalizes to 10s; max-age finite and >= interval.\n- src/config.ts and test/config.test.ts remain green (temporary compatibility facade, not yet removed).\n- No secrets/credentials parsed or migrated; no fake provider adapter created.",
+      "createdAt": "2026-07-31T17:28:19.742Z",
+      "dependencies": [],
+      "dependencyEdges": [],
+      "description": "Establish the new versioned settings core that the rest of the settings UI refactor builds on, WITHOUT yet removing src/config.ts (kept as a temporary compatibility facade until U5 migrates its consumers). Add src/settings/ modules: schema.ts, defaults.ts, validation.ts, migrations.ts, storage.ts, state.ts plus focused tests.\n\nScope (plan U1, reqs R4, R5, R7-R10, R25-R26):\n- schema.ts: versioned StatuslineSettings shape (version, enabled, providers{enabled,order,defaults,Record<string,ProviderConfiguration>}, layout, separators, segments, bars, thresholds, timing, icons, preview). providers and dynamic windows use stable Record<string,...> keyed by string, never fixed provider unions or array-index window positions. ProviderConfiguration + WindowConfiguration enums/types.\n- defaults.ts: global defaults reproducing current behavior where meaningful (footer enabled; project/model/effort/context/session/throughput/time order; compact narrow priority time,throughput,project,effort,model,session retaining context; rounded width-12 bars; new-line provider rows; 80/95 thresholds; 10s refresh min/default; 5min cache max; Emoji default icon style).\n- validation.ts: one safe parser/normalizer. Validates/normalizes/bounds, falls back to new defaults for invalid docs. Rejects unsafe control/ANSI/newline/bidi input and unsafe external display strings. Preserves recognized unknown provider records and practical unknown/future fields semantically via an opaque unknown bag. Unsupported future schema version -> read-only (never normalized/saved/overwritten).\n- migrations.ts: one-time migration from current unversioned ~/.pi/agent/statusline.json (footerEnabled, segment toggles, extras, providerTracking selection/order/metrics/overrides) into new groups. Never copies secrets, no fake adapter, preserves unknown legacy provider keys as disabled/stored. Migration becomes durable only on explicit successful save. Refresh <10s normalizes to 10s; max-age finite and >= interval.\n- storage.ts: validate/normalize first, write uniquely-named sibling temp file, atomic rename, clean temp failures, only then expose success. Injected ops for failure tests. Original/runtime untouched on write/rename failure.\n- state.ts: deep-clone draft isolation (structuredClone), selected/provider/section/all reset operate on draft only, no runtime/draft aliasing.",
+      "evidence": [
+        {
+          "closeEvidence": "Completed by coded inline work path"
+        }
+      ],
+      "id": "work-2.5",
+      "labels": [],
+      "notes": [
+        "wo:execution-slice; source: docs/plans/2026-07-31-001-feat-new-statusline-settings-ui-plan.md; plan unit U1 (no deps). Covered reqs: R4,R5,R7-R10,R25-R26. Existing src/config.ts kept as temporary compatibility facade until U5.",
+        "wo:verify-check FAIL\nCommand: npm test && npm run typecheck\nlast one (0.088405ms)\\n✔ classifies rates with directional baselines and an output floor (0.071713ms)\\n✔ caps histories and resets displayed throughput on model changes (0.113848ms)\\n✔ finalizes active time without preserving rates (0.075614ms)\\n✔ retains idle result, resets on turn start, and accumulates active time (0.140653ms)\\nℹ tests 125\\nℹ suites 0\\nℹ pass 125\\nℹ fail 0\\nℹ cancelled 0\\nℹ skipped 0\\nℹ todo 0\\nℹ duration_ms 464.19751\\n\\n> @shvax/pi-statusline@0.7.4 typecheck\\n> tsc --noEmit\"",
+        "wo:review-scope [\"docs/plans/2026-07-31-001-feat-new-statusline-settings-ui-plan.md\",\"src/settings/defaults.ts\",\"src/settings/migrations.ts\",\"src/settings/schema.ts\",\"src/settings/state.ts\",\"src/settings/storage.ts\",\"src/settings/validation.ts\",\"test/settings-defaults.test.ts\",\"test/settings-migrations.test.ts\",\"test/settings-schema.test.ts\",\"test/settings-state.test.ts\",\"test/settings-storage.test.ts\",\"test/settings-validation.test.ts\"]",
+        "wo:review FAIL - gate green (125 tests, typecheck clean) but 4 confirmed defects: defaults aliasing (validation/storage/state) and missing-field layout/segments not defaulting, plus hostile provider key resurrected unsanitized --append-notes wo:review FAIL {\"findings\":[\"src/settings/validation.ts:229 - parseLayout returns segmentOrder/narrowPriority [] when layout is missing or not an array; parse({version:1}) yields an unusable doc that storage then persists. Fall back to DEFAULT_STATUSLINE_SETTINGS.layout.segmentOrder/narrowPriority (cloned) when the field is absent/invalid, and filter entries through VALID_SEGMENT_IDS.\",\"src/settings/validation.ts:261 - parseSegments returns only keys present in input, so parse({version:1}) yields segments:{} and every segment reads undefined. Start from a clone of DEFAULT_STATUSLINE_SETTINGS.segments and overwrite only boolean values found in input.\",\"src/settings/validation.ts:362 - fallback returns the shared module object (parseStatuslineSettings(null).settings === DEFAULT_STATUSLINE_SETTINGS, verified); mutating the result poisons process-wide defaults. Return structuredClone(DEFAULT_STATUSLINE_SETTINGS). Same fix at src/settings/storage.ts:77 (readStatuslineSettings missing/invalid file).\",\"src/settings/state.ts:31 - resetSelected assigns getDefaultValue() by reference, so resetSelected(draft,\\\"bars\\\"); draft.bars.width=999 sets DEFAULT_STATUSLINE_SETTINGS.bars.width to 999 (verified). Assign structuredClone(defaultValue) for object/array defaults; add a regression test asserting defaults are untouched. Same class of bug in src/settings/migrations.ts:33,92,96,97,100 where result.timing/bars/thresholds/preview/providers.defaults are direct references to DEFAULT_STATUSLINE_SETTINGS sub-objects.\",\"src/settings/validation.ts:402 - the unknown-field pass keys records by the RAW providerId while parseProviders stored the sanitized id, so a hostile key re-enters records unsanitized (input key \\\"ev\\\\x1b[31mil\\\" yields both \\\"evil\\\" and \\\"ev\\\\x1b[31mil\\\", verified). Sanitize the id here and merge into the existing sanitized record instead of creating a new entry.\"]}",
+        "wo:review FAIL {\"findings\":[\"src/settings/migrations.ts:88 - icons = { ...DEFAULT_STATUSLINE_SETTINGS.icons } is a shallow copy, so migrated icons.symbols and icons.providers stay aliased to the DEFAULT_ICONS sub-objects; probe: migrateLegacySettings({}).icons.symbols.poison=\\\"X\\\" mutates DEFAULT_STATUSLINE_SETTINGS.icons.symbols (verified). Replace with structuredClone(DEFAULT_STATUSLINE_SETTINGS.icons) (and optionally line 81 separators for consistency) and extend the no-aliasing regression test to cover migrateLegacySettings output.\"]}",
+        "wo:residual-fix PASS {\"dispositions\":[{\"finding\":\"src/settings/migrations.ts:88 - icons = { ...DEFAULT_STATUSLINE_SETTINGS.icons } is a shallow copy, so migrated icons.symbols and icons.providers stay aliased to the DEFAULT_ICONS sub-objects; probe: migrateLegacySettings({}).icons.symbols.poison=\\\"X\\\" mutates DEFAULT_STATUSLINE_SETTINGS.icons.symbols (verified). Replace with structuredClone(DEFAULT_STATUSLINE_SETTINGS.icons) (and optionally line 81 separators for consistency) and extend the no-aliasing regression test to cover migrateLegacySettings output.\",\"fix\":\"src/settings/migrations.ts: replaced shallow spreads with structuredClone(DEFAULT_STATUSLINE_SETTINGS.icons) and structuredClone(DEFAULT_STATUSLINE_SETTINGS.separators); added test/settings-migrations.test.ts no-aliasing case covering icons.symbols/providers, separators, and timing.\",\"evidence\":\"npm test -> 130 pass / 0 fail; npm run typecheck clean; probe migrateLegacySettings({}).icons.symbols[\\\"poison\\\"]=\\\"X\\\" leaves DEFAULT_STATUSLINE_SETTINGS.icons.symbols.poison === undefined.\"}]}",
+        "wo:verify-check PASS\nCommand: npm test && npm run typecheck\nOutput: reezing on the last one (0.091039ms)\n✔ classifies rates with directional baselines and an output floor (0.070489ms)\n✔ caps histories and resets displayed throughput on model changes (0.119598ms)\n✔ finalizes active time without preserving rates (0.086691ms)\n✔ retains idle result, resets on turn start, and accumulates active time (0.150146ms)\nℹ tests 130\nℹ suites 0\nℹ pass 130\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 585.938335\n\n> @shvax/pi-statusline@0.7.4 typecheck\n> tsc --noEmit"
+      ],
+      "parentId": "work-2",
+      "status": "closed",
+      "title": "Versioned settings core and migration",
+      "type": "task",
+      "updatedAt": "2026-07-31T18:11:13.173Z"
     }
   },
   "metadata": {
@@ -1308,7 +1437,7 @@
       "recordCount": 11,
       "sourceFingerprint": "716c6815dbadf79dc70c6d01af6a643e7bcf36809c4af4405175a0d2a56789f1"
     },
-    "updatedAt": "2026-07-31T08:15:41.498Z"
+    "updatedAt": "2026-07-31T18:11:13.173Z"
   },
   "schemaVersion": 1
 }
