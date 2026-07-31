@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test, { after } from "node:test";
@@ -566,18 +566,24 @@ test("keeps active quota on the session line when provider tracking is disabled"
   }
 });
 
-test("bare /statusline shows the unavailable-settings facade notice (interactive app pending)", async () => {
+// Harness for the /statusline command: registers the extension, drives the settings app through
+// the stubbed ctx.ui.custom, and exposes the captured component + notifications.
+function settingsHarness(options: { mode?: string; settingsPath?: string } = {}) {
   const handlers = new Map<string, (...args: any[]) => unknown>();
-  let commandHandler: ((args: string, ctx: any) => Promise<void>) | undefined;
   const notifications: Array<[string, string]> = [];
-  let customOpened = false;
+  const doneResults: unknown[] = [];
+  let commandDef: { handler: (args: string, ctx: any) => Promise<void>; getArgumentCompletions?: unknown } | undefined;
+  let customCount = 0;
+  let component: { render: (width: number) => string[]; handleInput?: (data: string) => void; dispose?: () => void } | undefined;
   const pi = {
     on: (event: string, handler: (...args: any[]) => unknown) => handlers.set(event, handler),
-    registerCommand: (_name: string, def: { handler: (args: string, ctx: any) => Promise<void> }) => { commandHandler = def.handler; },
+    registerCommand: (_name: string, def: any) => { commandDef = def; },
     getThinkingLevel: () => "off",
     exec: async () => ({ code: 0, stdout: "", stderr: "" }),
+    appendEntry: () => {},
   } as never;
   const ctx = {
+    mode: options.mode ?? "tui",
     cwd: process.cwd(),
     model: { id: "claude", provider: "anthropic" },
     modelRegistry: {
@@ -591,18 +597,108 @@ test("bare /statusline shows the unavailable-settings facade notice (interactive
     ui: {
       setFooter: () => {},
       notify: (message: string, level: string) => notifications.push([message, level]),
-      custom: () => { customOpened = true; return Promise.resolve(); },
+      custom: (factory: any) => {
+        customCount++;
+        component = factory({ requestRender: () => {} }, {}, {}, (result: unknown) => doneResults.push(result ?? null));
+        return Promise.resolve();
+      },
     },
   } as never;
 
-  statusline(pi, testCache());
-  await handlers.get("session_start")!({}, ctx);
-  assert.ok(commandHandler, "expected /statusline to register a handler");
-  await commandHandler!("", ctx);
+  statusline(pi, testCache(), options.settingsPath);
+  return {
+    handlers, notifications, doneResults, ctx,
+    get commandDef() { return commandDef!; },
+    get customCount() { return customCount; },
+    get component() { return component!; },
+  };
+}
 
-  assert.equal(customOpened, false, "bare /statusline must NOT open an interactive menu yet (facade until the app lands)");
-  assert.equal(notifications.length, 1, "bare /statusline must show the deterministic facade notice");
-  assert.match(notifications[0]![0], /coming soon|on\|off|toggle/i, `facade notice must explain current usage, got: ${notifications[0]![0]}`);
+// Raw terminal sequences translated by the extension's parseKey bridge.
+const K = { enter: "\r", space: " ", escape: "\x1b", save: "s", discard: "d" } as const;
+
+test("bare /statusline in tui opens the settings app once at the three-row root without legacy args", async () => {
+  const h = settingsHarness();
+  await h.handlers.get("session_start")!({}, h.ctx);
+
+  assert.equal(h.commandDef.getArgumentCompletions, undefined, "legacy on/off/toggle completions must be removed");
+  await h.commandDef.handler("", h.ctx);
+  assert.equal(h.customCount, 1, "bare /statusline must open ctx.ui.custom exactly once");
+  assert.equal(h.notifications.length, 0, "opening the app must not notify");
+  const root = h.component.render(100);
+  for (const label of ["Providers", "Separators", "Emojis"]) {
+    assert.ok(root.some((line) => line.includes(label)), `root screen missing ${label}: ${JSON.stringify(root)}`);
+  }
+});
+
+test("non-empty tui args give one deterministic no-arguments notice; non-tui modes require the terminal UI", async () => {
+  const tui = settingsHarness();
+  await tui.handlers.get("session_start")!({}, tui.ctx);
+  await tui.commandDef.handler("on", tui.ctx);
+  assert.equal(tui.customCount, 0, "legacy arguments must not open or mutate anything");
+  assert.equal(tui.notifications.length, 1, "exactly one notice for unexpected arguments");
+  assert.match(tui.notifications[0]![0], /no arguments/i);
+
+  for (const mode of ["rpc", "json", "print"]) {
+    const off = settingsHarness({ mode });
+    await off.handlers.get("session_start")!({}, off.ctx);
+    await off.commandDef.handler("", off.ctx);
+    assert.equal(off.customCount, 0, `${mode} mode must not open the interactive UI`);
+    assert.equal(off.notifications.length, 1, `${mode} mode must notify rather than silently no-op`);
+    assert.match(off.notifications[0]![0], /interactive terminal/i);
+  }
+});
+
+test("saving a changed draft persists it; discarding leaves the file untouched", async () => {
+  const savePath = join(cacheRoot, "save-flow.json");
+  const h = settingsHarness({ settingsPath: savePath });
+  await h.handlers.get("session_start")!({}, h.ctx);
+  await h.commandDef.handler("", h.ctx);
+  const input = h.component.handleInput!;
+  input(K.enter);   // open Providers
+  input(K.space);   // toggle statusline enabled -> draft.enabled = false
+  input(K.escape);  // back to root
+  input(K.escape);  // dirty -> confirm-close prompt
+  input(K.save);    // save
+  await new Promise<void>((resolve) => setImmediate(resolve));
+
+  assert.ok(existsSync(savePath), "save must persist the settings file");
+  assert.equal(JSON.parse(readFileSync(savePath, "utf8")).enabled, false, "persisted draft must reflect the toggle");
+  assert.equal(h.doneResults.length, 1, "a successful save closes the app");
+
+  const discardPath = join(cacheRoot, "discard-flow.json");
+  const d = settingsHarness({ settingsPath: discardPath });
+  await d.handlers.get("session_start")!({}, d.ctx);
+  await d.commandDef.handler("", d.ctx);
+  const dInput = d.component.handleInput!;
+  dInput(K.enter);
+  dInput(K.space);
+  dInput(K.escape);
+  dInput(K.escape);
+  dInput(K.discard);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(existsSync(discardPath), false, "discard must not write settings");
+  assert.equal(d.doneResults.length, 1, "discard closes the app without saving");
+});
+
+test("an injected storage failure leaves the settings file unwritten and the save path uncommitted", async () => {
+  const blocked = join(cacheRoot, "blocked-file");
+  writeFileSync(blocked, "not a directory");
+  const failPath = join(blocked, "statusline.json"); // parent is a file -> mkdir/write throws
+  const h = settingsHarness({ settingsPath: failPath });
+  await h.handlers.get("session_start")!({}, h.ctx);
+  await h.commandDef.handler("", h.ctx);
+  const input = h.component.handleInput!;
+  input(K.enter);
+  input(K.space);
+  input(K.escape);
+  input(K.escape);
+  input(K.save);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+
+  assert.equal(existsSync(failPath), false, "a failed save must not create a partial file");
+  assert.equal(h.doneResults.length, 0, "a failed save must not close the app (stays on the prompt)");
+  assert.ok(h.component.render(100).some((line) => line.startsWith("Save failed:")), "the failure must surface in the prompt");
 });
 
 test("tracks every selected provider's usage simultaneously, not just the active model's", async () => {

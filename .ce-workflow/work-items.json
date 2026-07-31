@@ -1565,6 +1565,29 @@
       "type": "task",
       "updatedAt": "2026-07-31T21:10:00.935Z"
     },
+    "work-2.18": {
+      "acceptance": "1. A stubbed ctx capture shows bare /statusline in tui mode opens ctx.ui.custom exactly once at the three-row root (Providers, Separators, Emojis); the legacy on/off/toggle arguments are absent (no completion entries and no toggle behavior); a non-empty tui argument produces exactly one deterministic no-arguments notify; in rpc/json/print modes the command notifies interactive-TUI-required without opening custom UI or silently doing nothing.\n2. Saving a changed draft applies it to the in-memory settings and persists (footer/render reflects the new values); discarding leaves runtime and persisted settings byte-for-byte unchanged; an injected storage failure leaves runtime and the persisted file unchanged and keeps the save path from committing a partial configuration.\n3. Post-save runtime service degradation (e.g., a provider refresh that rejects) leaves the committed configuration valid and the footer still rendering; reopening the command discovers a provider that newly appeared in the registry; disabling a provider makes its refresh skipped (no scheduled fetch).\n4. Session shutdown clears every interval (tick and gitTick) and disposes the footer with no outstanding timer handles; active quota dedupe persists across provider settings changes.\n5. node --test test/statusline.test.ts passes; npm test passes; npm run typecheck passes. Maintainer pi -e . keyboard smoke remains a roadmap AC1/AC5 gate, not an automation claim for this child.",
+      "createdAt": "2026-07-31T21:14:01.618Z",
+      "dependencies": [],
+      "dependencyEdges": [],
+      "description": "Wire the bare /statusline command to the settings app and apply saved settings to the live runtime, completing plan unit U9 (R1,R4,R6,R18,R28-R29). Dependency context: follows closed U5-U8 (work-2.11/2.13/2.15/2.17).\n\nConcrete file scope:\n- extensions/statusline.ts: rewrite the /statusline command handler. In ctx.mode === \"tui\", a bare invocation opens the settings app via ctx.ui.custom(...) over the existing pure shell (src/settings/ui.ts createSettingsUi/routeSettingsKey + the Separators/Emojis/Providers screens and preview), built from a one-shot discovery/capability snapshot with an isolated structuredClone draft; on save, replace settings atomically in memory, call reconcileProviders for newly authenticated providers, reconfigure refresh/Git/ticks exactly once through idempotent non-throwing runtime application, persist, and request a render. Remove the legacy on/off/toggle argument shortcuts and their completions. Non-empty TUI arguments yield one deterministic no-arguments notice; in rpc/json/print modes the command reports that settings require the interactive terminal UI (no silent no-op). Dispose every interval (tick, gitTick) and the footer on session shutdown with no leaked handles.\n- test/statusline.test.ts: integration tests with a stubbed registry/cache/adapters/ctx (fake ctx.ui.custom capturing key routes and a save callback; fake timers; injected failing storage).\n\nDo not widen into U10-U13 regression/documentation matrices. Reuse the existing settings core, screens, preview, refresh policy, and provider services; do not duplicate parsing/rendering/persistence.",
+      "evidence": [
+        {
+          "closeEvidence": "Completed by coded inline work path"
+        }
+      ],
+      "id": "work-2.18",
+      "labels": [],
+      "notes": [
+        "wo:execution-slice; source: docs/plans/2026-07-31-001-feat-new-statusline-settings-ui-plan.md; covered plan unit: U9 (R1,R4,R6,R18,R28-R29). Dependency context: follows closed U5-U8 (work-2.11/2.13/2.15/2.17); U10-U13 remain unsliced.",
+        "wo:verify-check PASS\nCommand: npm test && npm run typecheck\nOutput: reezing on the last one (0.182116ms)\n✔ classifies rates with directional baselines and an output floor (0.153359ms)\n✔ caps histories and resets displayed throughput on model changes (0.242787ms)\n✔ finalizes active time without preserving rates (0.172241ms)\n✔ retains idle result, resets on turn start, and accumulates active time (0.291343ms)\nℹ tests 199\nℹ suites 0\nℹ pass 199\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 584.788997\n\n> @shvax/pi-statusline@0.7.4 typecheck\n> tsc --noEmit"
+      ],
+      "parentId": "work-2",
+      "status": "closed",
+      "title": "U9: /statusline command opens settings app and applies settings to runtime",
+      "type": "task",
+      "updatedAt": "2026-07-31T21:28:06.400Z"
+    },
     "work-2.2": {
       "acceptance": "",
       "createdAt": "2026-07-31T17:25:43.479Z",
@@ -1787,7 +1810,7 @@
       "recordCount": 11,
       "sourceFingerprint": "716c6815dbadf79dc70c6d01af6a643e7bcf36809c4af4405175a0d2a56789f1"
     },
-    "updatedAt": "2026-07-31T21:10:00.936Z"
+    "updatedAt": "2026-07-31T21:28:06.400Z"
   },
   "schemaVersion": 1
 }

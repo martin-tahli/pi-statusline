@@ -1,6 +1,6 @@
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { truncateToWidth } from "@earendil-works/pi-tui";
+import { parseKey, truncateToWidth } from "@earendil-works/pi-tui";
 import { renderBar, type BarStyle } from "../src/bar.ts";
 import { billingMode, contextSeverity, deriveContext, deriveEffort, deriveModel, deriveProject, isLocalEndpoint } from "../src/derive.ts";
 import { formatRate, formatResetCountdown, formatTime, formatWindow } from "../src/format.ts";
@@ -12,13 +12,16 @@ import { composeSegments, createSegments } from "../src/segments.ts";
 import { estimateTokens, sumTextLength, TurnMeter } from "../src/throughput.ts";
 import {
   DEFAULT_STATUSLINE_CONFIG_PATH,
-  applyToggle,
   configuredProviders,
-  formatStatusSummary,
   loadRuntimeSettings,
   reconcileProviders,
 } from "../src/settings/runtime.ts";
 import { saveStatuslineSettings } from "../src/settings/storage.ts";
+import { createSettingsUi, renderSettingsUi, resolveDirtyChoice, routeSettingsKey } from "../src/settings/ui.ts";
+import type { ProviderUiContext } from "../src/settings/provider-ui.ts";
+import { discoverProviders, type ModelRegistryLike } from "../src/settings/providers/discovery.ts";
+import { deriveCapability, type ProviderCapability } from "../src/settings/providers/capabilities.ts";
+import type { RefreshHealth } from "../src/settings/refresh.ts";
 import type { StatuslineSettings } from "../src/settings/schema.ts";
 
 const GIT_ROLES: Record<GitTokenKind, "accent" | "success" | "warning" | "error"> = {
@@ -404,49 +407,116 @@ export default function statusline(pi: ExtensionAPI, providerUsageCache = new Pr
     syncTick();
   };
 
-  const persist = () => saveStatuslineSettings(settings, settingsPath);
   const availableProviders = (ctx: ExtensionContext) => {
     const registry = ctx.modelRegistry as unknown as { getAvailable?: () => Array<{ provider: string }> } | undefined;
     return registry?.getAvailable ? configuredProviders(registry as { getAvailable(): Array<{ provider: string }> }) : [];
   };
 
+  // One-shot discovery/capability snapshot for the settings app. Rendering never re-discovers or
+  // refreshes: the snapshot freezes at open time, so reopening the command picks up new providers.
+  const buildProviderContext = (ctx: ExtensionContext): ProviderUiContext => {
+    const registry = ctx.modelRegistry as unknown as ModelRegistryLike & { getRegisteredProviderIds?: () => string[] };
+    const descriptors = typeof registry?.getAvailable === "function"
+      ? discoverProviders(registry, {
+        activeProvider: ctx.model?.provider,
+        storedProviders: settings.providers.order,
+        storedRecords: settings.providers.records,
+        registeredProviders: typeof registry.getRegisteredProviderIds === "function" ? registry.getRegisteredProviderIds() : undefined,
+      })
+      : [];
+    const capabilities: Record<string, ProviderCapability> = {};
+    const health: Record<string, RefreshHealth> = {};
+    const windows: Record<string, RateLimitWindow[]> = {};
+    for (const descriptor of descriptors) {
+      const model = findAvailableModel(ctx, descriptor.id);
+      let oauth = false;
+      try { oauth = Boolean(model && ctx.modelRegistry.isUsingOAuth(model)); } catch { oauth = false; }
+      capabilities[descriptor.id] = deriveCapability(descriptor, { oauth });
+      const snapshot = providerRefresh?.get(descriptor.id);
+      if (snapshot?.state === "fresh") {
+        health[descriptor.id] = { state: "fresh" };
+        windows[descriptor.id] = snapshot.usage.limits;
+      } else if (snapshot) {
+        health[descriptor.id] = { state: "unknown" };
+      }
+    }
+    return { descriptors, capabilities, health, windows, activeProvider: ctx.model?.provider };
+  };
+
+  // Raw terminal input -> the semantic key names routeSettingsKey understands.
+  const ROUTE_KEYS: Record<string, string> = {
+    up: "ArrowUp", down: "ArrowDown", left: "ArrowLeft", right: "ArrowRight",
+    enter: "Enter", escape: "Escape", home: "Home", end: "End", space: " ", backspace: "Backspace",
+    "ctrl+up": "Ctrl+Up", "ctrl+down": "Ctrl+Down",
+  };
+  const translateKey = (data: string): string | undefined => {
+    const parsed = parseKey(data);
+    if (!parsed) return undefined;
+    if (parsed in ROUTE_KEYS) return ROUTE_KEYS[parsed];
+    return parsed.length === 1 ? parsed : undefined; // printable char, else ignore
+  };
+
+  // Persist the draft first (throws => nothing applied), then swap in-memory settings atomically and
+  // reconfigure the live runtime once. Reconcile pulls in providers authenticated since load.
+  const commitSettings = (draft: StatuslineSettings, ctx: ExtensionContext) => {
+    const next = availableProviders(ctx).length ? reconcileProviders(draft, ctx.modelRegistry) : draft;
+    saveStatuslineSettings(next, settingsPath);
+    settings = next;
+    if (settings.enabled) installFooter(ctx);
+    else ctx.ui.setFooter(undefined);
+    syncTick();
+    syncGitTick(ctx);
+    void refreshGit(ctx);
+    requestRender?.();
+  };
+
+  const openSettingsApp = (ctx: ExtensionContext) => {
+    const providers = buildProviderContext(ctx);
+    return ctx.ui.custom<void>((tui, _theme, _keybindings, done) => {
+      let state = createSettingsUi(settings);
+      let finished = false;
+      const finish = () => { if (!finished) { finished = true; done(); } };
+      return {
+        invalidate() {},
+        render: (width: number) => renderSettingsUi(state, { width, providers }),
+        handleInput(data: string) {
+          const key = translateKey(data);
+          if (!key) return;
+          if (state.confirmClose) {
+            const choice = key === "s" || key === "S" ? "save"
+              : key === "d" || key === "D" ? "discard"
+              : key === "c" || key === "C" || key === "Escape" ? "cancel"
+              : undefined;
+            if (!choice) return;
+            void resolveDirtyChoice(state, choice, (draft) => commitSettings(draft, ctx)).then((result) => {
+              state = result.state;
+              if (result.action === "close") finish();
+              tui.requestRender();
+            });
+            return;
+          }
+          const result = routeSettingsKey(state, key, providers);
+          state = result.state;
+          if (result.effect?.type === "refresh-provider") void providerRefresh?.refresh(result.effect.providerId);
+          if (result.action === "close") finish();
+          tui.requestRender();
+        },
+      };
+    });
+  };
+
   pi.registerCommand("statusline", {
-    description: "Toggle statusline segments, or enable/disable the footer",
-    getArgumentCompletions: (prefix) => {
-      const choices = ["on", "off", "toggle project", "toggle model", "toggle effort", "toggle context", "toggle session", "toggle throughput", "toggle time", "toggle branch", "toggle nerdFont", "toggle cost", "toggle sessionElapsed", "toggle lastTurn", "toggle pending"];
-      const matches = choices.filter((value) => value.startsWith(prefix)).map((value) => ({ value, label: value }));
-      return matches.length ? matches : null;
-    },
+    description: "Open the interactive statusline settings",
     handler: async (args, ctx) => {
-      const [action, rawName] = args.trim().split(/\s+/);
-      if (!action) {
-        // Temporary deterministic facade: the interactive settings app lands in a later unit.
-        ctx.ui.notify("Statusline settings: use /statusline on|off or /statusline toggle <segment>. The interactive settings app is coming soon.", "info");
+      if (ctx.mode !== "tui") {
+        ctx.ui.notify("Statusline settings require the interactive terminal UI.", "info");
         return;
       }
-      if (action === "on" || action === "off") {
-        settings = { ...settings, enabled: action === "on" };
-        persist();
-        if (settings.enabled) installFooter(ctx);
-        else ctx.ui.setFooter(undefined);
-        ctx.ui.notify(settings.enabled ? "Statusline enabled" : "Default footer restored", "info");
+      if (args.trim()) {
+        ctx.ui.notify("/statusline takes no arguments \u2014 run it with no arguments to open settings.", "warning");
         return;
       }
-      if (action !== "toggle" || !rawName) {
-        ctx.ui.notify("Usage: /statusline [on|off|toggle <segment>]", "warning");
-        return;
-      }
-      try {
-        settings = applyToggle(settings, rawName);
-        persist();
-        syncTick();
-        syncGitTick(ctx);
-        await refreshGit(ctx);
-        requestRender?.();
-        ctx.ui.notify(formatStatusSummary(settings), "info");
-      } catch (error) {
-        ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
-      }
+      await openSettingsApp(ctx);
     },
   });
 
