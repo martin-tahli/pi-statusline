@@ -3,7 +3,6 @@ name: CI
 on:
   push:
     branches: [master]
-    tags: ["v*"]
   pull_request:
     branches: [master]
 
@@ -24,23 +23,63 @@ jobs:
       - run: npm test
       - run: npm pack --dry-run
 
-  publish:
-    if: startsWith(github.ref, 'refs/tags/v')
+  release:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
     needs: check
     runs-on: ubuntu-latest
+    concurrency:
+      group: release
+      cancel-in-progress: false
     permissions:
-      contents: read
+      contents: write
       id-token: write
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          fetch-depth: 2
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: 24
           registry-url: https://registry.npmjs.org
           package-manager-cache: false
-      - name: Verify stable release version
+      - name: Check whether this commit releases a new version
+        id: version
         run: |
+          package=$(node -p "require('./package.json').name")
           version=$(node -p "require('./package.json').version")
+          previous=$(git show "$GITHUB_SHA^:package.json" | node -p "JSON.parse(require('node:fs').readFileSync(0, 'utf8')).version")
           [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
-          test "v$version" = "$GITHUB_REF_NAME"
-      - run: npm publish
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+          if test "$version" = "$previous"; then
+            echo "release=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "release=true" >> "$GITHUB_OUTPUT"
+
+          if output=$(npm view "$package@$version" version --json 2>&1); then
+            test "$output" = "\"$version\""
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+          elif grep -qE 'E404|404 Not Found' <<<"$output"; then
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          else
+            printf '%s\n' "$output" >&2
+            exit 1
+          fi
+      - name: Create or verify GitHub release
+        if: steps.version.outputs.release == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          tag="v$VERSION"
+          if git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null; then
+            git fetch origin "refs/tags/$tag:refs/tags/$tag"
+            test "$(git rev-list -n 1 "$tag")" = "$GITHUB_SHA"
+            gh release view "$tag" >/dev/null || gh release create "$tag" --verify-tag --title "$tag" --generate-notes
+          else
+            gh release create "$tag" --target "$GITHUB_SHA" --title "$tag" --generate-notes
+          fi
+      - name: Publish to npm
+        if: steps.version.outputs.release == 'true' && steps.version.outputs.publish == 'true'
+        run: npm publish --provenance
