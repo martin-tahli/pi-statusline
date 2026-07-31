@@ -1633,6 +1633,31 @@
       "type": "task",
       "updatedAt": "2026-07-31T17:28:19.698Z"
     },
+    "work-2.20": {
+      "acceptance": "1. A coverage map (in the report, not committed) lists each U11 rendering bullet -> the named test that covers it (existing or newly added); no bullet unaccounted.\n2. No production code changed unless a gap test exposed a real defect (documented with a regression test); if unchanged, git shows only test files modified or no change at all.\n3. Width/I/O invariants hold: every preview/rendered line has visibleWidth <= requested width; no preview path performs filesystem/network/git/session/timer work; zero/missing/null data hides the segment without NaN or crash.\n4. node --test on touched test files passes; npm test passes; npm run typecheck passes.",
+      "createdAt": "2026-07-31T21:38:00.411Z",
+      "dependencies": [],
+      "dependencyEdges": [],
+      "description": "Close plan unit U11 (requirements R3, R19-R29): prove every existing and newly configurable presentation remains correct across data modes and terminal widths. This is primarily a COVERAGE-AUDIT + GAP-FILL unit — the repo already has test/settings-render.test.ts (15 tests) plus test/{bar,segments,throughput,statusline,format,derive}.test.ts. Do NOT rewrite or duplicate existing tests.\n\nApproach:\n- Read docs/plans/2026-07-31-001-feat-new-statusline-settings-ui-plan.md section U11, requirements R19-R29 (separators, layout, bars, thresholds, timing, icons), and the Rendering/preview-parity matrix + AC contracts (AC1 footer layout/behavior) to enumerate the rendering matrix.\n- Cross-check each bullet against existing tests. Add a focused test ONLY for uncovered scenarios, in the appropriate existing test file (settings-render for preview/resolution parity; bar/segments/throughput/format/derive for the leaf renderers; statusline for runtime fixtures).\n- Use deterministic snapshots with semantic theme wrappers and Unicode width fixtures. Keep current runtime fixture assertions (local/subscription/API/Git/time/pending) as capability-loss guardrails.\n- Do NOT change production code unless a gap test exposes a genuine defect; if it does, fix + add a regression test and note it.\n\nMatrices (gap-fill only): local/hosted/API/subscription rendering; dynamic windows/order/overrides; custom separators/icons/no-icons/ASCII/Nerd-Font; narrow-width truncation and Unicode width; quota dedupe; missing/loading-data hiding policy; zero-hiding; context color escalation by threshold; preview == composeFooterLine parity for each fixture; every styled line is width-bounded (visibleWidth <= width) and never invokes I/O.",
+      "evidence": [
+        {
+          "closeEvidence": "Completed by coded inline work path"
+        }
+      ],
+      "id": "work-2.20",
+      "labels": [],
+      "notes": [
+        "wo:execution-slice; source: docs/plans/2026-07-31-001-feat-new-statusline-settings-ui-plan.md; covered plan unit: U11 (R3,R19-R29). Dependency context: follows closed U1-U10; U12-U13 remain.",
+        "wo:review-scope [\"test/settings-render.test.ts\"]",
+        "wo:review PASS - test/settings-render.test.ts +3 gap-fill tests (4-mode preview parity, context !/!! thresholds vs defaults 80/95 matching resolve.ts:189-192, ascii/none icon content vs resolve.ts:108); no production code changed; npm test 202 pass, typecheck clean",
+        "wo:verify-check PASS\nCommand: npm test && npm run typecheck\nOutput: reezing on the last one (0.121809ms)\n✔ classifies rates with directional baselines and an output floor (0.077382ms)\n✔ caps histories and resets displayed throughput on model changes (0.124619ms)\n✔ finalizes active time without preserving rates (0.087732ms)\n✔ retains idle result, resets on turn start, and accumulates active time (0.151324ms)\nℹ tests 202\nℹ suites 0\nℹ pass 202\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 626.300367\n\n> @shvax/pi-statusline@0.7.4 typecheck\n> tsc --noEmit"
+      ],
+      "parentId": "work-2",
+      "status": "closed",
+      "title": "U11: rendering/compatibility/preview-parity regression matrix (audit + gap-fill)",
+      "type": "task",
+      "updatedAt": "2026-07-31T21:43:34.707Z"
+    },
     "work-2.3": {
       "acceptance": "SHORT ACC",
       "createdAt": "2026-07-31T17:27:36.848Z",
@@ -1832,7 +1857,7 @@
       "recordCount": 11,
       "sourceFingerprint": "716c6815dbadf79dc70c6d01af6a643e7bcf36809c4af4405175a0d2a56789f1"
     },
-    "updatedAt": "2026-07-31T21:37:37.888Z"
+    "updatedAt": "2026-07-31T21:43:34.708Z"
   },
   "schemaVersion": 1
 }

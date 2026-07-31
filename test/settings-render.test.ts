@@ -203,3 +203,54 @@ test("preview: is pure — does not mutate fixtures or settings", () => {
   assert.equal(JSON.stringify(DEFAULT_STATUSLINE_SETTINGS), beforeSettings);
   assert.equal(JSON.stringify(PREVIEW_FIXTURES.subscription), beforeFixture);
 });
+
+// U11 gap-fill: parity for every mode, not just subscription.
+test("preview: parity — equals composeFooterLine for all four fixture modes", () => {
+  for (const mode of ["local", "subscription", "api", "narrow"] as const) {
+    const width = mode === "narrow" ? 40 : 100;
+    const fixture = PREVIEW_FIXTURES[mode];
+    const ctx: ResolutionContext = { capability: fixture.capability, runtime: fixture.snapshot };
+    const preview = renderPreview({ settings: DEFAULT_STATUSLINE_SETTINGS, mode, width })[1];
+    const direct = composeFooterLine(DEFAULT_STATUSLINE_SETTINGS, ctx, width);
+    assert.equal(preview, direct, `${mode}: preview diverged from composeFooterLine`);
+  }
+});
+
+// U11 gap-fill: context threshold markers (! / !!) appear in the composed footer line.
+test("resolution: context threshold markers appear in the composed line at warn and crit percentages", () => {
+  const ctx = (percent: number): ResolutionContext => ({
+    capability: localCapability,
+    runtime: localRuntime({ contextUsage: { percent, tokens: percent * 1_000, contextWindow: 100_000 } }),
+  });
+  // Below warn (default 80): no marker.
+  const safe = composeFooterLine(DEFAULT_STATUSLINE_SETTINGS, ctx(79), 200);
+  assert.ok(!safe.includes("!"), `expected no marker below warn, got: ${safe}`);
+  // At/above warn (80) but below crit (95): single '!'.
+  const warn = composeFooterLine(DEFAULT_STATUSLINE_SETTINGS, ctx(80), 200);
+  assert.ok(warn.includes("!") && !warn.includes("!!"), `expected '!' at warn, got: ${warn}`);
+  // At/above crit (95): double '!!'.
+  const crit = composeFooterLine(DEFAULT_STATUSLINE_SETTINGS, ctx(95), 200);
+  assert.ok(crit.includes("!!"), `expected '!!' at crit, got: ${crit}`);
+});
+
+// U11 gap-fill: icon-style content — ascii emits letter codes; none produces no symbol prefix.
+test("resolution: icon style ascii emits letter codes; none produces no symbol prefix", () => {
+  const ctx: ResolutionContext = { capability: localCapability, runtime: localRuntime() };
+  const ascii = structuredClone(DEFAULT_STATUSLINE_SETTINGS);
+  ascii.icons.style = "ascii";
+  const asciiLine = composeFooterLine(ascii, ctx, 200);
+  // ascii preset: project='P', model='M', thinking='T', context='C', throughput='R'.
+  // iconLabel defaults to "", so icons are adjacent to their values.
+  assert.ok(asciiLine.includes("Pproject"), `ascii: expected 'Pproject' icon+label, got: ${asciiLine}`);
+  assert.ok(asciiLine.startsWith("P") || asciiLine.includes(" P"), `ascii: expected project 'P' icon, got: ${asciiLine}`);
+  assert.ok(asciiLine.includes("Tmedium") || asciiLine.includes("Toff"), `ascii: expected thinking 'T' icon, got: ${asciiLine}`);
+
+  const none = structuredClone(DEFAULT_STATUSLINE_SETTINGS);
+  none.icons.style = "none";
+  const noneLine = composeFooterLine(none, ctx, 200);
+  // With no icons the plain segment value starts directly — no emoji/unicode/letter prefix.
+  assert.ok(!noneLine.includes("📁"), `none: unexpected emoji in: ${noneLine}`);
+  assert.ok(!noneLine.includes("🤖"), `none: unexpected emoji in: ${noneLine}`);
+  // The project basename still appears, just without a symbol in front.
+  assert.ok(noneLine.includes("project"), `none: expected project basename in: ${noneLine}`);
+});
