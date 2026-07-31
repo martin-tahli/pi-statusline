@@ -57,6 +57,18 @@ export interface WindowConfiguration {
   width: number;
 }
 
+/** Sparse per-provider refresh/cache overrides. */
+export interface ProviderRefreshOverrides {
+  refreshIntervalMs?: number;
+  maxCacheAgeMs?: number;
+  useCache?: boolean;
+  keepAfterFailure?: boolean;
+  refreshWhileActive?: boolean;
+  refreshDisabledProvider?: boolean;
+  /** Opaque fields retained by validation for forward compatibility. */
+  __unknown?: Record<string, unknown>;
+}
+
 /** Per-provider configuration. */
 export interface ProviderConfiguration {
   /** Whether this provider is enabled. */
@@ -71,6 +83,10 @@ export interface ProviderConfiguration {
   thresholds?: { contextWarn: number; contextCrit: number };
   /** Optional provider icon override. */
   icon?: { mode: "default" | "custom" | "hidden"; value: string };
+  /** Sparse missing-data override; absent inherits the provider default. */
+  missingDataPolicy?: MissingDataPolicy;
+  /** Sparse refresh/cache overrides; absent fields inherit provider defaults. */
+  refresh?: ProviderRefreshOverrides;
   /** Segments this provider supports overriding (for UI gating). */
   supportedOverrides: SegmentId[];
 }

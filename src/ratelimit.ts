@@ -1,4 +1,6 @@
 export interface RateLimitWindow {
+  /** Stable adapter identity; labels may be renamed without losing settings. */
+  key?: string;
   label: string;
   used: number;
   resetAt?: number;
@@ -7,8 +9,8 @@ export interface RateLimitWindow {
 export type RateLimits = RateLimitWindow[];
 
 const ANTHROPIC_WINDOWS = [
-  ["5h", "anthropic-ratelimit-unified-5h-utilization"],
-  ["wk", "anthropic-ratelimit-unified-7d-utilization"],
+  ["five-hour", "5h", "anthropic-ratelimit-unified-5h-utilization"],
+  ["seven-day", "wk", "anthropic-ratelimit-unified-7d-utilization"],
 ] as const;
 
 function numberInRange(value: string | undefined, max: number): number | undefined {
@@ -36,13 +38,13 @@ export function parseAnthropicUsage(payload: unknown): RateLimits {
   if (!payload || typeof payload !== "object") return [];
   const usage = payload as Record<string, unknown>;
 
-  return ([["5h", usage.five_hour], ["wk", usage.seven_day]] as const).flatMap(([label, value]) => {
+  return ([["five-hour", "5h", usage.five_hour], ["seven-day", "wk", usage.seven_day]] as const).flatMap(([key, label, value]) => {
     if (!value || typeof value !== "object") return [];
     const window = value as Record<string, unknown>;
     const utilization = window.utilization;
     if (typeof utilization !== "number" || !Number.isFinite(utilization) || utilization < 0 || utilization > 100) return [];
     const resetAt = reset(typeof window.resets_at === "string" || typeof window.resets_at === "number" ? window.resets_at : undefined);
-    return [{ label, used: utilization / 100, ...(resetAt === undefined ? {} : { resetAt }) }];
+    return [{ key, label, used: utilization / 100, ...(resetAt === undefined ? {} : { resetAt }) }];
   });
 }
 
@@ -60,6 +62,7 @@ export function parseCodexUsage(payload: unknown): RateLimits {
     if (percent === undefined || percent < 0 || percent > 100 || seconds === undefined || seconds <= 0) return [];
     const resetAt = reset(typeof window.reset_at === "number" ? window.reset_at : undefined);
     return [{
+      key: name === "primary_window" ? "primary" : "secondary",
       label: durationLabel(seconds / 60),
       used: percent / 100,
       ...(resetAt === undefined ? {} : { resetAt }),
@@ -97,8 +100,8 @@ export function parseZaiUsage(payload: unknown): RateLimits {
   if (windows.length !== 2) return [];
   const [first, second] = [...windows].sort((a, b) => (a.resetAt ?? -Infinity) - (b.resetAt ?? -Infinity));
   return [
-    { label: "5h", used: first!.used, ...(first!.resetAt === undefined ? {} : { resetAt: first!.resetAt }) },
-    { label: "wk", used: second!.used, ...(second!.resetAt === undefined ? {} : { resetAt: second!.resetAt }) },
+    { key: "five-hour", label: "5h", used: first!.used, ...(first!.resetAt === undefined ? {} : { resetAt: first!.resetAt }) },
+    { key: "weekly", label: "wk", used: second!.used, ...(second!.resetAt === undefined ? {} : { resetAt: second!.resetAt }) },
   ];
 }
 
@@ -106,10 +109,12 @@ export function parseStoredRateLimits(value: unknown): RateLimits {
   if (!Array.isArray(value)) return [];
   return value.flatMap((window) => {
     if (!window || typeof window !== "object") return [];
-    const { label, used, resetAt } = window as Record<string, unknown>;
+    const { key, label, used, resetAt } = window as Record<string, unknown>;
+    if (key !== undefined && (typeof key !== "string" || !key.trim())) return [];
     if (typeof label !== "string" || !label || typeof used !== "number" || !Number.isFinite(used) || used < 0 || used > 1) return [];
     const parsedResetAt = reset(typeof resetAt === "number" ? resetAt : undefined);
     return [{
+      ...(typeof key === "string" ? { key } : {}),
       label,
       used,
       ...(parsedResetAt === undefined ? {} : { resetAt: parsedResetAt }),
@@ -121,10 +126,10 @@ export function parseRateLimits(headers: Record<string, string>): RateLimits {
   const normalized = Object.fromEntries(
     Object.entries(headers).map(([key, value]) => [key.toLowerCase(), value]),
   );
-  const limits: RateLimits = ANTHROPIC_WINDOWS.flatMap(([label, header]) => {
+  const limits: RateLimits = ANTHROPIC_WINDOWS.flatMap(([key, label, header]) => {
     const used = numberInRange(normalized[header], 1);
     const resetAt = reset(normalized[header.replace("utilization", "reset")]);
-    return used === undefined ? [] : [{ label, used, ...(resetAt === undefined ? {} : { resetAt }) }];
+    return used === undefined ? [] : [{ key, label, used, ...(resetAt === undefined ? {} : { resetAt }) }];
   });
 
   for (const name of ["primary", "secondary"] as const) {
@@ -135,6 +140,7 @@ export function parseRateLimits(headers: Record<string, string>): RateLimits {
     const resetAt = reset(normalized[`${prefix}-reset-at`]);
     if (percent === 0 && minutes === undefined && resetAt === undefined) continue;
     limits.push({
+      key: name,
       label: minutes === undefined ? name : durationLabel(minutes),
       used: percent / 100,
       ...(resetAt === undefined ? {} : { resetAt }),

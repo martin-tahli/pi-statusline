@@ -345,3 +345,40 @@ test("validation: extras parses booleans and falls back to parity defaults", () 
   // Missing extras group yields the same parity defaults.
   assert.deepEqual(parseStatuslineSettings({}).settings.extras, DEFAULT_STATUSLINE_SETTINGS.extras);
 });
+test("validation: sparse provider missing-data and refresh overrides are bounded and preserved", () => {
+  const record = parseStatuslineSettings({ providers: { records: { dynamic: {
+    missingDataPolicy: "warning",
+    refresh: {
+      refreshIntervalMs: 5_000,
+      maxCacheAgeMs: Number.POSITIVE_INFINITY,
+      useCache: false,
+      futureRefreshField: "kept",
+    },
+  } } } }).settings.providers.records.dynamic;
+  assert.equal(record.missingDataPolicy, "warning");
+  assert.equal(record.refresh?.refreshIntervalMs, 10_000);
+  assert.equal(record.refresh?.maxCacheAgeMs, undefined);
+  assert.equal(record.refresh?.useCache, false);
+  assert.deepEqual(record.refresh?.__unknown, { futureRefreshField: "kept" });
+});
+
+test("validation: provider refresh unknown bag is idempotent across reparses", () => {
+  const once = parseStatuslineSettings({ providers: { records: { dynamic: {
+    refresh: {
+      refreshIntervalMs: 20_000,
+      __unknown: { alreadyPreserved: "yes" },
+      newlyUnknown: 42,
+    },
+  } } } }).settings;
+  assert.deepEqual(once.providers.records.dynamic.refresh?.__unknown, {
+    alreadyPreserved: "yes",
+    newlyUnknown: 42,
+  });
+
+  const twice = parseStatuslineSettings(once).settings;
+  assert.deepEqual(twice.providers.records.dynamic.refresh?.__unknown, {
+    alreadyPreserved: "yes",
+    newlyUnknown: 42,
+  });
+  assert.equal("__unknown" in (twice.providers.records.dynamic.refresh?.__unknown ?? {}), false);
+});

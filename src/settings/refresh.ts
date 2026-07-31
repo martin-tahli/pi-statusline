@@ -1,4 +1,4 @@
-import type { StatuslineSettings } from "./schema.ts";
+import type { MissingDataPolicy, StatuslineSettings } from "./schema.ts";
 import type { ProviderCapability } from "./providers/capabilities.ts";
 
 /** Minimum refresh cadence and floor for cache age (matches the 10s/5min contract). */
@@ -32,23 +32,34 @@ export interface RefreshHealth {
 /** Merge provider defaults with sparse per-provider overrides, then bound the result. */
 export function resolveProviderRefreshPolicy(
   settings: StatuslineSettings,
-  _providerId: string,
+  providerId: string,
   _capability?: ProviderCapability,
 ): RefreshPolicy {
   const defaults = settings.providers.defaults;
-  // ponytail: per-provider override hook is the ProviderConfiguration; until it carries a
-  // refresh block, defaults govern. Interval floored at 10s; maxAge finite and >= interval.
-  const intervalMs = Math.max(MIN_INTERVAL_MS, Math.floor(defaults.refreshIntervalMs) || MIN_INTERVAL_MS);
-  const requestedMaxAge = Math.floor(defaults.maxCacheAgeMs) || intervalMs;
-  const maxAgeMs = Math.max(intervalMs, requestedMaxAge);
+  const override = settings.providers.records[providerId]?.refresh;
+  const requestedInterval = override?.refreshIntervalMs ?? defaults.refreshIntervalMs;
+  const intervalMs = Number.isFinite(requestedInterval)
+    ? Math.min(86_400_000, Math.max(MIN_INTERVAL_MS, Math.floor(requestedInterval)))
+    : MIN_INTERVAL_MS;
+  const requestedMaxAge = override?.maxCacheAgeMs ?? defaults.maxCacheAgeMs;
+  const maxAgeMs = Number.isFinite(requestedMaxAge)
+    ? Math.min(604_800_000, Math.max(intervalMs, Math.floor(requestedMaxAge)))
+    : intervalMs;
   return {
     intervalMs,
     maxAgeMs,
-    useCache: defaults.useCache,
-    keepAfterFailure: defaults.keepAfterFailure,
-    refreshWhileActive: defaults.refreshWhileActive,
-    refreshDisabledProvider: defaults.refreshDisabledProvider,
+    useCache: override?.useCache ?? defaults.useCache,
+    keepAfterFailure: override?.keepAfterFailure ?? defaults.keepAfterFailure,
+    refreshWhileActive: override?.refreshWhileActive ?? defaults.refreshWhileActive,
+    refreshDisabledProvider: override?.refreshDisabledProvider ?? defaults.refreshDisabledProvider,
   };
+}
+
+export function resolveProviderMissingDataPolicy(
+  settings: StatuslineSettings,
+  providerId: string,
+): MissingDataPolicy {
+  return settings.providers.records[providerId]?.missingDataPolicy ?? settings.providers.defaults.missingDataPolicy;
 }
 
 /**
@@ -62,15 +73,12 @@ export function resolveRefreshEligibility(
   capability: ProviderCapability,
   inputs: EligibilityInputs,
 ): boolean {
+  const policy = resolveProviderRefreshPolicy(settings, _providerId, capability);
   if (!settings.providers.enabled) return false;
-  if (!inputs.providerEnabled && !settings.providers.defaults.refreshDisabledProvider) return false;
+  if (!inputs.providerEnabled && !policy.refreshDisabledProvider) return false;
   if (!capability.available || !capability.authenticated) return false;
   if (capability.quotaSupport === "none") return false;
-  // Active provider only refreshes while active unless refreshWhileActive permits background.
-  if (inputs.isActive && !settings.providers.defaults.refreshWhileActive && inputs.providerEnabled) {
-    // Active + provider-enabled is always eligible (it is the session provider); this gate
-    // only matters for non-active background providers, handled by providerEnabled above.
-  }
+  if (inputs.isActive && !policy.refreshWhileActive) return false;
   return true;
 }
 

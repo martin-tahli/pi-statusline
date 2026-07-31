@@ -41,7 +41,20 @@ const KNOWN_PROVIDER_FIELDS = new Set([
   "activeModel",
   "thresholds",
   "icon",
+  "missingDataPolicy",
+  "refresh",
   "supportedOverrides",
+]);
+
+/** Known refresh override fields. */
+const KNOWN_REFRESH_FIELDS = new Set([
+  "refreshIntervalMs",
+  "maxCacheAgeMs",
+  "useCache",
+  "keepAfterFailure",
+  "refreshWhileActive",
+  "refreshDisabledProvider",
+  "__unknown",
 ]);
 
 /** Known window fields. */
@@ -187,6 +200,35 @@ function parseProviderConfig(value: unknown): StatuslineSettings["providers"]["r
     icon = { mode, value };
   }
 
+  const missingDataPolicy = ["hide", "cached", "na", "warning", "provider-name"].includes(input.missingDataPolicy as string)
+    ? input.missingDataPolicy as StatuslineSettings["providers"]["defaults"]["missingDataPolicy"]
+    : undefined;
+
+  let refresh: StatuslineSettings["providers"]["records"][string]["refresh"];
+  if (input.refresh && typeof input.refresh === "object") {
+    const source = input.refresh as Record<string, unknown>;
+    refresh = {};
+    if (typeof source.refreshIntervalMs === "number" && Number.isFinite(source.refreshIntervalMs)) {
+      refresh.refreshIntervalMs = clamp(Math.floor(source.refreshIntervalMs), 10_000, 86_400_000);
+    }
+    if (typeof source.maxCacheAgeMs === "number" && Number.isFinite(source.maxCacheAgeMs)) {
+      refresh.maxCacheAgeMs = clamp(
+        Math.floor(source.maxCacheAgeMs),
+        refresh.refreshIntervalMs ?? 10_000,
+        604_800_000,
+      );
+    }
+    for (const key of ["useCache", "keepAfterFailure", "refreshWhileActive", "refreshDisabledProvider"] as const) {
+      if (typeof source[key] === "boolean") refresh[key] = source[key];
+    }
+    const existingUnknown = source.__unknown && typeof source.__unknown === "object" && !Array.isArray(source.__unknown)
+      ? source.__unknown as Record<string, unknown>
+      : {};
+    const unknownRefresh = { ...existingUnknown, ...collectUnknown(source, KNOWN_REFRESH_FIELDS) };
+    if (Object.keys(unknownRefresh).length) refresh.__unknown = unknownRefresh;
+    if (!Object.keys(refresh).length) refresh = undefined;
+  }
+
   const supportedOverrides: SegmentId[] = [];
   if (Array.isArray(input.supportedOverrides)) {
     for (const s of input.supportedOverrides) {
@@ -195,7 +237,17 @@ function parseProviderConfig(value: unknown): StatuslineSettings["providers"]["r
     }
   }
 
-  return { enabled, displayMode, windows, activeModel, thresholds, icon, supportedOverrides };
+  return {
+    enabled,
+    displayMode,
+    windows,
+    activeModel,
+    thresholds,
+    icon,
+    ...(missingDataPolicy ? { missingDataPolicy } : {}),
+    ...(refresh ? { refresh } : {}),
+    supportedOverrides,
+  };
 }
 
 /** Parse window configuration. */

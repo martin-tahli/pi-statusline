@@ -11,8 +11,8 @@ const fixture = {
 
 test("parses Anthropic unified windows", () => {
   assert.deepEqual(parseRateLimits(fixture), [
-    { label: "5h", used: 0.23, resetAt: Date.parse("2026-07-15T18:00:00Z") },
-    { label: "wk", used: 0.41, resetAt: 1_784_246_400_000 },
+    { key: "five-hour", label: "5h", used: 0.23, resetAt: Date.parse("2026-07-15T18:00:00Z") },
+    { key: "seven-day", label: "wk", used: 0.41, resetAt: 1_784_246_400_000 },
   ]);
 });
 
@@ -21,8 +21,8 @@ test("parses Anthropic OAuth usage", () => {
     five_hour: { utilization: 23, resets_at: "2026-07-15T18:00:00Z" },
     seven_day: { utilization: 41, resets_at: 1_784_246_400 },
   }), [
-    { label: "5h", used: 0.23, resetAt: Date.parse("2026-07-15T18:00:00Z") },
-    { label: "wk", used: 0.41, resetAt: 1_784_246_400_000 },
+    { key: "five-hour", label: "5h", used: 0.23, resetAt: Date.parse("2026-07-15T18:00:00Z") },
+    { key: "seven-day", label: "wk", used: 0.41, resetAt: 1_784_246_400_000 },
   ]);
 });
 
@@ -34,13 +34,13 @@ test("parses only the Codex windows actually reported", () => {
     "X-Codex-Secondary-Used-Percent": "41",
     "X-Codex-Secondary-Window-Minutes": "10080",
   }), [
-    { label: "1h", used: 0.23, resetAt: 1_784_246_400_000 },
-    { label: "wk", used: 0.41 },
+    { key: "primary", label: "1h", used: 0.23, resetAt: 1_784_246_400_000 },
+    { key: "secondary", label: "wk", used: 0.41 },
   ]);
   assert.deepEqual(parseRateLimits({
     "x-codex-primary-used-percent": "41",
     "x-codex-primary-window-minutes": "43200",
-  }), [{ label: "30d", used: 0.41 }]);
+  }), [{ key: "primary", label: "30d", used: 0.41 }]);
 });
 
 test("parses Codex account usage by the windows returned by the account", () => {
@@ -53,7 +53,7 @@ test("parses Codex account usage by the windows returned by the account", () => 
         reset_at: 1_784_246_400,
       },
     },
-  }), [{ label: "wk", used: 0.63, resetAt: 1_784_246_400_000 }]);
+  }), [{ key: "secondary", label: "wk", used: 0.63, resetAt: 1_784_246_400_000 }]);
   assert.deepEqual(parseCodexUsage({ rate_limit: null }), []);
 });
 
@@ -69,8 +69,8 @@ test("parses Z.AI TOKENS_LIMIT windows, ordering the untouched/sooner-resetting 
     },
     success: true,
   }), [
-    { label: "5h", used: 0 },
-    { label: "wk", used: 0.05, resetAt: 1_785_753_049_998 },
+    { key: "five-hour", label: "5h", used: 0 },
+    { key: "weekly", label: "wk", used: 0.05, resetAt: 1_785_753_049_998 },
   ]);
 });
 
@@ -83,8 +83,8 @@ test("orders two reset-bearing Z.AI windows by which resets sooner", () => {
       ],
     },
   }), [
-    { label: "5h", used: 0.1, resetAt: 1_785_000_049_998 },
-    { label: "wk", used: 0.4, resetAt: 1_785_753_049_998 },
+    { key: "five-hour", label: "5h", used: 0.1, resetAt: 1_785_000_049_998 },
+    { key: "weekly", label: "wk", used: 0.4, resetAt: 1_785_753_049_998 },
   ]);
 });
 
@@ -98,13 +98,13 @@ test("hides Z.AI usage on any unexpected shape rather than guessing", () => {
 
 test("restores only valid saved windows", () => {
   assert.deepEqual(parseStoredRateLimits([
-    { label: "5h", used: 0.23, resetAt: 1_784_246_400 },
-    { label: "wk", used: 0.41 },
-    { label: "bad", used: 2 },
+    { key: "saved-five-hour", label: "5h", used: 0.23, resetAt: 1_784_246_400 },
+    { key: "saved-week", label: "wk", used: 0.41 },
+    { key: "bad", label: "bad", used: 2 },
     null,
   ]), [
-    { label: "5h", used: 0.23, resetAt: 1_784_246_400_000 },
-    { label: "wk", used: 0.41 },
+    { key: "saved-five-hour", label: "5h", used: 0.23, resetAt: 1_784_246_400_000 },
+    { key: "saved-week", label: "wk", used: 0.41 },
   ]);
   assert.deepEqual(parseStoredRateLimits({}), []);
 });
@@ -113,9 +113,9 @@ test("hides absent, unrecognized, or invalid windows without hiding valid siblin
   assert.deepEqual(parseRateLimits({}), []);
   assert.deepEqual(parseRateLimits({ "x-ratelimit-5h": "0.2" }), []);
   assert.deepEqual(parseRateLimits({ "anthropic-ratelimit-unified-5h-utilization": "0.2" }), [
-    { label: "5h", used: 0.2 },
+    { key: "five-hour", label: "5h", used: 0.2 },
   ]);
   assert.deepEqual(parseRateLimits({ ...fixture, "anthropic-ratelimit-unified-7d-utilization": "unknown" }), [
-    { label: "5h", used: 0.23, resetAt: Date.parse("2026-07-15T18:00:00Z") },
+    { key: "five-hour", label: "5h", used: 0.23, resetAt: Date.parse("2026-07-15T18:00:00Z") },
   ]);
 });

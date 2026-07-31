@@ -1448,6 +1448,57 @@
       "type": "task",
       "updatedAt": "2026-07-31T20:04:48.013Z"
     },
+    "work-2.14": {
+      "acceptance": "Exactly one new open executable child exists under work-2 with concrete scope, acceptance, and dependency context; this planning item is closed with a summary note.",
+      "createdAt": "2026-07-31T20:04:59.884Z",
+      "dependencies": [],
+      "dependencyEdges": [],
+      "description": "Inspect the roadmap plan and completed children through work-2.13, then create exactly one next executable delivery slice under work-2. Do not implement product code.",
+      "evidence": [],
+      "id": "work-2.14",
+      "labels": [
+        "wo:planning"
+      ],
+      "notes": [
+        "wo:planning; just-in-time next-slice planning after U6",
+        "Planning complete: created exactly one next executable child, work-2.15, covering U7 dynamic provider settings across schema/service/UI/tests. It is ordered after closed U6/work-2.13 and includes concrete scope, falsifiable acceptance, stable-window/per-provider-refresh gap coverage, and wo:execution-slice traceability. U8-U13 remain unsliced.",
+        "Planning complete: created dependency-ordered executable slice work-2.15 for U7."
+      ],
+      "parentId": "work-2",
+      "status": "closed",
+      "title": "Plan next slice for New Pi Statusline Settings UI",
+      "type": "task",
+      "updatedAt": "2026-07-31T20:07:30.660Z"
+    },
+    "work-2.15": {
+      "acceptance": "1. Direct fake-context screen tests show separate global statusline and provider-tracking toggles, then only reconciled configured/available/active/stored providers in saved order; each row has a color-independent enabled, availability/auth, billing, reliability, and fresh/stale/unknown status. A custom and stored-unavailable provider remain visible, while catalog-only providers do not appear and unsupported quota says Not available with a sanitized reason.\n2. Provider actions mutate only the U6 draft: Space toggles while retaining configuration; Ctrl+Up/Down persists stable order; default-to-custom snapshots effective values without changing preview output; active-model values cycle default/on/off; provider icon edits update the same draft path used by icons.providers.\n3. Capability-gated detail rows are falsified by local/subscription/API/unknown fixtures: local exposes local throughput only, hosted exposes streaming output, API exposes actual token/cost ledger, supported subscription exposes quota windows, and unsupported providers expose no deceptive quota toggles. UI files contain no known adapter provider-ID literals.\n4. Every adapter-returned window has a non-empty stable key separate from label. Reordered/renamed windows retain settings by key, a new monthly key gets defaults, and invalid/duplicate keys fail closed without corrupting existing draft records. Window controls cover visible/label/bar/percent/reset format/used/remaining/zero/width with validated width.\n5. Sparse per-provider missing-data and refresh/cache settings round-trip validation and override global defaults with interval >=10000 ms and finite max age >= interval. Refresh-now is returned as an explicit effect only for eligible supported providers; render, navigation, and ordinary edits under an I/O trap start no network, filesystem, timer, Git, session, cache, or adapter work.\n6. node --test test/settings-ui.test.ts test/settings-refresh.test.ts test/ratelimit.test.ts passes; npm test passes; npm run typecheck passes.",
+      "createdAt": "2026-07-31T20:07:10.082Z",
+      "dependencies": [
+        "work-2.13"
+      ],
+      "dependencyEdges": [],
+      "description": "Deliver the next end-to-end provider-settings behavior after the closed U6 shell (work-2.13): the shared draft can display and edit truthful dynamic provider rows, provider details, stable usage windows, active-model overrides, icon choice, missing-data policy, and validated refresh/cache controls without performing I/O during render/navigation.\n\nConcrete file scope:\n- src/settings/provider-ui.ts (new): pure provider screen/view-model and draft actions over ProviderDescriptor, ProviderCapability, refresh health, and adapter-returned windows; expose explicit refresh-now as a caller-owned effect rather than invoking network work.\n- src/settings/ui.ts: integrate Providers navigation/screen stack with the U6 shell and shared cloned draft.\n- src/settings/schema.ts, src/settings/defaults.ts, src/settings/validation.ts: add/preserve the minimal sparse per-provider missing-data and refresh/cache overrides needed by U7, including safe validation/bounds and unknown-field preservation.\n- src/settings/refresh.ts: resolve sparse provider overrides over global defaults and keep unsupported/unauthenticated providers ineligible.\n- src/ratelimit.ts and src/settings/providers/adapters.ts: give adapter-returned windows non-empty stable keys separate from mutable labels and fail closed on invalid/duplicate keys at the provider-UI boundary.\n- test/settings-ui.test.ts, test/settings-refresh.test.ts, test/ratelimit.test.ts, and focused schema/validation tests as required by the changed types.\n\nDo not wire /statusline command lifecycle in this slice (U9), implement Separators/Emojis controls (U8), or perform provider-name branching in UI code.",
+      "evidence": [
+        {
+          "closeEvidence": "Completed by coded inline work path"
+        }
+      ],
+      "id": "work-2.15",
+      "labels": [],
+      "notes": [
+        "wo:execution-slice; source: docs/plans/2026-07-31-001-feat-new-statusline-settings-ui-plan.md; covered plan unit: U7 (R11-R18, R24-R27) as one vertical provider-settings tracer across schema/service/UI/tests. Dependency context: follows closed work-2.13/U6; U8 remains next, U9 owns command/lifecycle integration, and U10-U13 remain unsliced.",
+        "wo:review-scope [\"src/ratelimit.ts\",\"src/settings/refresh.ts\",\"src/settings/schema.ts\",\"src/settings/ui.ts\",\"src/settings/validation.ts\",\"test/ratelimit.test.ts\",\"test/settings-refresh.test.ts\",\"test/settings-ui.test.ts\",\"test/settings-validation.test.ts\",\"src/settings/provider-ui.ts\"]",
+        "wo:review FAIL {\"findings\":[\"src/settings/ui.ts:65 - Implement provider-screen key routing so Space and Ctrl+Up/Down mutate the shared draft (and expose both global/provider toggles) instead of swallowing every non-Escape key.\",\"src/settings/provider-ui.ts:29 - Add the required editable provider detail state and render it: display mode, active-model overrides, provider icon, missing-data policy, refresh/cache controls, refresh-now eligibility, and all quota-window controls are currently absent from the view model/UI.\",\"src/settings/provider-ui.ts:148 - Honor reconcileProviderWindows failure before changing displayMode; invalid or duplicate adapter keys currently still create/change the provider record, violating fail-closed/no-corruption behavior.\",\"src/settings/provider-ui.ts:227 - Validate and bound refresh/cache edits before storing them in the shared draft; the setter currently accepts sub-10s intervals and non-finite max ages.\",\"src/settings/validation.ts:223 - Make refresh unknown-field preservation idempotent by recognizing/merging the existing __unknown bag; parseStatuslineSettings(parseStatuslineSettings(x).settings) currently nests __unknown on every round trip.\"]}",
+        "wo:review FAIL {\"findings\":[\"src/settings/ui.ts:77 - Add provider-detail navigation and key/action routing for display mode, active-model, icon, missing-data, refresh/cache, refresh-now, and quota-window edits; the current provider screen only toggles/reorders rows and external selectedProviderId makes detail controls render-only.\",\"src/settings/ui.ts:184 - Render capability rows only when supported; local providers currently also expose hosted/token/cost rows as Not available instead of exposing local throughput only (and analogous hosted/API gating).\",\"src/settings/provider-ui.ts:181 - Snapshot all effective provider/window values when switching default to custom and verify preview output is unchanged; the current transition only creates generic window defaults before flipping displayMode.\"]}",
+        "wo:residual-fix PASS {\"dispositions\":[{\"finding\":\"src/settings/ui.ts:77 - Add provider-detail navigation and key/action routing for display mode, active-model, icon, missing-data, refresh/cache, refresh-now, and quota-window edits; the current provider screen only toggles/reorders rows and external selectedProviderId makes detail controls render-only.\",\"fix\":\"Added state-owned provider-detail navigation and keyboard/action routing for every requested control.\",\"evidence\":\"node --test test/settings-ui.test.ts passed 13/13; full npm test passed 190/190; typecheck passed.\"},{\"finding\":\"src/settings/ui.ts:184 - Render capability rows only when supported; local providers currently also expose hosted/token/cost rows as Not available instead of exposing local throughput only (and analogous hosted/API gating).\",\"fix\":\"Capability-gated provider detail rows so only applicable local, hosted, API, and subscription controls render.\",\"evidence\":\"Focused capability-row regressions passed in test/settings-ui.test.ts; full npm test passed 190/190.\"},{\"finding\":\"src/settings/provider-ui.ts:181 - Snapshot all effective provider/window values when switching default to custom and verify preview output is unchanged; the current transition only creates generic window defaults before flipping displayMode.\",\"fix\":\"Snapshot effective provider and window settings before switching default to custom.\",\"evidence\":\"Default-to-custom preview-parity regression passed in test/settings-ui.test.ts; typecheck passed.\"}]}",
+        "wo:verify-check PASS\nCommand: npm test && npm run typecheck\nOutput: reezing on the last one (0.146519ms)\n✔ classifies rates with directional baselines and an output floor (0.122042ms)\n✔ caps histories and resets displayed throughput on model changes (0.179453ms)\n✔ finalizes active time without preserving rates (0.237155ms)\n✔ retains idle result, resets on turn start, and accumulates active time (0.273401ms)\nℹ tests 190\nℹ suites 0\nℹ pass 190\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 710.051857\n\n> @shvax/pi-statusline@0.7.4 typecheck\n> tsc --noEmit"
+      ],
+      "parentId": "work-2",
+      "status": "closed",
+      "title": "Dynamic provider settings: truthful rows, detail, windows, and refresh actions",
+      "type": "task",
+      "updatedAt": "2026-07-31T20:33:21.940Z"
+    },
     "work-2.2": {
       "acceptance": "",
       "createdAt": "2026-07-31T17:25:43.479Z",
@@ -1670,7 +1721,7 @@
       "recordCount": 11,
       "sourceFingerprint": "716c6815dbadf79dc70c6d01af6a643e7bcf36809c4af4405175a0d2a56789f1"
     },
-    "updatedAt": "2026-07-31T20:04:48.014Z"
+    "updatedAt": "2026-07-31T20:33:21.940Z"
   },
   "schemaVersion": 1
 }

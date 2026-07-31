@@ -5,7 +5,7 @@ import {
   resolveRefreshEligibility,
   resolveRefreshHealth,
 } from "../src/settings/refresh.ts";
-import { DEFAULT_STATUSLINE_SETTINGS } from "../src/settings/defaults.ts";
+import { createProviderConfig, DEFAULT_STATUSLINE_SETTINGS } from "../src/settings/defaults.ts";
 import type { StatuslineSettings } from "../src/settings/schema.ts";
 import type { ProviderCapability } from "../src/settings/providers/capabilities.ts";
 
@@ -102,4 +102,28 @@ test("health: sanitized reasons never leak credential fragments", () => {
     assert.ok(reason);
     assert.ok(!/sk-|Bearer|authorization|token|key/i.test(reason!), "reason must not leak a credential fragment");
   }
+});
+
+test("policy: sparse provider overrides resolve over globals and stay bounded", () => {
+  const s = structuredClone(DEFAULT_STATUSLINE_SETTINGS);
+  s.providers.records.dynamic = {
+    ...createProviderConfig(),
+    missingDataPolicy: "warning",
+    refresh: { refreshIntervalMs: 20_000, maxCacheAgeMs: 10_000, useCache: false, refreshDisabledProvider: true },
+  };
+  const policy = resolveProviderRefreshPolicy(s, "dynamic", officialCap);
+  assert.deepEqual(policy, {
+    intervalMs: 20_000, maxAgeMs: 20_000, useCache: false, keepAfterFailure: true,
+    refreshWhileActive: true, refreshDisabledProvider: true,
+  });
+});
+
+test("eligibility uses sparse provider refresh overrides", () => {
+  const s = structuredClone(DEFAULT_STATUSLINE_SETTINGS);
+  s.providers.records.dynamic = {
+    ...createProviderConfig(), enabled: false,
+    refresh: { refreshDisabledProvider: true, refreshWhileActive: false },
+  };
+  assert.equal(resolveRefreshEligibility(s, "dynamic", officialCap, { providerEnabled: false, isActive: false }), true);
+  assert.equal(resolveRefreshEligibility(s, "dynamic", officialCap, { providerEnabled: true, isActive: true }), false);
 });
