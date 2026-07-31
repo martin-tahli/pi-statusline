@@ -1,0 +1,163 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { visibleWidth } from "@earendil-works/pi-tui";
+import {
+  resolveSegmentVisibility,
+  resolveOrder,
+  resolveBarConfig,
+  composeFooterLine,
+  type RuntimeSnapshot,
+  type ResolutionContext,
+} from "../src/settings/resolve.ts";
+import { renderPreview, PREVIEW_FIXTURES } from "../src/settings/preview.ts";
+import { DEFAULT_STATUSLINE_SETTINGS } from "../src/settings/defaults.ts";
+import type { StatuslineSettings, SegmentId, ActiveModelToggle } from "../src/settings/schema.ts";
+import type { ProviderCapability } from "../src/settings/providers/capabilities.ts";
+
+function settingsWith(overrides: Partial<StatuslineSettings>): StatuslineSettings {
+  return { ...DEFAULT_STATUSLINE_SETTINGS, ...overrides } as StatuslineSettings;
+}
+
+const localCapability: ProviderCapability = {
+  available: true, authenticated: true, modelCount: 1, billing: "local",
+  quotaSupport: "none", quotaReliability: "none",
+  localSpeed: true, hostedSpeed: false, tokenLedger: false, costLedger: false,
+};
+const subCapability: ProviderCapability = {
+  available: true, authenticated: true, modelCount: 1, billing: "subscription",
+  quotaSupport: "official", quotaReliability: "high",
+  localSpeed: false, hostedSpeed: true, tokenLedger: false, costLedger: false,
+};
+
+function localRuntime(extra: Partial<RuntimeSnapshot> = {}): RuntimeSnapshot {
+  return {
+    cwd: "/home/user/project",
+    model: { id: "qwen2.5-coder", provider: "ollama", reasoning: true },
+    activeProvider: "ollama",
+    thinkingLevel: "medium",
+    contextUsage: { percent: 0.55, tokens: 550_000, contextWindow: 1_000_000 },
+    throughput: { inputRate: 850, outputRate: 62 },
+    ...extra,
+  };
+}
+
+test("resolution: effort self-hides for non-reasoning models", () => {
+  const ctx: ResolutionContext = { capability: localCapability, runtime: localRuntime({ model: { id: "x", reasoning: false }, thinkingLevel: "off" }) };
+  const vis = resolveSegmentVisibility(DEFAULT_STATUSLINE_SETTINGS, ctx);
+  assert.equal(vis.effort, false, "non-reasoning model must not show effort");
+});
+
+test("resolution: context self-hides when percent is null (post-compaction)", () => {
+  const ctx: ResolutionContext = { capability: localCapability, runtime: localRuntime({ contextUsage: { percent: null as unknown as number, tokens: null, contextWindow: 200_000 } }) };
+  const vis = resolveSegmentVisibility(DEFAULT_STATUSLINE_SETTINGS, ctx);
+  assert.equal(vis.context, false);
+});
+
+test("resolution: session self-hides without quota support", () => {
+  const ctx: ResolutionContext = { capability: localCapability, runtime: localRuntime() };
+  assert.equal(resolveSegmentVisibility(DEFAULT_STATUSLINE_SETTINGS, ctx).session, false);
+  const subCtx: ResolutionContext = {
+    capability: subCapability,
+    runtime: localRuntime({ sessionWindows: [{ label: "5h", used: 0.23 }] }),
+  };
+  assert.equal(resolveSegmentVisibility(DEFAULT_STATUSLINE_SETTINGS, subCtx).session, true);
+});
+
+test("resolution: throughput self-hides without a measured rate", () => {
+  const ctx: ResolutionContext = { capability: localCapability, runtime: localRuntime({ throughput: {} }) };
+  assert.equal(resolveSegmentVisibility(DEFAULT_STATUSLINE_SETTINGS, ctx).throughput, false);
+});
+
+test("resolution: activeModel tri-state 'off' overrides global on", () => {
+  const s = settingsWith({
+    providers: {
+      ...DEFAULT_STATUSLINE_SETTINGS.providers,
+      records: {
+        ollama: {
+          enabled: true, displayMode: "default", windows: {},
+          activeModel: { effort: "off" } as Record<SegmentId, ActiveModelToggle>,
+          supportedOverrides: [],
+        },
+      },
+    },
+  });
+  const ctx: ResolutionContext = { capability: localCapability, runtime: localRuntime() };
+  assert.equal(resolveSegmentVisibility(s, ctx).effort, false);
+});
+
+test("resolution: activeModel tri-state 'on' overrides global off", () => {
+  const s = settingsWith({
+    segments: { ...DEFAULT_STATUSLINE_SETTINGS.segments, time: false },
+    providers: {
+      ...DEFAULT_STATUSLINE_SETTINGS.providers,
+      records: {
+        ollama: {
+          enabled: true, displayMode: "default", windows: {},
+          activeModel: { time: "on" } as Record<SegmentId, ActiveModelToggle>,
+          supportedOverrides: [],
+        },
+      },
+    },
+  });
+  const ctx: ResolutionContext = { capability: localCapability, runtime: localRuntime({ activeMs: 120_000 }) };
+  assert.equal(resolveSegmentVisibility(s, ctx).time, true);
+});
+
+test("resolution: 'default' inherits global", () => {
+  const ctx: ResolutionContext = { capability: localCapability, runtime: localRuntime() };
+  const vis = resolveSegmentVisibility(DEFAULT_STATUSLINE_SETTINGS, ctx);
+  // model is global-on, applicable, no override => inherits on.
+  assert.equal(vis.model, true);
+});
+
+test("resolution: order validates and falls back to defaults when empty/invalid", () => {
+  assert.deepEqual(resolveOrder(DEFAULT_STATUSLINE_SETTINGS).segmentOrder, ["project", "model", "effort", "context", "session", "throughput", "time"]);
+  const bad = settingsWith({ layout: { ...DEFAULT_STATUSLINE_SETTINGS.layout, segmentOrder: ["bogus" as SegmentId] } });
+  assert.deepEqual(resolveOrder(bad).segmentOrder, ["project", "model", "effort", "context", "session", "throughput", "time"]);
+});
+
+test("resolution: resolveBarConfig passes through and bounds bar settings", () => {
+  const bar = resolveBarConfig(DEFAULT_STATUSLINE_SETTINGS);
+  assert.equal(bar.width, 12);
+  assert.equal(bar.fill, "█");
+  assert.equal(bar.showPercent, true);
+  const tiny = settingsWith({ bars: { ...DEFAULT_STATUSLINE_SETTINGS.bars, width: 0, fill: "" } });
+  const resolved = resolveBarConfig(tiny);
+  assert.equal(resolved.width, 2, "width clamped to min 2");
+  assert.equal(resolved.fill, "█", "empty fill falls back to default");
+});
+
+test("resolution: composeFooterLine never exceeds the requested width", () => {
+  const ctx: ResolutionContext = { capability: localCapability, runtime: localRuntime() };
+  for (const width of [40, 60, 80, 120]) {
+    const line = composeFooterLine(DEFAULT_STATUSLINE_SETTINGS, ctx, width);
+    assert.ok(visibleWidth(line) <= width, `width ${width}: ${visibleWidth(line)} > ${width}`);
+  }
+});
+
+test("preview: produces a labelled, width-bounded line for each fixture mode", () => {
+  for (const mode of ["local", "subscription", "api", "narrow"] as const) {
+    const width = mode === "narrow" ? 40 : 100;
+    const lines = renderPreview({ settings: DEFAULT_STATUSLINE_SETTINGS, mode, width });
+    assert.equal(lines.length, 2);
+    assert.match(lines[0], /preview$/);
+    assert.ok(visibleWidth(lines[1]) <= width, `${mode}: ${visibleWidth(lines[1])} > ${width}`);
+  }
+});
+
+test("preview: parity — equals composeFooterLine for the same fixture/settings", () => {
+  const fixture = PREVIEW_FIXTURES.subscription;
+  const ctx: ResolutionContext = { capability: fixture.capability, runtime: fixture.snapshot };
+  const preview = renderPreview({ settings: DEFAULT_STATUSLINE_SETTINGS, mode: "subscription", width: 100 })[1];
+  const direct = composeFooterLine(DEFAULT_STATUSLINE_SETTINGS, ctx, 100);
+  assert.equal(preview, direct);
+});
+
+test("preview: is pure — does not mutate fixtures or settings", () => {
+  const beforeSettings = JSON.stringify(DEFAULT_STATUSLINE_SETTINGS);
+  const beforeFixture = JSON.stringify(PREVIEW_FIXTURES.subscription);
+  renderPreview({ settings: DEFAULT_STATUSLINE_SETTINGS, mode: "subscription", width: 80 });
+  renderPreview({ settings: DEFAULT_STATUSLINE_SETTINGS, mode: "local", width: 40 });
+  assert.equal(JSON.stringify(DEFAULT_STATUSLINE_SETTINGS), beforeSettings);
+  assert.equal(JSON.stringify(PREVIEW_FIXTURES.subscription), beforeFixture);
+});

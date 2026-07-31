@@ -1453,6 +1453,32 @@
       "title": "Provider discovery, capabilities, and adapter registry",
       "type": "task",
       "updatedAt": "2026-07-31T18:16:39.685Z"
+    },
+    "work-2.7": {
+      "acceptance": "- src/settings/resolve.ts and src/settings/preview.ts exist and export the described functions.\n- npm run typecheck passes; npm test passes including new test/settings-render.test.ts.\n- extensions/statusline.ts and src/{bar,segments,format,derive,throughput}.ts remain unmodified and all pre-U3 tests stay green.\n- No renderer invokes I/O (preview is pure); all preview lines are width-bounded (visibleWidth <= width).",
+      "createdAt": "2026-07-31T18:17:31.589Z",
+      "dependencies": [],
+      "dependencyEdges": [],
+      "description": "Build the settings-driven resolver + preview (plan U3, reqs R3, R8, R17, R19-R29) as NEW modules composing the existing parameterized renderers; do NOT rewire extensions/statusline.ts (U5 does that) and do NOT modify existing src/{bar,segments,format,derive,throughput}.ts. Depends on U1, U2.\n\nFiles to create:\n- src/settings/resolve.ts: pure resolution over StatuslineSettings + a RuntimeSnapshot + ProviderCapability.\n  * resolveSegmentVisibility(settings, ctx) -> Record<SegmentId, boolean>: global segments ANDed with per-provider activeModel tri-state override ('on'/'off' win, 'default' inherits global), then applicability self-hide (effort hidden when model non-reasoning; session hidden when capability has no quota support; throughput hidden when no speed measurement; context hidden when contextUsage absent/null; time always shown). Never renders an inapplicable segment.\n  * resolveBarStyle(settings) -> BarStyle for renderBar (width/fill/empty/caps/percent from settings.bars).\n  * resolveOrder(settings) -> { segmentOrder, narrowPriority } (validated against SEGMENT_ORDER, falling back to defaults).\n  * composeFooterLine(settings, ctx, capability, width) -> string: builds Segment[] from resolved visibility + runtime labels (project/model/effort/context/session/throughput/time) and calls the existing composeSegments with the resolved separator and narrow priority — the single production path.\n- src/settings/preview.ts: renderPreview(settings, mode, width) -> string[] through composeFooterLine using immutable PREVIEW_FIXTURES snapshots for modes current/local/subscription/api/narrow; fixture preview is visibly labelled. Preview never starts network/git/session scans on render (pure).\n- test/settings-render.test.ts: tri-state active-model override (on/off/default); applicability self-hide (non-reasoning effort, no-quota session, no-throughput, null-context); bar style resolution; order validation/fallback; preview produces width-bounded lines for each mode; preview == composeFooterLine for identical snapshot/settings (parity); preview never mutates the fixture.",
+      "evidence": [
+        {
+          "closeEvidence": "Completed by coded inline work path"
+        }
+      ],
+      "id": "work-2.7",
+      "labels": [],
+      "notes": [
+        "wo:execution-slice; source: docs/plans/2026-07-31-001-feat-new-statusline-settings-ui-plan.md; plan unit U3 (depends on U1,U2). Covered reqs: R3,R8,R17,R19-R29. Additive only; no rewiring (U5).",
+        "wo:review-scope [\"src/settings/preview.ts\",\"src/settings/resolve.ts\",\"test/settings-render.test.ts\"]",
+        "wo:review FAIL {\"findings\":[\"src/settings/resolve.ts:end-of-file - acceptance requires the described exports but resolveBarStyle(settings) is missing; add `export function resolveBarStyle(settings: StatuslineSettings) { const b = settings.bars; return { width: b.width, fill: b.fill, empty: b.empty, capLeft: b.capLeft, capRight: b.capRight, showPercent: b.showPercent, style: b.style }; }` plus one assertion in test/settings-render.test.ts\",\"src/settings/preview.ts:19,44,73 - ContextUsage.percent is 0-100 in production (derive.ts:74 compares percent >= 90; format.ts:11 formatContextPercent does percent.toFixed(1)), but fixtures use fractions, so previews render \\\"0.6%/1.0M\\\", \\\"0.3%/200K\\\", \\\"0.4%/128K\\\"; change percent to 55, 30.2, 40\"]}",
+        "wo:mechanical-fix PASS {\"dispositions\":[{\"finding\":\"src/settings/resolve.ts:end-of-file - acceptance requires the described exports but resolveBarStyle(settings) is missing; add `export function resolveBarStyle(settings: StatuslineSettings) { const b = settings.bars; return { width: b.width, fill: b.fill, empty: b.empty, capLeft: b.capLeft, capRight: b.capRight, showPercent: b.showPercent, style: b.style }; }` plus one assertion in test/settings-render.test.ts\",\"fix\":\"preview.ts: ContextUsage.percent corrected to 0-100 (55/30.2/40) to match production (derive.ts contextSeverity uses percent>=90, formatContextPercent uses toFixed(1)); resolve.ts added resolveBarConfig(settings) exporting bounded bar config (width clamped >=2, chars defaulted) + test/settings-render.test.ts assertion; narrow fixture relabelled.\",\"evidence\":\"npm test 160 pass / 0 fail; npm run typecheck clean; probe renderPreview local=55.0%/1.0M, subscription=30.2%/200K 5h 23.0% wk 41.0% (matches AE1/AE2).\"},{\"finding\":\"src/settings/preview.ts:19,44,73 - ContextUsage.percent is 0-100 in production (derive.ts:74 compares percent >= 90; format.ts:11 formatContextPercent does percent.toFixed(1)), but fixtures use fractions, so previews render \\\"0.6%/1.0M\\\", \\\"0.3%/200K\\\", \\\"0.4%/128K\\\"; change percent to 55, 30.2, 40\",\"fix\":\"preview.ts: ContextUsage.percent corrected to 0-100 (55/30.2/40) to match production (derive.ts contextSeverity uses percent>=90, formatContextPercent uses toFixed(1)); resolve.ts added resolveBarConfig(settings) exporting bounded bar config (width clamped >=2, chars defaulted) + test/settings-render.test.ts assertion; narrow fixture relabelled.\",\"evidence\":\"npm test 160 pass / 0 fail; npm run typecheck clean; probe renderPreview local=55.0%/1.0M, subscription=30.2%/200K 5h 23.0% wk 41.0% (matches AE1/AE2).\"}]}",
+        "wo:verify-check PASS\nCommand: npm test && npm run typecheck\nOutput: reezing on the last one (0.149209ms)\n✔ classifies rates with directional baselines and an output floor (0.082231ms)\n✔ caps histories and resets displayed throughput on model changes (0.182746ms)\n✔ finalizes active time without preserving rates (0.119482ms)\n✔ retains idle result, resets on turn start, and accumulates active time (0.327993ms)\nℹ tests 160\nℹ suites 0\nℹ pass 160\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 599.708745\n\n> @shvax/pi-statusline@0.7.4 typecheck\n> tsc --noEmit"
+      ],
+      "parentId": "work-2",
+      "status": "closed",
+      "title": "Settings-driven resolver and preview",
+      "type": "task",
+      "updatedAt": "2026-07-31T18:23:10.561Z"
     }
   },
   "metadata": {
@@ -1462,7 +1488,7 @@
       "recordCount": 11,
       "sourceFingerprint": "716c6815dbadf79dc70c6d01af6a643e7bcf36809c4af4405175a0d2a56789f1"
     },
-    "updatedAt": "2026-07-31T18:16:39.685Z"
+    "updatedAt": "2026-07-31T18:23:10.562Z"
   },
   "schemaVersion": 1
 }
