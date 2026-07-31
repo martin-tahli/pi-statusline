@@ -41,16 +41,14 @@ export function migrateLegacySettings(legacy: unknown): Partial<StatuslineSettin
     if (!cleanId) continue;
     const providerConfig = createProviderConfig();
     providerConfig.enabled = enabled;
-    // Map metrics overrides to window/segment config
-    const overrides = merged.providerTracking.overrides[providerId];
-    if (overrides) {
-      // Default window config gets bar/percent/reset from metrics
-      const windowConfig = createWindowConfig();
-      windowConfig.showBar = overrides.usage ?? true;
-      windowConfig.showPercent = overrides.percent ?? true;
-      windowConfig.showReset = overrides.reset ?? true;
-      providerConfig.windows["default"] = windowConfig;
-    }
+    // Seed the default window from the shared metrics, overlaid with per-provider overrides, so the
+    // future per-window renderer preserves legacy shared toggles for providers without overrides.
+    const overrides = merged.providerTracking.overrides[cleanId] ?? {};
+    const windowConfig = createWindowConfig();
+    windowConfig.showBar = overrides.usage ?? merged.providerTracking.metrics.usage;
+    windowConfig.showPercent = overrides.percent ?? merged.providerTracking.metrics.percent;
+    windowConfig.showReset = overrides.reset ?? merged.providerTracking.metrics.reset;
+    providerConfig.windows["default"] = windowConfig;
     providers.records[cleanId] = providerConfig;
   }
 

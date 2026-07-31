@@ -1346,6 +1346,31 @@
       "type": "task",
       "updatedAt": "2026-07-31T17:28:28.502Z"
     },
+    "work-2.10": {
+      "acceptance": "- A migrated selected provider with no per-provider overrides gets windows.default seeded from the shared tracking.metrics (showBar/showPercent/showReset).\n- A provider WITH overrides still wins per-field (overlay, not replace); existing override assertions unchanged.\n- Disabled/unknown preserved providers remain unaffected.\n- npm run typecheck clean; npm test green including new assertion.",
+      "createdAt": "2026-07-31T18:37:30.627Z",
+      "dependencies": [],
+      "dependencyEdges": [],
+      "description": "Close the second migration-parity gap blocking a safe U5 render rewire. migrateLegacySettings currently seeds a provider's windows.default ONLY when it has per-provider overrides; providers relying on the shared tracking.metrics {usage,percent,reset} lose those toggles after migration. Fix: seed windows.default from the shared metrics for EVERY migrated selected provider, overlaying per-provider overrides on top. No schema change (the new per-window model is richer; migration populates the default window). Same class as the extras-parity fix.\n\nFiles:\n- src/settings/migrations.ts: in the selected-providers loop, always create windows.default; showBar=overrides.usage ?? shared.metrics.usage; showPercent=overrides.percent ?? shared.metrics.percent; showReset=overrides.reset ?? shared.metrics.reset.\n- test/settings-migrations.test.ts: assert a selected provider WITHOUT overrides now inherits the shared metrics (previously lost); existing override assertions still hold (overlay semantics).",
+      "evidence": [
+        {
+          "closeEvidence": "Completed by coded inline work path"
+        }
+      ],
+      "id": "work-2.10",
+      "labels": [],
+      "notes": [
+        "wo:execution-slice; closes second migration-parity gap blocking U5 render rewire. No schema change. Depends on U1 (work-2.5).",
+        "wo:review-scope [\"src/settings/migrations.ts\",\"test/settings-migrations.test.ts\"]",
+        "wo:review PASS - migrations.ts seeds windows.default from shared metrics for every selected provider with per-field ?? overlay; anthropic override assertions unchanged, openai-codex inherits usage:true/percent:false/reset:true; unknown order-only providers still window-less; tsc --noEmit clean, node --test test/settings-migrations.test.ts 7/7 pass",
+        "wo:verify-check PASS\nCommand: npm test && npm run typecheck\nOutput: freezing on the last one (0.191562ms)\n✔ classifies rates with directional baselines and an output floor (0.15882ms)\n✔ caps histories and resets displayed throughput on model changes (0.248973ms)\n✔ finalizes active time without preserving rates (0.168467ms)\n✔ retains idle result, resets on turn start, and accumulates active time (0.273842ms)\nℹ tests 173\nℹ suites 0\nℹ pass 173\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 571.882194\n\n> @shvax/pi-statusline@0.7.4 typecheck\n> tsc --noEmit"
+      ],
+      "parentId": "work-2",
+      "status": "closed",
+      "title": "Provider-metrics migration parity (shared usage/percent/reset)",
+      "type": "task",
+      "updatedAt": "2026-07-31T18:38:52.529Z"
+    },
     "work-2.2": {
       "acceptance": "",
       "createdAt": "2026-07-31T17:25:43.479Z",
@@ -1564,7 +1589,7 @@
       "recordCount": 11,
       "sourceFingerprint": "716c6815dbadf79dc70c6d01af6a643e7bcf36809c4af4405175a0d2a56789f1"
     },
-    "updatedAt": "2026-07-31T18:33:55.366Z"
+    "updatedAt": "2026-07-31T18:38:52.529Z"
   },
   "schemaVersion": 1
 }

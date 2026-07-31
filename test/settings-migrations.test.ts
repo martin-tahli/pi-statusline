@@ -56,6 +56,13 @@ test("migration: legacy footerEnabled+segments+extras+providerTracking maps to n
   assert.equal(anthropicWindow.showPercent, true); // percent: true
   assert.equal(anthropicWindow.showReset, true); // reset: true (default)
 
+  // A provider WITHOUT overrides inherits the shared metrics (parity: previously lost).
+  const codexWindow = migrated.providers?.records["openai-codex"].windows.default;
+  assert.ok(codexWindow, "non-overridden provider gets a seeded default window");
+  assert.equal(codexWindow?.showBar, true); // shared metrics.usage: true
+  assert.equal(codexWindow?.showPercent, false); // shared metrics.percent: false
+  assert.equal(codexWindow?.showReset, true); // shared metrics.reset: true
+
   // Layout
   assert.ok(migrated.layout);
   assert.equal(migrated.layout?.providerRows, "newline");
