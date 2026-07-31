@@ -24,8 +24,9 @@ export function migrateLegacySettings(legacy: unknown): Partial<StatuslineSettin
 
   const result: Partial<StatuslineSettings> = {};
 
-  // Global enabled: footerEnabled + providerTracking.enabled
-  result.enabled = merged.footerEnabled && merged.providerTracking.enabled;
+  // Global footer enabled is the legacy footerEnabled ONLY; provider tracking is a separate toggle
+  // (providers.enabled below), so footer-on + tracking-off keeps the footer on (parity).
+  result.enabled = merged.footerEnabled;
 
   // Provider settings
   const providers: StatuslineSettings["providers"] = {

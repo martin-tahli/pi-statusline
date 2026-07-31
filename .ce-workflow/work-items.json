@@ -1371,6 +1371,31 @@
       "type": "task",
       "updatedAt": "2026-07-31T18:38:52.529Z"
     },
+    "work-2.11": {
+      "acceptance": "Extension imports nothing from src/config.ts; settings typed StatuslineSettings; bare /statusline shows facade notice; on/off/toggle + render operate on new shape; npm test (173) green; npm run typecheck clean. config.ts-file removal deferred to a tracked follow-up.",
+      "createdAt": "2026-07-31T18:46:31.990Z",
+      "dependencies": [],
+      "dependencyEdges": [],
+      "description": "U5 extension composition-root refactor: the extension now sources settings exclusively from the new core (src/settings/*). src/config.ts is no longer imported by the extension (the file itself is retained only as a legacy-parse helper for migration; its removal is a tracked follow-up slice).\n\n- src/settings/runtime.ts (NEW): DEFAULT_STATUSLINE_CONFIG_PATH; loadRuntimeSettings(path) auto-migrates legacy (unversioned) docs then normalizes; reconcileProviders (new-shape, seeds a default window for newly-authenticated providers); configuredProviders (moved from config.ts); applyToggle (segments + extras + nerdFont<->icons.style, with aliases); formatStatusSummary.\n- extensions/statusline.ts: settings typed StatuslineSettings; read sites remapped (footerEnabled->enabled; extras.nerdFont->icons.style==='nerdfont'; providerTracking->providers records/windows with per-window showBar/showPercent/showReset); openProviderMenu REMOVED -> bare /statusline shows a deterministic unavailable-settings facade notice; on/off/toggle operate on the new shape; load/save via loadRuntimeSettings/saveStatuslineSettings. SettingsList/Container/SettingItem/getSettingsListTheme imports dropped.\n- src/settings/migrations.ts FIX: result.enabled = footerEnabled only (was && providerTracking.enabled, which conflated two independent toggles and broke footer-on/tracking-off).\n- test/statusline.test.ts: the interactive-menu test migrated (not deleted) to assert the facade notice (no custom UI opened, one deterministic notify). All other integration tests pass unchanged via legacy auto-migrate.\n\nDeferred to a follow-up slice: remove src/config.ts itself (move mergeSettings to src/settings/legacy.ts, migrate/remove test/config.test.ts, add runtime unit tests for configuredProviders/applyToggle/reconcileProviders).",
+      "evidence": [
+        {
+          "closeEvidence": "Completed by coded inline work path"
+        }
+      ],
+      "id": "work-2.11",
+      "labels": [],
+      "notes": [
+        "wo:execution-slice; plan unit U5. Depends on U1-U4 + work-2.9 (extras) + work-2.10 (provider-metrics parity). Migration enabled fix included.",
+        "wo:review-scope [\"extensions/statusline.ts\",\"src/settings/migrations.ts\",\"test/statusline.test.ts\",\"src/settings/runtime.ts\"]",
+        "wo:review PASS - extension imports only src/settings/* (zero leftover config.ts symbols); enabled/icons.style/providers.records+windows[\"default\"] rewire correct; migrations enabled=footerEnabled only (footer-on/tracking-off parity, providers.enabled carries tracking); facade notice asserted by migrated test; npm test 173 pass / 0 fail reproduced",
+        "wo:verify-check PASS\nCommand: npm test && npm run typecheck\nOutput:  freezing on the last one (0.240963ms)\n✔ classifies rates with directional baselines and an output floor (0.186033ms)\n✔ caps histories and resets displayed throughput on model changes (0.297139ms)\n✔ finalizes active time without preserving rates (0.2105ms)\n✔ retains idle result, resets on turn start, and accumulates active time (0.339591ms)\nℹ tests 173\nℹ suites 0\nℹ pass 173\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 630.560018\n\n> @shvax/pi-statusline@0.7.4 typecheck\n> tsc --noEmit"
+      ],
+      "parentId": "work-2",
+      "status": "closed",
+      "title": "U5: extension composition-root refactor (new settings core)",
+      "type": "task",
+      "updatedAt": "2026-07-31T18:48:01.378Z"
+    },
     "work-2.2": {
       "acceptance": "",
       "createdAt": "2026-07-31T17:25:43.479Z",
@@ -1589,7 +1614,7 @@
       "recordCount": 11,
       "sourceFingerprint": "716c6815dbadf79dc70c6d01af6a643e7bcf36809c4af4405175a0d2a56789f1"
     },
-    "updatedAt": "2026-07-31T18:38:52.529Z"
+    "updatedAt": "2026-07-31T18:48:01.378Z"
   },
   "schemaVersion": 1
 }

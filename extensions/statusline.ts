@@ -1,18 +1,7 @@
 import type { AssistantMessage } from "@earendil-works/pi-ai";
-import { getSettingsListTheme, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { Container, type SettingItem, SettingsList, truncateToWidth } from "@earendil-works/pi-tui";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { truncateToWidth } from "@earendil-works/pi-tui";
 import { renderBar, type BarStyle } from "../src/bar.ts";
-import {
-  DEFAULT_CONFIG_PATH,
-  PROVIDER_METRICS,
-  configuredProviders,
-  formatSettings,
-  loadSettings,
-  reconcileProviderTracking,
-  saveSettings,
-  toggleSetting,
-  type Settings,
-} from "../src/config.ts";
 import { billingMode, contextSeverity, deriveContext, deriveEffort, deriveModel, deriveProject, isLocalEndpoint } from "../src/derive.ts";
 import { formatRate, formatResetCountdown, formatTime, formatWindow } from "../src/format.ts";
 import { gitBranchSymbol, gitStatusTokens, parseGitStatus, type GitStatusState, type GitTokenKind } from "../src/git.ts";
@@ -21,6 +10,16 @@ import { ProviderUsageCache } from "../src/provider-cache.ts";
 import { ProviderRefreshCoordinator, type ProviderAdapter } from "../src/providers.ts";
 import { composeSegments, createSegments } from "../src/segments.ts";
 import { estimateTokens, sumTextLength, TurnMeter } from "../src/throughput.ts";
+import {
+  DEFAULT_STATUSLINE_CONFIG_PATH,
+  applyToggle,
+  configuredProviders,
+  formatStatusSummary,
+  loadRuntimeSettings,
+  reconcileProviders,
+} from "../src/settings/runtime.ts";
+import { saveStatuslineSettings } from "../src/settings/storage.ts";
+import type { StatuslineSettings } from "../src/settings/schema.ts";
 
 const GIT_ROLES: Record<GitTokenKind, "accent" | "success" | "warning" | "error"> = {
   ahead: "accent",
@@ -30,8 +29,8 @@ const GIT_ROLES: Record<GitTokenKind, "accent" | "success" | "warning" | "error"
   error: "error",
 };
 
-export default function statusline(pi: ExtensionAPI, providerUsageCache = new ProviderUsageCache(), settingsPath = DEFAULT_CONFIG_PATH) {
-  let settings = loadSettings(settingsPath);
+export default function statusline(pi: ExtensionAPI, providerUsageCache = new ProviderUsageCache(), settingsPath = DEFAULT_STATUSLINE_CONFIG_PATH) {
+  let settings: StatuslineSettings = loadRuntimeSettings(settingsPath);
   let meter = new TurnMeter();
   let limits: RateLimits = [];
   let gitStatus: GitStatusState | undefined;
@@ -83,7 +82,7 @@ export default function statusline(pi: ExtensionAPI, providerUsageCache = new Pr
     tick.unref?.();
   };
   const syncTick = () => {
-    const shouldTick = sessionActive && settings.footerEnabled
+    const shouldTick = sessionActive && settings.enabled
       && ((turnActive && (settings.segments.time || settings.segments.throughput)) || (settings.segments.session && hasUpcomingReset()));
     if (shouldTick && !tick) startTick();
     else if (!shouldTick && tick) stopTick();
@@ -111,7 +110,7 @@ export default function statusline(pi: ExtensionAPI, providerUsageCache = new Pr
     gitTick = undefined;
   };
   const syncGitTick = (ctx: ExtensionContext, epoch = sessionEpoch) => {
-    const shouldTick = isCurrentSession(epoch) && settings.footerEnabled && settings.extras.branch;
+    const shouldTick = isCurrentSession(epoch) && settings.enabled && settings.extras.branch;
     if (shouldTick && !gitTick) {
       gitTick = setInterval(() => void refreshGit(ctx, epoch), 10_000);
       gitTick.unref?.();
@@ -297,7 +296,7 @@ export default function statusline(pi: ExtensionAPI, providerUsageCache = new Pr
           const context = deriveContext(ctx.getContextUsage());
           const snapshot = meter.snapshot();
           const branch = settings.extras.branch ? footerData.getGitBranch() : undefined;
-          const branchSymbol = gitBranchSymbol(settings.extras.nerdFont);
+          const branchSymbol = gitBranchSymbol(settings.icons.style === "nerdfont");
           const git = branch
             ? [
               theme.fg("accent", `${branchSymbol ? `${branchSymbol} ` : ""}${branch}`),
@@ -354,21 +353,25 @@ export default function statusline(pi: ExtensionAPI, providerUsageCache = new Pr
               : theme.fg("dim", ` ↻ ${formatResetCountdown(limit.resetAt)}`);
             return `${theme.fg("muted", `${limit.label} `)}${renderBar(limit.used, 12, barStyle(limit.used))}${reset}`;
           };
-          const tracking = settings.providerTracking;
-          const providerRows = !tracking.enabled ? [] : tracking.order.flatMap((provider) => {
-            if (!tracking.selected[provider]) return [];
+          const providerSettings = settings.providers;
+          const providerRows = !providerSettings.enabled ? [] : providerSettings.order.flatMap((provider) => {
+            const record = providerSettings.records[provider];
+            if (!record?.enabled) return [];
             const health = providerRefresh?.get(provider);
-            const metrics = { ...tracking.metrics, ...tracking.overrides[provider] };
+            const window = record.windows["default"];
+            const showBar = window?.showBar ?? true;
+            const showPercent = window?.showPercent ?? true;
+            const showReset = window?.showReset ?? true;
             if (health?.state !== "fresh") {
               const registry = ctx.modelRegistry as unknown as { getAvailable?: () => Array<{ provider: string }> };
               const model = provider === "anthropic" && registry.getAvailable ? findAvailableModel(ctx, provider) : undefined;
-              return provider === "anthropic" && model && ctx.modelRegistry.isUsingOAuth(model) && (metrics.usage || metrics.reset)
+              return provider === "anthropic" && model && ctx.modelRegistry.isUsingOAuth(model) && (showBar || showReset)
                 ? [{ provider, line: theme.fg("muted", "anthropic 5h — wk —") }]
                 : [];
             }
             const windows = health.usage.limits.flatMap((limit) => {
-              const usage = metrics.usage ? renderBar(limit.used, 12, barStyle(limit.used), undefined, metrics.percent) : "";
-              const reset = metrics.reset && limit.resetAt !== undefined
+              const usage = showBar ? renderBar(limit.used, 12, barStyle(limit.used), undefined, showPercent) : "";
+              const reset = showReset && limit.resetAt !== undefined
                 ? theme.fg("dim", ` ↻ ${formatResetCountdown(limit.resetAt)}`)
                 : "";
               return usage || reset ? [`${theme.fg("muted", `${limit.label} `)}${usage}${reset}`] : [];
@@ -401,70 +404,14 @@ export default function statusline(pi: ExtensionAPI, providerUsageCache = new Pr
     syncTick();
   };
 
-  const persist = () => saveSettings(settings, settingsPath);
+  const persist = () => saveStatuslineSettings(settings, settingsPath);
   const availableProviders = (ctx: ExtensionContext) => {
     const registry = ctx.modelRegistry as unknown as { getAvailable?: () => Array<{ provider: string }> } | undefined;
     return registry?.getAvailable ? configuredProviders(registry as { getAvailable(): Array<{ provider: string }> }) : [];
   };
 
-  const openProviderMenu = async (ctx: ExtensionContext) => {
-    const providers = availableProviders(ctx);
-    const base = providers.length ? reconcileProviderTracking(settings, ctx.modelRegistry) : settings;
-    // Deep clone so cancel or a failing save leaves the live `settings` object untouched.
-    const draft: Settings = { ...base, providerTracking: structuredClone(base.providerTracking) };
-    let accepted = false;
-    await ctx.ui.custom((tui, theme, _kb, done) => {
-      const tracking = draft.providerTracking;
-      const items: SettingItem[] = [
-        { id: "enabled", label: "Provider stack", currentValue: tracking.enabled ? "on" : "off", values: ["on", "off"] },
-        ...PROVIDER_METRICS.map((metric) => (
-          { id: metric, label: `Shared ${metric}`, currentValue: tracking.metrics[metric] ? "on" : "off", values: ["on", "off"] }
-        )),
-        ...providers.flatMap((provider) => {
-          const override = tracking.overrides[provider] ?? {};
-          const health = providerRefresh?.get(provider);
-          return [
-            { id: `selected:${provider}`, label: provider, description: health?.state === "hidden" ? health.reason : "usage is fresh", currentValue: tracking.selected[provider] ? "selected" : "hidden", values: ["selected", "hidden"] },
-            ...PROVIDER_METRICS.map((metric) => (
-              { id: `${metric}:${provider}`, label: `${provider} ${metric}`, currentValue: override[metric] === undefined ? "inherit" : override[metric] ? "on" : "off", values: ["inherit", "on", "off"] }
-            )),
-            { id: `order:${provider}`, label: `${provider} order`, currentValue: String(tracking.order.indexOf(provider) + 1), values: ["move up", "move down"] },
-          ];
-        }),
-        { id: "save", label: "Confirm", currentValue: "save changes", values: ["save changes"] },
-      ];
-      const list = new SettingsList(items, 14, getSettingsListTheme(), (id, value) => {
-        if (id === "save") { accepted = true; done(undefined); return; }
-        if (id === "enabled") tracking.enabled = value === "on";
-        else if ((PROVIDER_METRICS as readonly string[]).includes(id)) tracking.metrics[id as typeof PROVIDER_METRICS[number]] = value === "on";
-        else {
-          const [kind, provider] = id.split(":");
-          if (!provider) return;
-          if (kind === "selected") tracking.selected[provider] = value === "selected";
-          if (kind === "order") {
-            const index = tracking.order.indexOf(provider), target = value === "move up" ? index - 1 : index + 1;
-            if (index >= 0 && target >= 0 && target < tracking.order.length) [tracking.order[index], tracking.order[target]] = [tracking.order[target]!, tracking.order[index]!];
-          }
-          if ((PROVIDER_METRICS as readonly string[]).includes(kind)) {
-            const metric = kind as typeof PROVIDER_METRICS[number];
-            const next = { ...(tracking.overrides[provider] ?? {}) };
-            if (value === "inherit") delete next[metric]; else next[metric] = value === "on";
-            if (Object.keys(next).length) tracking.overrides[provider] = next; else delete tracking.overrides[provider];
-          }
-        }
-      }, () => done(undefined));
-      const container = new Container();
-      container.addChild({ render: () => [theme.fg("accent", theme.bold("Provider tracking")), ""], invalidate() {} });
-      container.addChild(list);
-      return { render: (width) => container.render(width), invalidate: () => container.invalidate(), handleInput: (data) => { list.handleInput?.(data); tui.requestRender(); } };
-    });
-    if (!accepted) return;
-    try { saveSettings(draft, settingsPath); settings = draft; ctx.ui.notify("Provider tracking saved", "info"); requestRender?.(); }
-    catch { ctx.ui.notify("Could not save provider tracking", "error"); }
-  };
-
   pi.registerCommand("statusline", {
-    description: "List or toggle statusline segments",
+    description: "Toggle statusline segments, or enable/disable the footer",
     getArgumentCompletions: (prefix) => {
       const choices = ["on", "off", "toggle project", "toggle model", "toggle effort", "toggle context", "toggle session", "toggle throughput", "toggle time", "toggle branch", "toggle nerdFont", "toggle cost", "toggle sessionElapsed", "toggle lastTurn", "toggle pending"];
       const matches = choices.filter((value) => value.startsWith(prefix)).map((value) => ({ value, label: value }));
@@ -473,30 +420,30 @@ export default function statusline(pi: ExtensionAPI, providerUsageCache = new Pr
     handler: async (args, ctx) => {
       const [action, rawName] = args.trim().split(/\s+/);
       if (!action) {
-        await openProviderMenu(ctx);
+        // Temporary deterministic facade: the interactive settings app lands in a later unit.
+        ctx.ui.notify("Statusline settings: use /statusline on|off or /statusline toggle <segment>. The interactive settings app is coming soon.", "info");
         return;
       }
       if (action === "on" || action === "off") {
-        settings = { ...settings, footerEnabled: action === "on" };
+        settings = { ...settings, enabled: action === "on" };
         persist();
-        if (settings.footerEnabled) installFooter(ctx);
+        if (settings.enabled) installFooter(ctx);
         else ctx.ui.setFooter(undefined);
-        ctx.ui.notify(settings.footerEnabled ? "Statusline enabled" : "Default footer restored", "info");
+        ctx.ui.notify(settings.enabled ? "Statusline enabled" : "Default footer restored", "info");
         return;
       }
       if (action !== "toggle" || !rawName) {
         ctx.ui.notify("Usage: /statusline [on|off|toggle <segment>]", "warning");
         return;
       }
-      const aliases: Record<string, string> = { "session-bars": "session", elapsed: "sessionElapsed", "last-turn": "lastTurn" };
       try {
-        settings = toggleSetting(settings, aliases[rawName] ?? rawName);
+        settings = applyToggle(settings, rawName);
         persist();
         syncTick();
         syncGitTick(ctx);
         await refreshGit(ctx);
         requestRender?.();
-        ctx.ui.notify(formatSettings(settings), "info");
+        ctx.ui.notify(formatStatusSummary(settings), "info");
       } catch (error) {
         ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
       }
@@ -509,8 +456,8 @@ export default function statusline(pi: ExtensionAPI, providerUsageCache = new Pr
     turnActive = false;
     stopTick();
     stopAnthropicRetry();
-    settings = loadSettings(settingsPath);
-    if (availableProviders(ctx).length) settings = reconcileProviderTracking(settings, ctx.modelRegistry);
+    settings = loadRuntimeSettings(settingsPath);
+    if (availableProviders(ctx).length) settings = reconcileProviders(settings, ctx.modelRegistry);
     meter = new TurnMeter();
     limits = isAnthropicOAuth(ctx) ? restoreAnthropicLimits(ctx) : [];
     if (!limits.length) limits = providerUsageCache.getFresh(ctx.model?.provider ?? "")?.limits ?? [];
@@ -518,7 +465,7 @@ export default function statusline(pi: ExtensionAPI, providerUsageCache = new Pr
     const providers = availableProviders(ctx);
     // Saved providers may not be available in this process yet. Keep their last fresh cross-session
     // snapshot visible while a session that can authenticate them refreshes it.
-    const trackedProviders = Array.from(new Set([...providers, ...settings.providerTracking.order]));
+    const trackedProviders = Array.from(new Set([...providers, ...settings.providers.order]));
     const adapters = new Map<string, ProviderAdapter>();
     if (providers.includes("anthropic")) adapters.set("anthropic", { refresh: () => refreshProviderUsage("anthropic", () => fetchAnthropicUsage(ctx, findAvailableModel(ctx, "anthropic"))) });
     if (providers.includes("openai-codex")) adapters.set("openai-codex", { refresh: () => refreshProviderUsage("openai-codex", () => fetchCodexUsage(ctx, findAvailableModel(ctx, "openai-codex"))) });
@@ -537,7 +484,7 @@ export default function statusline(pi: ExtensionAPI, providerUsageCache = new Pr
       const cached = providerUsageCache.getFresh(provider);
       if (cached) providerRefresh.prime(provider, cached, cached.updatedAt);
     }
-    if (settings.footerEnabled) installFooter(ctx, epoch);
+    if (settings.enabled) installFooter(ctx, epoch);
     providerRefresh.start(trackedProviders);
     if (!providers.includes(ctx.model?.provider ?? "")) {
       void refreshAnthropicLimits(ctx, epoch).then((next) => { if (!next.length) scheduleAnthropicRetry(ctx, 0, epoch); });

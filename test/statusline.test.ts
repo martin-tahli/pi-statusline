@@ -566,7 +566,7 @@ test("keeps active quota on the session line when provider tracking is disabled"
   }
 });
 
-test("bare /statusline opens the interactive provider menu and lets Escape discard unsaved toggles", async () => {
+test("bare /statusline shows the unavailable-settings facade notice (interactive app pending)", async () => {
   const handlers = new Map<string, (...args: any[]) => unknown>();
   let commandHandler: ((args: string, ctx: any) => Promise<void>) | undefined;
   const notifications: Array<[string, string]> = [];
@@ -591,24 +591,7 @@ test("bare /statusline opens the interactive provider menu and lets Escape disca
     ui: {
       setFooter: () => {},
       notify: (message: string, level: string) => notifications.push([message, level]),
-      custom: (factory: any) => new Promise((resolve) => {
-        customOpened = true;
-        const component = factory(
-          { requestRender: () => {} },
-          { fg: (_: string, text: string) => text, bold: (text: string) => text, getColorMode: () => "16" },
-          {},
-          resolve,
-        );
-        // Down x4 reaches the first provider's "selected" row (enabled, usage, percent, reset, then per-provider rows).
-        component.handleInput("\x1b[B");
-        component.handleInput("\x1b[B");
-        component.handleInput("\x1b[B");
-        component.handleInput("\x1b[B");
-        component.handleInput(" "); // toggle anthropic from selected -> hidden
-        const rendered = component.render(80).join("\n");
-        assert.ok(rendered.includes("anthropic") && rendered.includes("hidden"), `expected a togglable anthropic row, got: ${rendered}`);
-        component.handleInput("\x1b"); // Escape cancels
-      }),
+      custom: () => { customOpened = true; return Promise.resolve(); },
     },
   } as never;
 
@@ -617,8 +600,9 @@ test("bare /statusline opens the interactive provider menu and lets Escape disca
   assert.ok(commandHandler, "expected /statusline to register a handler");
   await commandHandler!("", ctx);
 
-  assert.ok(customOpened, "bare /statusline must open the interactive menu, not just print settings");
-  assert.equal(notifications.length, 0, "Escape must cancel without notifying or persisting");
+  assert.equal(customOpened, false, "bare /statusline must NOT open an interactive menu yet (facade until the app lands)");
+  assert.equal(notifications.length, 1, "bare /statusline must show the deterministic facade notice");
+  assert.match(notifications[0]![0], /coming soon|on\|off|toggle/i, `facade notice must explain current usage, got: ${notifications[0]![0]}`);
 });
 
 test("tracks every selected provider's usage simultaneously, not just the active model's", async () => {
