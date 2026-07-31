@@ -43,36 +43,29 @@ At full width, segments render in the order below. When that line no longer fits
 
 The Git HUD defaults on inside repositories: `main ✓`. It shows `↓` incoming/behind and `↑` outgoing/ahead counts; `✓` means neither is pending. Local working-tree changes are intentionally ignored. Colors use the active theme's accent, success, warning, and error roles.
 
-`nerdFont` defaults off, so the branch name has no leading icon; toggle it on for the `` Nerd Font icon. Other optional extras default off: `cost` (appends session `$cost` to the model segment), `sessionElapsed`, `lastTurn`, and `pending`.
+Icons default to the **emoji** style. The **Emojis** section of `/statusline` switches the whole line to Nerd Font, Unicode, ASCII, minimal, or none (ASCII and none are the safe fallbacks for terminals without glyph or truecolor support), and overrides individual symbol or provider icons. Optional extras default off: `cost` (appends session `$cost` to the model segment), `sessionElapsed`, `lastTurn`, and `pending` — all toggleable in the **Separators** section.
 
 ## Configure
 
-```text
-/statusline                         open provider tracking settings
-/statusline on                      enable the custom footer
-/statusline off                     restore pi's built-in footer
-/statusline toggle throughput       toggle a segment
-/statusline toggle branch           toggle the Git HUD
-/statusline toggle nerdFont         toggle the Nerd Font branch icon
-/statusline toggle sessionElapsed   show wall time in the time segment
-/statusline toggle lastTurn         show the latest turn duration
-```
+Run `/statusline` to open the keyboard-driven settings app. It needs the interactive terminal UI: in TUI mode it opens the app, and any non-empty argument gets a deterministic "no arguments" notice; in RPC/JSON/print mode it reports that settings require the interactive terminal UI instead of silently doing nothing. The legacy `on`/`off`/`toggle <segment>` argument shortcuts have been removed — every control now lives in the app.
 
-Settings persist in `~/.pi/agent/statusline.json`.
+The app has three sections:
+
+| Section | Controls |
+|---|---|
+| **Providers** | Master footer on/off; select, reorder, and configure each provider — display mode, active-model override, per-window bar/percent/reset, missing-data policy, and refresh/cache. |
+| **Separators** | Segment visibility and extras (Git HUD, cost, elapsed/last-turn time, pending); segment order and narrow-drop priority; provider-row layout/placement/width; separators, spacing, padding, and presets; bar characters/width/thresholds; context warning/critical thresholds; footer refresh interval and cache age. |
+| **Emojis** | Global icon style (emoji / unicode / ascii / nerd font / minimal / none) and per-symbol/per-provider icons. |
+
+The app opens a draft cloned from your live settings, renders a live preview through the real footer renderer, and writes only on **Save**. Saving is persist-first: the file is written before the live settings are swapped, so a failed write changes nothing. **Escape** on a dirty draft offers Save / Discard / Cancel; a clean draft closes immediately. Section and full resets restore defaults in the draft without touching the saved file until you save.
+
+Settings persist as a versioned document in `~/.pi/agent/statusline.json`. An unversioned document from an earlier release is migrated once into the new shape on first load and becomes durable only on your next save. A document from a newer schema version than this extension supports opens read-only and is never overwritten. Provider refresh runs no faster than once every 10 seconds per provider (the settings preview itself performs no I/O, but the background coordinator keeps running and an eligible provider can be refreshed on demand); a shared cross-process cache (`~/.pi/agent/statusline/provider-usage/`) retains the last result for up to 5 minutes so a new session renders immediately and only one process fetches each provider.
 
 ## Provider tracking
 
-The bare `/statusline` command opens an interactive menu, not a print-only summary—every row is a live control you change with Space/Enter and persist with **Confirm** (Escape discards). It has three kinds of rows:
+Configure providers in the **Providers** section of `/statusline`. It lists every provider returned by pi's configured `getAvailable()` models — whatever you're authenticated with, not a fixed list — and selects newly authenticated providers automatically while keeping your saved selection, order, and overrides.
 
-| Row | Meaning |
-|---|---|
-| `Provider stack` | Master on/off for every row below. Off restores the plain active-session line only. |
-| `Shared usage` / `Shared percent` / `Shared reset` | Defaults every provider inherits unless it has its own override: `usage` is the bar itself, `percent` is the trailing `NN%` number, `reset` is the `↻` countdown. Turn any of the three off to drop it from every row that inherits it. |
-| `<provider>` | Whether that provider is `selected` (shown) or `hidden`. Its description line shows why it has no row when hidden: no fresh data yet, unauthorized, or (for providers pi has no usage source for) a specific reason. |
-| `<provider> usage` / `<provider> percent` / `<provider> reset` | Per-provider override for that field: `inherit` (use the shared default), `on`, or `off`. |
-| `<provider> order` | Move that provider's row up/down among the other selected providers. |
-
-The provider stack includes every provider returned by pi's configured `getAvailable()` models (whatever you're authenticated with), not a fixed list—selects newly authenticated providers automatically and keeps your saved selection, order, and overrides.
+For each provider you can toggle it on or off (its configuration is retained when turned back on), reorder it among the other selected providers, and override each usage window's bar, percent, and reset independently (`inherit` the shared default, `on`, or `off`). A provider with no adapter, or one that is unauthorized, stays listed but shows a sanitized reason instead of a row — never a raw error, token, or credential.
 
 Fresh selected providers render in that saved order beneath the active-session line, **simultaneously and independently of which model is currently active**—selecting both Anthropic and Codex shows both rows at once even while you're talking to a third provider. Every pi process shares fresh quotas through `~/.pi/agent/statusline/provider-usage/`, so a new session renders the last result immediately and only one process fetches each provider every 10 seconds. A row is hidden when both enabled metrics are unavailable, or when its usage is missing, unauthorized, expired, or stale. The active provider's quota stays on its own row while visible and falls back to the plain session line otherwise, so it's never shown twice.
 
@@ -89,7 +82,7 @@ Fresh selected providers render in that saved order beneath the active-session l
 
 Anthropic OAuth fetches its current `5h` and `wk` limits when the session starts, then updates them from response headers, and again in the background for provider tracking. Codex fetches its current account limits and shows only the windows returned by the account, labeled by duration. Reset countdowns appear for every Claude or Codex window that reports a reset time; absent data is omitted rather than rendered as `—`.
 
-Any other provider you've authenticated (OpenRouter, custom endpoints, …) still appears in the provider-tracking menu, but has no adapter yet—pi-statusline only ever uses pi's own stored credentials for that provider. Concretely: OpenRouter's only usage endpoint (`/api/v1/credits`) explicitly rejects the regular inference key pi stores and requires a separate management key pi doesn't manage, so it shows that reason in the menu instead of a row.
+Any other provider you've authenticated (OpenRouter, custom endpoints, …) still appears in the Providers list, but has no adapter yet—pi-statusline only ever uses pi's own stored credentials for that provider. Concretely: OpenRouter's only usage endpoint (`/api/v1/credits`) explicitly rejects the regular inference key pi stores and requires a separate management key pi doesn't manage, so it shows that sanitized reason instead of a row.
 
 GLM (Z.AI) is the one exception to "documented endpoint only": it uses `GET https://api.z.ai/api/monitor/usage/quota/limit`, which Z.AI has not published in its own API docs—only known from a third-party reverse-engineered tool. It works with pi's stored GLM key and reports the same `5h`/`wk` credit windows Z.AI documents for the Coding Plan (docs.z.ai/devpack/teamplan), but which of the two returned windows is which isn't labeled by the API either; pi-statusline infers it from reset-countdown behavior (see `parseZaiUsage` in `src/ratelimit.ts`) and hides the row entirely rather than guess if the response shape changes. Treat the GLM row as best-effort: Z.AI can change or remove this endpoint without notice.
 

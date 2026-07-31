@@ -1684,6 +1684,32 @@
       "type": "task",
       "updatedAt": "2026-07-31T21:52:13.785Z"
     },
+    "work-2.22": {
+      "acceptance": "1. README documents bare /statusline opening the three-section app; legacy on/off/toggle arguments are gone and not documented. 2. README documents versioned settings + migration + future-version read-only; 10s refresh floor and 5min cache. 3. README documents provider select/reorder/per-window overrides and sanitized unavailable reasons (no raw error/token/credential). 4. README documents icon styles incl ASCII/none fallbacks. 5. No obsolete argument/menu claims remain (grep clean); npm run typecheck clean.",
+      "createdAt": "2026-07-31T21:55:46.110Z",
+      "dependencies": [],
+      "dependencyEdges": [],
+      "description": "Close plan unit U13 (R30): replace obsolete Configure/provider-menu documentation in README.md with the shipped three-section settings UI (Providers/Separators/Emojis), UI-only /statusline command behavior, versioned settings schema + one-way migration + future-version read-only, dynamic provider list and per-window overrides, display modes, adapter reliability, 10s/5min refresh/cache policy, privacy/sanitization (no raw errors/tokens/credentials), and terminal icon fallbacks (ASCII/none). Renderer examples and applicability matrix kept where still accurate.",
+      "evidence": [
+        {
+          "closeEvidence": "Completed by coded inline work path"
+        }
+      ],
+      "id": "work-2.22",
+      "labels": [],
+      "notes": [
+        "wo:execution-slice; source: docs/plans/2026-07-31-001-feat-new-statusline-settings-ui-plan.md; covered plan unit: U13 (R30). Final unit of the work-2 roadmap.",
+        "wo:review-scope [\"README.md\"]",
+        "wo:review FAIL {\"findings\":[\"README.md:62 - Remove the claim that provider refresh never runs while the UI is open (or replace with the real policy: refresh keeps running on the 10s timer and the UI can trigger a manual per-provider refresh). Code: ProviderRefreshCoordinator.start() interval in src/providers.ts:50-55 is only stopped on session_start/session_end (extensions/statusline.ts:543,574), never by openSettingsApp, and routeSettingsKey emits a refresh-provider effect while the app is open (extensions/statusline.ts:~500).\"]}",
+        "wo:mechanical-fix PASS {\"dispositions\":[{\"finding\":\"README.md:62 - Remove the claim that provider refresh never runs while the UI is open (or replace with the real policy: refresh keeps running on the 10s timer and the UI can trigger a manual per-provider refresh). Code: ProviderRefreshCoordinator.start() interval in src/providers.ts:50-55 is only stopped on session_start/session_end (extensions/statusline.ts:543,574), never by openSettingsApp, and routeSettingsKey emits a refresh-provider effect while the app is open (extensions/statusline.ts:~500).\",\"fix\":\"README.md: replaced the false \\\"never while the UI is open\\\" clause with the real policy — refresh runs no faster than every 10s per provider, the settings preview itself performs no I/O, but the background coordinator keeps running and an eligible provider can be refreshed on demand.\",\"evidence\":\"grep README.md for \\\"never while the UI is open\\\" -> no match; npm run typecheck clean; corrected sentence matches ProviderRefreshCoordinator (src/providers.ts:50-55) and the refresh-provider effect.\"}]}",
+        "wo:verify-check PASS\nCommand: npm test && npm run typecheck\nOutput: reezing on the last one (0.139432ms)\n✔ classifies rates with directional baselines and an output floor (0.133869ms)\n✔ caps histories and resets displayed throughput on model changes (0.169515ms)\n✔ finalizes active time without preserving rates (0.122434ms)\n✔ retains idle result, resets on turn start, and accumulates active time (0.190529ms)\nℹ tests 206\nℹ suites 0\nℹ pass 206\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 711.813798\n\n> @shvax/pi-statusline@0.7.4 typecheck\n> tsc --noEmit"
+      ],
+      "parentId": "work-2",
+      "status": "closed",
+      "title": "U13: documentation (README reflects the settings UI and shipped behavior)",
+      "type": "task",
+      "updatedAt": "2026-07-31T21:58:14.823Z"
+    },
     "work-2.3": {
       "acceptance": "SHORT ACC",
       "createdAt": "2026-07-31T17:27:36.848Z",
@@ -1883,7 +1909,7 @@
       "recordCount": 11,
       "sourceFingerprint": "716c6815dbadf79dc70c6d01af6a643e7bcf36809c4af4405175a0d2a56789f1"
     },
-    "updatedAt": "2026-07-31T21:52:13.785Z"
+    "updatedAt": "2026-07-31T21:58:14.823Z"
   },
   "schemaVersion": 1
 }
