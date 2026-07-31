@@ -1352,6 +1352,10 @@
       "dependencies": [],
       "dependencyEdges": [],
       "description": "",
+      "displayMetadata": {
+        "schemaVersion": 1,
+        "title": "Versioned settings core and migration"
+      },
       "evidence": [],
       "id": "work-2.2",
       "labels": [],
@@ -1371,6 +1375,10 @@
       "dependencies": [],
       "dependencyEdges": [],
       "description": "SHORT INLINE DESC",
+      "displayMetadata": {
+        "schemaVersion": 1,
+        "title": "TESTSLICE"
+      },
       "evidence": [],
       "id": "work-2.3",
       "labels": [],
@@ -1389,6 +1397,10 @@
       "dependencies": [],
       "dependencyEdges": [],
       "description": "Establish the new versioned settings core that the rest of the settings UI refactor builds on, WITHOUT yet removing src/config.ts (kept as a temporary compatibility facade until U5 migrates its consumers). Add src/settings/ modules: schema.ts, defaults.ts, validation.ts, migrations.ts, storage.ts, state.ts plus focused tests.\n\nScope (plan U1, reqs R4, R5, R7-R10, R25-R26):\n- schema.ts: versioned StatuslineSettings shape (version, enabled, providers{enabled,order,defaults,Record<string,ProviderConfiguration>}, layout, separators, segments, bars, thresholds, timing, icons, preview). providers and dynamic windows use stable Record<string,...> keyed by string, never fixed provider unions or array-index window positions. ProviderConfiguration + WindowConfiguration enums/types.\n- defaults.ts: global defaults reproducing current behavior where meaningful (footer enabled; project/model/effort/context/session/throughput/time order; compact narrow priority time,throughput,project,effort,model,session retaining context; rounded width-12 bars; new-line provider rows; 80/95 thresholds; 10s refresh min/default; 5min cache max; Emoji default icon style).\n- validation.ts: one safe parser/normalizer. Validates/normalizes/bounds, falls back to new defaults for invalid docs. Rejects unsafe control/ANSI/newline/bidi input and unsafe external display strings. Preserves recognized unknown provider records and practical unknown/future fields semantically via an opaque unknown bag. Unsupported future schema version -> read-only (never normalized/saved/overwritten).\n- migrations.ts: one-time migration from current unversioned ~/.pi/agent/statusline.json (footerEnabled, segment toggles, extras, providerTracking selection/order/metrics/overrides) into new groups. Never copies secrets, no fake adapter, preserves unknown legacy provider keys as disabled/stored. Migration becomes durable only on explicit successful save. Refresh <10s normalizes to 10s; max-age finite and >= interval.\n- storage.ts: validate/normalize first, write uniquely-named sibling temp file, atomic rename, clean temp failures, only then expose success. Injected ops for failure tests. Original/runtime untouched on write/rename failure.\n- state.ts: deep-clone draft isolation (structuredClone), selected/provider/section/all reset operate on draft only, no runtime/draft aliasing.",
+      "displayMetadata": {
+        "schemaVersion": 1,
+        "title": "Probe $(cat)"
+      },
       "evidence": [],
       "id": "work-2.4",
       "labels": [],
@@ -1407,6 +1419,10 @@
       "dependencies": [],
       "dependencyEdges": [],
       "description": "Establish the new versioned settings core that the rest of the settings UI refactor builds on, WITHOUT yet removing src/config.ts (kept as a temporary compatibility facade until U5 migrates its consumers). Add src/settings/ modules: schema.ts, defaults.ts, validation.ts, migrations.ts, storage.ts, state.ts plus focused tests.\n\nScope (plan U1, reqs R4, R5, R7-R10, R25-R26):\n- schema.ts: versioned StatuslineSettings shape (version, enabled, providers{enabled,order,defaults,Record<string,ProviderConfiguration>}, layout, separators, segments, bars, thresholds, timing, icons, preview). providers and dynamic windows use stable Record<string,...> keyed by string, never fixed provider unions or array-index window positions. ProviderConfiguration + WindowConfiguration enums/types.\n- defaults.ts: global defaults reproducing current behavior where meaningful (footer enabled; project/model/effort/context/session/throughput/time order; compact narrow priority time,throughput,project,effort,model,session retaining context; rounded width-12 bars; new-line provider rows; 80/95 thresholds; 10s refresh min/default; 5min cache max; Emoji default icon style).\n- validation.ts: one safe parser/normalizer. Validates/normalizes/bounds, falls back to new defaults for invalid docs. Rejects unsafe control/ANSI/newline/bidi input and unsafe external display strings. Preserves recognized unknown provider records and practical unknown/future fields semantically via an opaque unknown bag. Unsupported future schema version -> read-only (never normalized/saved/overwritten).\n- migrations.ts: one-time migration from current unversioned ~/.pi/agent/statusline.json (footerEnabled, segment toggles, extras, providerTracking selection/order/metrics/overrides) into new groups. Never copies secrets, no fake adapter, preserves unknown legacy provider keys as disabled/stored. Migration becomes durable only on explicit successful save. Refresh <10s normalizes to 10s; max-age finite and >= interval.\n- storage.ts: validate/normalize first, write uniquely-named sibling temp file, atomic rename, clean temp failures, only then expose success. Injected ops for failure tests. Original/runtime untouched on write/rename failure.\n- state.ts: deep-clone draft isolation (structuredClone), selected/provider/section/all reset operate on draft only, no runtime/draft aliasing.",
+      "displayMetadata": {
+        "schemaVersion": 1,
+        "title": "Versioned settings core and migration"
+      },
       "evidence": [
         {
           "closeEvidence": "Completed by coded inline work path"
@@ -1435,6 +1451,10 @@
       "dependencies": [],
       "dependencyEdges": [],
       "description": "Build the dynamic, capability-first provider service layer (plan U2, reqs R11-R17, R27-R28) in src/settings/providers/, reusing existing ratelimit parsers. Keep extensions/statusline.ts unmodified (U5 migrates its inline fetch/capability code later). Depends on U1 (work-2.5).\n\nFiles to create:\n- src/settings/providers/discovery.ts: discoverProviders(registry, {activeProvider, storedProviders, registeredProviders?}) dedupes modelRegistry.getAvailable() by provider and reconciles available + active + stored + extension-registered providers into ProviderDescriptor[] with a STABLE saved order (stored order preserved, new providers appended in discovery order). Feature-detect optional registry methods (getRegisteredProviderIds, getProviderDisplayName, getProviderAuthStatus, getProvider) via typeof — must not require methods absent from Pi 0.80.7. Unknown/stored-but-unavailable providers retained as stored records.\n- src/settings/providers/capabilities.ts: deriveCapability(descriptor, {activeModel, localEndpointTest, adapterSupport}) -> ProviderCapability (available, authenticated, modelCount, billing: local|subscription|api|unknown, quotaSupport: official|best-effort|none, quotaReliability, localSpeed, hostedSpeed, tokenLedger, costLedger, sanitized unavailableReason). NO provider-name branching here — billing from endpoint/auth/model data, quota from the adapter registry.\n- src/settings/providers/adapters.ts: the ONLY module that knows provider IDs. KNOWN adapter registry: anthropic (official, OAuth), openai-codex (official), zai (best-effort), openrouter (none — sanitized reason). getAdapter(providerId) and sanitizedUnavailableReason(providerId). Quota refresh functions reuse parseAnthropicUsage/parseCodexUsage/parseZaiUsage from src/ratelimit.ts (no parser duplication).\n- test/settings-providers.test.ts: deduped multiple models; custom/extension provider; active missing from available; stored temporarily missing / newly authenticated / disappearing; registry missing each optional method; local/api/subscription/mixed/unknown capabilities; official/best-effort/unsupported adapter + sanitized reasons; adapter keys stable across reordered/renamed labels; duplicate/invalid keys fail closed; dynamic unknown windows default. Plus a repository guard test deriving the known adapter provider IDs {anthropic, openai-codex, zai, openrouter} and failing if any literal appears in src/settings/ui/** (UI does not exist yet in U2, so it passes today and guards future units).",
+      "displayMetadata": {
+        "schemaVersion": 1,
+        "title": "Provider discovery, capabilities, and adapter registry"
+      },
       "evidence": [
         {
           "closeEvidence": "Completed by coded inline work path"
@@ -1460,6 +1480,10 @@
       "dependencies": [],
       "dependencyEdges": [],
       "description": "Build the settings-driven resolver + preview (plan U3, reqs R3, R8, R17, R19-R29) as NEW modules composing the existing parameterized renderers; do NOT rewire extensions/statusline.ts (U5 does that) and do NOT modify existing src/{bar,segments,format,derive,throughput}.ts. Depends on U1, U2.\n\nFiles to create:\n- src/settings/resolve.ts: pure resolution over StatuslineSettings + a RuntimeSnapshot + ProviderCapability.\n  * resolveSegmentVisibility(settings, ctx) -> Record<SegmentId, boolean>: global segments ANDed with per-provider activeModel tri-state override ('on'/'off' win, 'default' inherits global), then applicability self-hide (effort hidden when model non-reasoning; session hidden when capability has no quota support; throughput hidden when no speed measurement; context hidden when contextUsage absent/null; time always shown). Never renders an inapplicable segment.\n  * resolveBarStyle(settings) -> BarStyle for renderBar (width/fill/empty/caps/percent from settings.bars).\n  * resolveOrder(settings) -> { segmentOrder, narrowPriority } (validated against SEGMENT_ORDER, falling back to defaults).\n  * composeFooterLine(settings, ctx, capability, width) -> string: builds Segment[] from resolved visibility + runtime labels (project/model/effort/context/session/throughput/time) and calls the existing composeSegments with the resolved separator and narrow priority — the single production path.\n- src/settings/preview.ts: renderPreview(settings, mode, width) -> string[] through composeFooterLine using immutable PREVIEW_FIXTURES snapshots for modes current/local/subscription/api/narrow; fixture preview is visibly labelled. Preview never starts network/git/session scans on render (pure).\n- test/settings-render.test.ts: tri-state active-model override (on/off/default); applicability self-hide (non-reasoning effort, no-quota session, no-throughput, null-context); bar style resolution; order validation/fallback; preview produces width-bounded lines for each mode; preview == composeFooterLine for identical snapshot/settings (parity); preview never mutates the fixture.",
+      "displayMetadata": {
+        "schemaVersion": 1,
+        "title": "Settings-driven resolver and preview"
+      },
       "evidence": [
         {
           "closeEvidence": "Completed by coded inline work path"
@@ -1486,6 +1510,10 @@
       "dependencies": [],
       "dependencyEdges": [],
       "description": "Build the settings-driven refresh policy + eligibility resolver (plan U4, reqs R14, R16, R18, R27-R28) as a NEW module. Do NOT modify src/providers.ts or src/provider-cache.ts (U5/U9 wires the coordinator); keep them green. Depends on U1, U2.\n\nFile to create:\n- src/settings/refresh.ts: pure resolution over StatuslineSettings + ProviderCapability.\n  * resolveProviderRefreshPolicy(settings, providerId, capability) -> { intervalMs (>=10000), maxAgeMs (finite, >= intervalMs), useCache, keepAfterFailure, refreshWhileActive, refreshDisabledProvider }: merges settings.providers.defaults with per-provider overrides where present; bounds interval/maxAge.\n  * resolveRefreshEligibility(settings, providerId, capability, { providerEnabled, isActive }) -> boolean: requires global providers.enabled AND providerEnabled AND capability.quotaSupport !== \"none\" AND policy permits (refreshDisabledProvider gates disabled providers; refreshWhileActive gates active-idle). Unsupported/unauthenticated providers are never eligible.\n  * resolveRefreshHealth(previousFreshAt, now, policy) -> { state: \"fresh\"|\"stale\"|\"unknown\", reason? }: fresh within maxAge, stale after maxAge while keepAfterFailure retains last value, unknown when never refreshed. Reasons sanitized (no secrets/raw errors).\n- test/settings-refresh.test.ts: policy merge + bounding (interval<10000->10000, maxAge<interval->interval); eligibility matrix (global off, provider off, no adapter, disabled-provider policy, refreshWhileActive); health transitions (fresh->stale at maxAge, keepAfterFailure retains, unknown when never); sanitized reasons contain no credential fragments; an unsupported provider makes no adapter/network call (eligibility false).",
+      "displayMetadata": {
+        "schemaVersion": 1,
+        "title": "Settings-aware refresh policy and eligibility"
+      },
       "evidence": [
         {
           "closeEvidence": "Completed by coded inline work path"
@@ -1511,7 +1539,7 @@
       "recordCount": 11,
       "sourceFingerprint": "716c6815dbadf79dc70c6d01af6a643e7bcf36809c4af4405175a0d2a56789f1"
     },
-    "updatedAt": "2026-07-31T18:24:27.070Z"
+    "updatedAt": "2026-07-31T18:26:12.234Z"
   },
   "schemaVersion": 1
 }
