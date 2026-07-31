@@ -111,6 +111,15 @@ const DEFAULT_PREVIEW = {
   mode: "current" as PreviewMode,
 };
 
+/** Default extras (legacy feature parity: branch on, others off). */
+const DEFAULT_EXTRAS = {
+  branch: true,
+  cost: false,
+  sessionElapsed: false,
+  lastTurn: false,
+  pending: false,
+};
+
 /** Default layout. */
 const DEFAULT_LAYOUT = {
   providerRows: "newline" as ProviderRowLayout,
@@ -163,6 +172,7 @@ export const DEFAULT_STATUSLINE_SETTINGS: StatuslineSettings = {
   timing: DEFAULT_TIMING,
   icons: DEFAULT_ICONS,
   preview: DEFAULT_PREVIEW,
+  extras: DEFAULT_EXTRAS,
 };
 
 /** Create a fresh provider configuration with defaults. */

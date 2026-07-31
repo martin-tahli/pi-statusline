@@ -91,6 +91,15 @@ export function migrateLegacySettings(legacy: unknown): Partial<StatuslineSettin
   }
   result.icons = icons;
 
+  // Extras: preserve the remaining legacy display toggles (nerdFont migrated to icons above).
+  result.extras = {
+    branch: merged.extras.branch,
+    cost: merged.extras.cost,
+    sessionElapsed: merged.extras.sessionElapsed,
+    lastTurn: merged.extras.lastTurn,
+    pending: merged.extras.pending,
+  };
+
   // Timing: providerTracking refresh interval would be in provider defaults
   // (legacy had no timing config, use defaults)
   result.timing = structuredClone(DEFAULT_STATUSLINE_SETTINGS.timing);

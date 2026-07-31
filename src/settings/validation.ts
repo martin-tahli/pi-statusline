@@ -30,6 +30,7 @@ const KNOWN_TOP_LEVEL_FIELDS = new Set([
   "timing",
   "icons",
   "preview",
+  "extras",
 ]);
 
 /** Known provider record fields. */
@@ -349,6 +350,19 @@ function parsePreview(value: unknown): StatuslineSettings["preview"] {
   };
 }
 
+/** Parse extras settings (legacy feature-parity toggles). */
+function parseExtras(value: unknown): StatuslineSettings["extras"] {
+  const input = value && typeof value === "object" ? value as Record<string, unknown> : {};
+  const bool = (v: unknown, d: boolean): boolean => typeof v === "boolean" ? v : d;
+  return {
+    branch: bool(input.branch, true),
+    cost: bool(input.cost, false),
+    sessionElapsed: bool(input.sessionElapsed, false),
+    lastTurn: bool(input.lastTurn, false),
+    pending: bool(input.pending, false),
+  };
+}
+
 /** Collect unknown fields from an object. */
 function collectUnknown(input: Record<string, unknown>, knownFields: Set<string>): Record<string, unknown> {
   const result: Record<string, unknown> = {};
@@ -396,6 +410,7 @@ export function parseStatuslineSettings(unknown: unknown): ParsedSettings {
   const timing = parseTiming(input.timing);
   const icons = parseIcons(input.icons);
   const preview = parsePreview(input.preview);
+  const extras = parseExtras(input.extras);
   const enabled = typeof input.enabled === "boolean" ? input.enabled : true;
 
   // Collect unknown top-level fields
@@ -448,6 +463,7 @@ export function parseStatuslineSettings(unknown: unknown): ParsedSettings {
       timing,
       icons,
       preview,
+      extras,
       __unknown,
     },
   };

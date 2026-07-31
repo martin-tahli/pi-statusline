@@ -1530,6 +1530,31 @@
       "title": "Settings-aware refresh policy and eligibility",
       "type": "task",
       "updatedAt": "2026-07-31T18:24:27.070Z"
+    },
+    "work-2.9": {
+      "acceptance": "- StatuslineSettings.extras exists with {branch,cost,sessionElapsed,lastTurn,pending}, all boolean.\n- DEFAULT_STATUSLINE_SETTINGS.extras reproduces current behavior (branch true, rest false).\n- parseStatuslineSettings normalizes extras (bad types fall back to defaults); \"extras\" preserved in known fields.\n- migrateLegacySettings copies the 5 legacy extras toggles into the new extras group.\n- npm run typecheck clean; npm test green including new assertions.",
+      "createdAt": "2026-07-31T18:31:02.265Z",
+      "dependencies": [],
+      "dependencyEdges": [],
+      "description": "Close the feature-parity gap blocking U5: add a minimal `extras` group to StatuslineSettings for the 5 toggles the live render path reads but the new schema lacked (branch, cost, sessionElapsed, lastTurn, pending). User decision: \"Add a minimal extras group (recommended)\". Behavior-preserving, reversible; UI exposure deferred to U8.\n\nFiles:\n- schema.ts: ExtrasSettings { branch, cost, sessionElapsed, lastTurn, pending }; add `extras: ExtrasSettings` to StatuslineSettings.\n- defaults.ts: DEFAULT_EXTRAS matching current config.ts defaults (branch:true, cost:false, sessionElapsed:false, lastTurn:false, pending:false); add to DEFAULT_STATUSLINE_SETTINGS.\n- validation.ts: parseExtras (boolean coercion, falls back to defaults); add \"extras\" to KNOWN_TOP_LEVEL_FIELDS; wire into parseStatuslineSettings.\n- migrations.ts: migrate legacy extras.{branch,cost,sessionElapsed,lastTurn,pending} into result.extras.\n- tests: extend settings-schema, settings-validation, settings-migrations, settings-defaults to cover the extras group + migration.",
+      "evidence": [
+        {
+          "closeEvidence": "Completed by coded inline work path"
+        }
+      ],
+      "id": "work-2.9",
+      "labels": [],
+      "notes": [
+        "wo:execution-slice; closes feature-parity gap blocking U5 (full rewire). User decision: minimal extras group. Depends on U1 (work-2.5).",
+        "wo:review-scope [\"src/settings/defaults.ts\",\"src/settings/migrations.ts\",\"src/settings/schema.ts\",\"src/settings/validation.ts\",\"test/settings-defaults.test.ts\",\"test/settings-migrations.test.ts\",\"test/settings-validation.test.ts\"]",
+        "wo:review PASS extras group correct: schema ExtrasSettings 5 booleans; defaults match config.ts DEFAULT_SETTINGS.extras (branch true, rest false, nerdFont excluded); parseExtras builds fresh object (no singleton aliasing), non-boolean falls back; migration copies 5 legacy toggles from mergeSettings-normalized input; focused suite 37 pass / 0 fail",
+        "wo:verify-check PASS\nCommand: npm test && npm run typecheck\nOutput: reezing on the last one (0.185252ms)\n✔ classifies rates with directional baselines and an output floor (0.145531ms)\n✔ caps histories and resets displayed throughput on model changes (0.187219ms)\n✔ finalizes active time without preserving rates (0.110197ms)\n✔ retains idle result, resets on turn start, and accumulates active time (0.171403ms)\nℹ tests 173\nℹ suites 0\nℹ pass 173\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 550.685043\n\n> @shvax/pi-statusline@0.7.4 typecheck\n> tsc --noEmit"
+      ],
+      "parentId": "work-2",
+      "status": "closed",
+      "title": "Settings extras parity (branch/cost/sessionElapsed/lastTurn/pending)",
+      "type": "task",
+      "updatedAt": "2026-07-31T18:33:55.366Z"
     }
   },
   "metadata": {
@@ -1539,7 +1564,7 @@
       "recordCount": 11,
       "sourceFingerprint": "716c6815dbadf79dc70c6d01af6a643e7bcf36809c4af4405175a0d2a56789f1"
     },
-    "updatedAt": "2026-07-31T18:26:12.234Z"
+    "updatedAt": "2026-07-31T18:33:55.366Z"
   },
   "schemaVersion": 1
 }

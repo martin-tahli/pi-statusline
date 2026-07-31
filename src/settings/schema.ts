@@ -206,6 +206,20 @@ export interface PreviewSettings {
   mode: PreviewMode;
 }
 
+/** Extra display toggles preserved from the legacy `extras` group (feature parity). */
+export interface ExtrasSettings {
+  /** Show the git branch in the project segment. */
+  branch: boolean;
+  /** Show the running session cost in the model segment. */
+  cost: boolean;
+  /** Include the total session elapsed time in the time segment. */
+  sessionElapsed: boolean;
+  /** Include the last turn duration in the time segment. */
+  lastTurn: boolean;
+  /** Show a queued/pending indicator. */
+  pending: boolean;
+}
+
 /** Root versioned settings document. */
 export interface StatuslineSettings {
   /** Schema version. */
@@ -230,6 +244,8 @@ export interface StatuslineSettings {
   icons: IconsSettings;
   /** Preview settings. */
   preview: PreviewSettings;
+  /** Extra display toggles (legacy feature parity). */
+  extras: ExtrasSettings;
   /** Opaque bag for unknown top-level fields (preserved across saves). */
   __unknown?: Record<string, unknown>;
 }

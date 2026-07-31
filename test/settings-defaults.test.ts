@@ -18,6 +18,16 @@ test("defaults: DEFAULT_STATUSLINE_SETTINGS has expected shape and version", () 
   assert.ok(DEFAULT_STATUSLINE_SETTINGS.preview);
 });
 
+test("defaults: extras reproduces legacy feature-parity defaults", () => {
+  assert.deepEqual(DEFAULT_STATUSLINE_SETTINGS.extras, {
+    branch: true,
+    cost: false,
+    sessionElapsed: false,
+    lastTurn: false,
+    pending: false,
+  });
+});
+
 test("defaults: segmentOrder matches SEGMENT_ORDER", () => {
   assert.deepEqual(DEFAULT_STATUSLINE_SETTINGS.layout.segmentOrder, SEGMENT_ORDER);
 });

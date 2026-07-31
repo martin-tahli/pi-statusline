@@ -59,6 +59,15 @@ test("migration: legacy footerEnabled+segments+extras+providerTracking maps to n
   // Layout
   assert.ok(migrated.layout);
   assert.equal(migrated.layout?.providerRows, "newline");
+
+  // Extras: legacy toggles preserved (nerdFont migrated to icons above)
+  assert.deepEqual(migrated.extras, {
+    branch: true,
+    cost: false,
+    sessionElapsed: true,
+    lastTurn: false,
+    pending: true,
+  });
   assert.deepEqual(migrated.layout?.segmentOrder, ["project", "model", "effort", "context", "session", "throughput", "time"]);
 
   // Segments
