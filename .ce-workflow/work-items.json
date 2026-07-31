@@ -1428,6 +1428,31 @@
       "title": "Versioned settings core and migration",
       "type": "task",
       "updatedAt": "2026-07-31T18:11:13.173Z"
+    },
+    "work-2.6": {
+      "acceptance": "- src/settings/providers/{discovery,capabilities,adapters}.ts exist and export the described functions/types.\n- npm run typecheck passes; npm test passes including new test/settings-providers.test.ts.\n- No provider-name branching in discovery.ts or capabilities.ts (only adapters.ts knows provider IDs); the repo guard test scans src/settings/ui/** for adapter provider-ID literals (no-op today, guards future UI units).\n- extensions/statusline.ts and all existing tests remain unmodified and green.\n- No secret/credential propagation: adapter refresh functions take an injectable context; tests never hit the network and never see raw errors/keys.",
+      "createdAt": "2026-07-31T18:12:57.773Z",
+      "dependencies": [],
+      "dependencyEdges": [],
+      "description": "Build the dynamic, capability-first provider service layer (plan U2, reqs R11-R17, R27-R28) in src/settings/providers/, reusing existing ratelimit parsers. Keep extensions/statusline.ts unmodified (U5 migrates its inline fetch/capability code later). Depends on U1 (work-2.5).\n\nFiles to create:\n- src/settings/providers/discovery.ts: discoverProviders(registry, {activeProvider, storedProviders, registeredProviders?}) dedupes modelRegistry.getAvailable() by provider and reconciles available + active + stored + extension-registered providers into ProviderDescriptor[] with a STABLE saved order (stored order preserved, new providers appended in discovery order). Feature-detect optional registry methods (getRegisteredProviderIds, getProviderDisplayName, getProviderAuthStatus, getProvider) via typeof — must not require methods absent from Pi 0.80.7. Unknown/stored-but-unavailable providers retained as stored records.\n- src/settings/providers/capabilities.ts: deriveCapability(descriptor, {activeModel, localEndpointTest, adapterSupport}) -> ProviderCapability (available, authenticated, modelCount, billing: local|subscription|api|unknown, quotaSupport: official|best-effort|none, quotaReliability, localSpeed, hostedSpeed, tokenLedger, costLedger, sanitized unavailableReason). NO provider-name branching here — billing from endpoint/auth/model data, quota from the adapter registry.\n- src/settings/providers/adapters.ts: the ONLY module that knows provider IDs. KNOWN adapter registry: anthropic (official, OAuth), openai-codex (official), zai (best-effort), openrouter (none — sanitized reason). getAdapter(providerId) and sanitizedUnavailableReason(providerId). Quota refresh functions reuse parseAnthropicUsage/parseCodexUsage/parseZaiUsage from src/ratelimit.ts (no parser duplication).\n- test/settings-providers.test.ts: deduped multiple models; custom/extension provider; active missing from available; stored temporarily missing / newly authenticated / disappearing; registry missing each optional method; local/api/subscription/mixed/unknown capabilities; official/best-effort/unsupported adapter + sanitized reasons; adapter keys stable across reordered/renamed labels; duplicate/invalid keys fail closed; dynamic unknown windows default. Plus a repository guard test deriving the known adapter provider IDs {anthropic, openai-codex, zai, openrouter} and failing if any literal appears in src/settings/ui/** (UI does not exist yet in U2, so it passes today and guards future units).",
+      "evidence": [
+        {
+          "closeEvidence": "Completed by coded inline work path"
+        }
+      ],
+      "id": "work-2.6",
+      "labels": [],
+      "notes": [
+        "wo:execution-slice; source: docs/plans/2026-07-31-001-feat-new-statusline-settings-ui-plan.md; plan unit U2 (depends on U1/work-2.5). Covered reqs: R11-R17, R27-R28.",
+        "wo:review-scope [\"src/settings/providers/adapters.ts\",\"src/settings/providers/capabilities.ts\",\"src/settings/providers/discovery.ts\",\"test/settings-providers.test.ts\"]",
+        "wo:review PASS - npm test 147/147 + typecheck clean; extensions/statusline.ts and pre-U2 tests untouched (git status shows only new src/settings/providers/ + test/settings-providers.test.ts); discovery feature-detects optional registry methods with typeof+try/catch and stable saved order; capabilities.ts has no provider-id branching (billing derived from endpoint/oauth/auth); adapters.ts is sole id-aware module, reuses parseAnthropicUsage/parseCodexUsage/parseZaiUsage, fails closed to none, sanitizedUnavailableReason never echoes error/token, refreshes catch->[]; adapter ctx getToken injectable, no network in tests. Note: discovery declares but never calls getRegisteredProviderIds/getProvider (caller must pass registeredProviders).",
+        "wo:verify-check PASS\nCommand: npm test && npm run typecheck\nOutput: reezing on the last one (0.182293ms)\n✔ classifies rates with directional baselines and an output floor (0.156363ms)\n✔ caps histories and resets displayed throughput on model changes (0.249176ms)\n✔ finalizes active time without preserving rates (0.169982ms)\n✔ retains idle result, resets on turn start, and accumulates active time (0.281497ms)\nℹ tests 147\nℹ suites 0\nℹ pass 147\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 637.005963\n\n> @shvax/pi-statusline@0.7.4 typecheck\n> tsc --noEmit"
+      ],
+      "parentId": "work-2",
+      "status": "closed",
+      "title": "Provider discovery, capabilities, and adapter registry",
+      "type": "task",
+      "updatedAt": "2026-07-31T18:16:39.685Z"
     }
   },
   "metadata": {
@@ -1437,7 +1462,7 @@
       "recordCount": 11,
       "sourceFingerprint": "716c6815dbadf79dc70c6d01af6a643e7bcf36809c4af4405175a0d2a56789f1"
     },
-    "updatedAt": "2026-07-31T18:11:13.173Z"
+    "updatedAt": "2026-07-31T18:16:39.685Z"
   },
   "schemaVersion": 1
 }
