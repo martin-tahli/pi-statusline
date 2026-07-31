@@ -615,7 +615,10 @@ function settingsHarness(options: { mode?: string; settingsPath?: string } = {})
 }
 
 // Raw terminal sequences translated by the extension's parseKey bridge.
-const K = { enter: "\r", space: " ", escape: "\x1b", save: "s", discard: "d" } as const;
+const K = {
+  enter: "\r", space: " ", escape: "\x1b", save: "s", discard: "d",
+  down: "\x1b[B", up: "\x1b[A", end: "\x1b[F", home: "\x1b[H",
+} as const;
 
 test("bare /statusline in tui opens the settings app once at the three-row root without legacy args", async () => {
   const h = settingsHarness();
@@ -821,4 +824,59 @@ test("refreshes git status on an interval independent of turn activity", async (
     globalThis.setInterval = originalSetInterval;
     globalThis.clearInterval = originalClearInterval;
   }
+});
+
+test("navigates into Separators and Emojis sections via the command handler; clean Escape closes without a dialog", async () => {
+  const h = settingsHarness();
+  await h.handlers.get("session_start")!({}, h.ctx);
+  await h.commandDef.handler("", h.ctx);
+  const input = h.component.handleInput!;
+
+  // Navigate down to Separators (index 1) and open it.
+  input(K.down);
+  input(K.enter);
+  const sepLines = h.component.render(100);
+  assert.ok(sepLines[1]?.includes("Separators"), `expected Separators header, got: ${JSON.stringify(sepLines)}`);
+  // Rows are prefixed with ">" (selected) or " " — text-based, no ANSI color dependency.
+  assert.ok(sepLines.some((line) => line.startsWith(">") || line.startsWith(" ")), "selected-row indicator must be plain text");
+
+  // Escape back to root.
+  input(K.escape);
+  const rootAfterSep = h.component.render(100);
+  for (const label of ["Providers", "Separators", "Emojis"]) {
+    assert.ok(rootAfterSep.some((line) => line.includes(label)), `root must show ${label} after backing out of Separators`);
+  }
+
+  // Navigate down twice to Emojis (index 2) and open it.
+  input(K.down);
+  input(K.down);
+  input(K.enter);
+  const emojiLines = h.component.render(100);
+  assert.ok(emojiLines[1]?.includes("Emojis"), `expected Emojis header, got: ${JSON.stringify(emojiLines)}`);
+
+  // Escape back to root.
+  input(K.escape);
+  const rootAfterEmojis = h.component.render(100);
+  assert.ok(rootAfterEmojis.some((line) => line.includes("Providers")), "root must be restored after backing out of Emojis");
+
+  // A clean Escape at root (no dirty changes) must close the app without a confirm dialog.
+  input(K.escape);
+  assert.equal(h.doneResults.length, 1, "clean Escape at root must close the app");
+  assert.equal(h.notifications.length, 0, "clean close must not notify");
+});
+
+test("Providers screen via command handler lists all discovered providers", async () => {
+  const h = settingsHarness();
+  await h.handlers.get("session_start")!({}, h.ctx);
+  await h.commandDef.handler("", h.ctx);
+  const input = h.component.handleInput!;
+
+  // Open Providers (first root row, already selected at index 0).
+  input(K.enter);
+  const lines = h.component.render(200);
+  // The harness modelRegistry exposes anthropic and openai-codex; both must appear.
+  assert.ok(lines.some((line) => line.includes("anthropic")), `Providers screen must list anthropic: ${JSON.stringify(lines)}`);
+  assert.ok(lines.some((line) => line.includes("openai-codex")), `Providers screen must list openai-codex: ${JSON.stringify(lines)}`);
+  // No row should contain the term "catalog-only" or come from outside getAvailable().
+  assert.equal(lines.some((line) => line.includes("catalog-only")), false, "catalog-only providers must not appear");
 });

@@ -537,3 +537,43 @@ test("default to custom snapshots every effective provider and window value", ()
     resetFormat: "countdown", showUsed: true, showRemaining: true, showZero: false, width: 21,
   });
 });
+
+test("preview reflects draft mutations and updates when the draft changes", () => {
+  // Wide render includes the preview section; any mutation to the draft must change it.
+  const state = createSettingsUi(DEFAULT_STATUSLINE_SETTINGS);
+  const before = renderSettingsUi(state, { width: 100, previewMode: "local" });
+  // The preview renders using state.draft; toggling a visible segment changes the footer output.
+  const mutated = replaceDraft(state, { ...state.draft, segments: { ...state.draft.segments, model: false } });
+  const after = renderSettingsUi(mutated, { width: 100, previewMode: "local" });
+  assert.ok(before.length > 1 && after.length > 1, "preview must be non-empty");
+  const previewBefore = before.slice(before.indexOf("") + 1).join("\n");
+  const previewAfter = after.slice(after.indexOf("") + 1).join("\n");
+  assert.notEqual(previewBefore, previewAfter, "preview must change when the draft changes");
+});
+
+test("long-list navigation: End jumps to last row, Home returns to first; selection stays in bounds", () => {
+  // Separators screen has many rows (segments + extras + layout + separators + bars + thresholds + timing).
+  let state = createSettingsUi(DEFAULT_STATUSLINE_SETTINGS);
+  state.selected = 1; // Separators
+  state = routeSettingsKey(state, "Enter").state;
+  assert.equal(state.openRow, "separators");
+
+  const totalRows = buildSeparatorsScreen(state.draft).length;
+  assert.ok(totalRows > 10, "separators screen must be a long list");
+
+  // End key jumps to the last row.
+  state = routeSettingsKey(state, "End").state;
+  assert.equal(state.selected, totalRows - 1, "End key must select the last row");
+
+  // ArrowDown past the end must stay clamped at the last row.
+  state = routeSettingsKey(state, "ArrowDown").state;
+  assert.equal(state.selected, totalRows - 1, "ArrowDown at last row must stay clamped");
+
+  // Home key returns to the first row.
+  state = routeSettingsKey(state, "Home").state;
+  assert.equal(state.selected, 0, "Home key must select the first row");
+
+  // ArrowUp at the first row must stay clamped at zero.
+  state = routeSettingsKey(state, "ArrowUp").state;
+  assert.equal(state.selected, 0, "ArrowUp at first row must stay clamped");
+});

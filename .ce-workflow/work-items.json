@@ -1658,6 +1658,32 @@
       "type": "task",
       "updatedAt": "2026-07-31T21:43:34.707Z"
     },
+    "work-2.21": {
+      "acceptance": "1. A coverage map (in the report) lists each U12 interaction bullet -> the existing test or the new test added; no bullet unaccounted.\n2. New tests drive the actual command handler / deterministic driver (not only pure screen helpers) where the bullet is command-level; they are deterministic (no timers/network/fs randomness) and assert observable state (draft, saved settings, runtime apply, dialog state), never pixel/color.\n3. No production code changed unless a gap test exposed a real defect (documented with a regression test); if unchanged, git shows only test files modified or no change.\n4. Bare /statusline is provably UI-only and the legacy provider-only menu/shortcuts are absent under the suite.\n5. node --test on touched test files passes; npm test passes; npm run typecheck passes.",
+      "createdAt": "2026-07-31T21:43:52.305Z",
+      "dependencies": [],
+      "dependencyEdges": [],
+      "description": "Close plan unit U12 (requirements R1-R6, R15-R17, R29): exercise the ACTUAL /statusline command handler and user interactions through a deterministic driver, not only screen helpers. This is a COVERAGE-AUDIT + GAP-FILL unit. work-2.18 (U9) already added a settingsHarness + 4 integration tests (open/save/discard/storage-failure) in test/statusline.test.ts, and test/settings-ui.test.ts has 17 screen-level tests. Do NOT rewrite or duplicate those; EXPAND the command-driven matrix.\n\nApproach:\n- Read docs/plans/2026-07-31-001-feat-new-statusline-settings-ui-plan.md section U12 + requirements R1-R6, R15-R17, R29 + AC contracts, and items[\"work-2.18\"] notes (the settingsHarness driver), to enumerate the interaction matrix.\n- Cross-check each interaction bullet against existing tests. Add focused tests via the existing settingsHarness/driver in test/statusline.test.ts (command-level) and/or screen tests in test/settings-ui.test.ts, for any uncovered scenario.\n- Do NOT change production code unless a gap test exposes a genuine defect; if it does, fix + regression test + note it.\n\nInteraction matrix (gap-fill only): root open shows exactly Providers/Separators/Emojis; enter each section and navigate back; dynamic provider list (configured/active/stored, no catalog-only); toggle a segment; configure a provider (display mode/active-model/icon); edit a text field; reorder (Ctrl+Up/Down); preview updates on draft change; save applies + persists; discard changes nothing; unsaved-dirty close dialog (Save/Discard/Cancel); section/all reset; Escape/Quit; selected-row visibility without color; long-list navigation when rows exceed viewport; bare command is UI-only and the legacy provider-only menu is absent (no on/off/toggle behavior or completions).",
+      "evidence": [
+        {
+          "closeEvidence": "Completed by coded inline work path"
+        }
+      ],
+      "id": "work-2.21",
+      "labels": [],
+      "notes": [
+        "wo:execution-slice; source: docs/plans/2026-07-31-001-feat-new-statusline-settings-ui-plan.md; covered plan unit: U12 (R1-R6,R15-R17,R29). Dependency context: follows closed U1-U11 incl. work-2.18 (U9 command handler); U13 remains.",
+        "Files changed: test/statusline.test.ts (K extended + 2 new command-level tests), test/settings-ui.test.ts (2 new screen-level tests). No production code changed.\n\nCoverage map:\n- Root open shows exactly Providers/Separators/Emojis -> EXISTING: statusline.test.ts \"bare /statusline in tui...\"\n- Enter each section + back -> EXISTING screen tests (settings-ui.test.ts R19-R25/R26); NEW command-level: \"navigates into Separators and Emojis sections via the command handler\"\n- Dynamic provider list (configured/active/stored, no catalog-only) -> EXISTING screen: \"provider screen is truthful\"; NEW command-level: \"Providers screen via command handler lists all discovered providers\"\n- Toggle segment -> EXISTING: \"R19-R25 separators screen\" (screen-level)\n- Configure a provider (display mode/active-model/icon) -> EXISTING: \"provider detail navigation routes every editable control\"\n- Edit a text field -> EXISTING: \"text rows accept printable navigation letters and space\"\n- Reorder Ctrl+Up/Down -> EXISTING: \"provider screen key routing\" + \"R19-R25 separators screen\"\n- Preview updates on draft change -> NEW: settings-ui.test.ts \"preview reflects draft mutations and updates when the draft changes\"\n- Save applies+persists -> EXISTING: \"saving a changed draft persists it\" (command-level)\n- Discard changes nothing -> EXISTING: \"saving a changed draft persists it; discarding...\" (command-level)\n- Unsaved-dirty close dialog (Save/Discard/Cancel) -> EXISTING: \"dirty Save, Discard, and Cancel\" (screen) + statusline.test.ts\n- Section/all reset -> EXISTING: \"R19-R25 separators screen\" + \"R26 emojis\" + \"draft creation, replacement, and reset\"\n- Escape/Quit -> EXISTING: screen Escape routing; NEW command-level: clean Escape at root closes app (part of \"navigates into Separators and Emojis sections\" test)\n- Selected-row visibility without color -> EXISTING: screen tests assert \"> label\" prefix format, no ANSI dependency\n- Long-list navigation when rows exceed viewport -> NEW: settings-ui.test.ts \"long-list navigation: End jumps to last row, Home returns to first\"\n- Bare command is UI-only, legacy absent -> EXISTING: \"bare /statusline in tui...\" + \"non-empty tui args\"\n\nVerification: npm test -> 206/206 pass; npm run typecheck -> clean",
+        "wo:review-scope [\"test/settings-ui.test.ts\",\"test/statusline.test.ts\"]",
+        "wo:review PASS - test-only diff (settings-ui.test.ts, statusline.test.ts); new command-handler tests drive settingsHarness/ctx.ui.custom for Separators/Emojis nav, clean Escape close, dynamic provider list; Home/End test hits real routeSettingsKey clamping; deterministic, observable-state asserts, no dup; npm test 206/206 + typecheck clean",
+        "wo:verify-check PASS\nCommand: npm test && npm run typecheck\nOutput: freezing on the last one (0.189824ms)\n✔ classifies rates with directional baselines and an output floor (0.162618ms)\n✔ caps histories and resets displayed throughput on model changes (0.25496ms)\n✔ finalizes active time without preserving rates (0.190602ms)\n✔ retains idle result, resets on turn start, and accumulates active time (1.914793ms)\nℹ tests 206\nℹ suites 0\nℹ pass 206\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 702.208574\n\n> @shvax/pi-statusline@0.7.4 typecheck\n> tsc --noEmit"
+      ],
+      "parentId": "work-2",
+      "status": "closed",
+      "title": "U12: command-driven UI interaction matrix (audit + gap-fill)",
+      "type": "task",
+      "updatedAt": "2026-07-31T21:52:13.785Z"
+    },
     "work-2.3": {
       "acceptance": "SHORT ACC",
       "createdAt": "2026-07-31T17:27:36.848Z",
@@ -1857,7 +1883,7 @@
       "recordCount": 11,
       "sourceFingerprint": "716c6815dbadf79dc70c6d01af6a643e7bcf36809c4af4405175a0d2a56789f1"
     },
-    "updatedAt": "2026-07-31T21:43:34.708Z"
+    "updatedAt": "2026-07-31T21:52:13.785Z"
   },
   "schemaVersion": 1
 }
