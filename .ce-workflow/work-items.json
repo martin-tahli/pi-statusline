@@ -48,13 +48,14 @@
         "updated_at": "2026-07-15T14:56:29Z"
       },
       "notes": [
-        "Created as tomorrow's handoff after manual v0.1.0 publish. First verify whether registry propagation completed before changing or republishing anything."
+        "Created as tomorrow's handoff after manual v0.1.0 publish. First verify whether registry propagation completed before changing or republishing anything.",
+        "Trusted-publishing pipeline proven end-to-end: bumped package.json 0.7.4->0.8.0, pushed to master (6577246), CI run 30691254291 passed (check: typecheck/206 tests/npm pack; release: version-diff detected, GitHub Release v0.8.0 created, 'npm publish --provenance' succeeded). npm view @shvax/pi-statusline@0.8.0 -> latest=0.8.0; tarball contains the full Settings UI (schema/migrations/runtime/provider-ui/ui/legacy + extensions/statusline.ts, 29 .ts files); SLSA provenance attestation present. Mechanism: push to master with a changed package.json version auto-creates the v<version> release and publishes once via OIDC trusted publishing (no token). Closed as-is per user (publish path = done); optional future follow-up: add Dependabot/Renovate for the 'scheduled dependency-update PRs' acceptance clause (no config exists yet)."
       ],
       "priority": 2,
-      "status": "open",
+      "status": "closed",
       "title": "Automate npm updates and publishing with GitHub Actions",
       "type": "task",
-      "updatedAt": "2026-07-15T14:56:29Z"
+      "updatedAt": "2026-08-01T08:15:27.796Z"
     },
     "pi-statusline-pdw": {
       "acceptance": "### Acceptance Examples\n- **AE1:** Local Ollama `qwen2.5-coder`, medium effort, 55% context of 1M → footer:\n  `pi-statusline · qwen2.5-coder · medium · 55.0%/1.0M · ↑ 850 t/s ↓ 62 t/s` (no session bars).\n- **AE2:** Anthropic subscription `claude-sonnet-4-5`, 5h at 23% / weekly at 41% →\n  `pi-statusline · claude-sonnet-4-5 · high · 30.2%/200K · 5h [██░░░░░░] 23% · wk [███░░░░] 41% · ↑ 1.2k t/s ↓ 74 t/s`, the two bar fills rendered light green.\n- **AE3:** Cloud API-key provider without unified headers → same as AE1 shape (session bars omitted, throughput shown).\n- **AE4:** `/statusline toggle throughput` → throughput disappears, everything else recomposes on one line; persists to next session.\n- **AE5:** Non-reasoning model → effort segment absent.\n- **AE6:** Terminal narrowed to 40 cols → line truncates cleanly (no wrap, no crash).",
@@ -1487,6 +1488,10 @@
       ],
       "dependencyEdges": [],
       "description": "Deliver the next end-to-end provider-settings behavior after the closed U6 shell (work-2.13): the shared draft can display and edit truthful dynamic provider rows, provider details, stable usage windows, active-model overrides, icon choice, missing-data policy, and validated refresh/cache controls without performing I/O during render/navigation.\n\nConcrete file scope:\n- src/settings/provider-ui.ts (new): pure provider screen/view-model and draft actions over ProviderDescriptor, ProviderCapability, refresh health, and adapter-returned windows; expose explicit refresh-now as a caller-owned effect rather than invoking network work.\n- src/settings/ui.ts: integrate Providers navigation/screen stack with the U6 shell and shared cloned draft.\n- src/settings/schema.ts, src/settings/defaults.ts, src/settings/validation.ts: add/preserve the minimal sparse per-provider missing-data and refresh/cache overrides needed by U7, including safe validation/bounds and unknown-field preservation.\n- src/settings/refresh.ts: resolve sparse provider overrides over global defaults and keep unsupported/unauthenticated providers ineligible.\n- src/ratelimit.ts and src/settings/providers/adapters.ts: give adapter-returned windows non-empty stable keys separate from mutable labels and fail closed on invalid/duplicate keys at the provider-UI boundary.\n- test/settings-ui.test.ts, test/settings-refresh.test.ts, test/ratelimit.test.ts, and focused schema/validation tests as required by the changed types.\n\nDo not wire /statusline command lifecycle in this slice (U9), implement Separators/Emojis controls (U8), or perform provider-name branching in UI code.",
+      "displayMetadata": {
+        "schemaVersion": 1,
+        "title": "Dynamic provider settings: rows, detail, windows, and refresh actions"
+      },
       "evidence": [
         {
           "closeEvidence": "Completed by coded inline work path"
@@ -1572,6 +1577,10 @@
       "dependencies": [],
       "dependencyEdges": [],
       "description": "Wire the bare /statusline command to the settings app and apply saved settings to the live runtime, completing plan unit U9 (R1,R4,R6,R18,R28-R29). Dependency context: follows closed U5-U8 (work-2.11/2.13/2.15/2.17).\n\nConcrete file scope:\n- extensions/statusline.ts: rewrite the /statusline command handler. In ctx.mode === \"tui\", a bare invocation opens the settings app via ctx.ui.custom(...) over the existing pure shell (src/settings/ui.ts createSettingsUi/routeSettingsKey + the Separators/Emojis/Providers screens and preview), built from a one-shot discovery/capability snapshot with an isolated structuredClone draft; on save, replace settings atomically in memory, call reconcileProviders for newly authenticated providers, reconfigure refresh/Git/ticks exactly once through idempotent non-throwing runtime application, persist, and request a render. Remove the legacy on/off/toggle argument shortcuts and their completions. Non-empty TUI arguments yield one deterministic no-arguments notice; in rpc/json/print modes the command reports that settings require the interactive terminal UI (no silent no-op). Dispose every interval (tick, gitTick) and the footer on session shutdown with no leaked handles.\n- test/statusline.test.ts: integration tests with a stubbed registry/cache/adapters/ctx (fake ctx.ui.custom capturing key routes and a save callback; fake timers; injected failing storage).\n\nDo not widen into U10-U13 regression/documentation matrices. Reuse the existing settings core, screens, preview, refresh policy, and provider services; do not duplicate parsing/rendering/persistence.",
+      "displayMetadata": {
+        "schemaVersion": 1,
+        "title": "/statusline command opens settings app and applies settings to runtime"
+      },
       "evidence": [
         {
           "closeEvidence": "Completed by coded inline work path"
@@ -1595,6 +1604,10 @@
       "dependencies": [],
       "dependencyEdges": [],
       "description": "Close plan unit U10 (requirements R7-R18, R27-R28): ensure configuration, provider discovery/capability, and provider-refresh correctness does not depend solely on UI tests. This is primarily a COVERAGE-AUDIT + GAP-FILL unit — the repo already has 199 tests across test/settings-{schema,defaults,validation,migrations,storage,state,providers,refresh,render,ui}.test.ts and test/{ratelimit,providers,provider-cache}.test.ts. Do NOT rewrite or duplicate existing tests.\n\nApproach:\n- Read docs/plans/2026-07-31-001-feat-new-statusline-settings-ui-plan.md sections U10 and the R7-R18/R27-R28 requirement details + the AC contracts (AC2 settings durability, etc.) to enumerate the configuration/provider/refresh matrix.\n- Cross-check every matrix bullet against the existing named tests. For each bullet that is NOT already covered, add a focused pure/service test in the appropriate existing test file (settings-validation/migrations/state/providers/refresh/ratelimit as applicable).\n- Do NOT change production code unless a new test exposes a genuine defect; if it does, fix the defect with the regression test and note it.\n\nMatrices to cover (gap-fill only): config validation/normalization/bounds/fallback-to-defaults; unknown top-level/provider/window field preservation; migration mapping (footerEnabled/segments/extras/providerTracking -> new groups) + explicit-save durability; future-version read-only; provider discovery dedup/stable-order/unknown-retention; capability derivation with NO provider-name branching in discovery/capabilities (only adapters.ts knows ids); adapter official/best-effort/none + sanitized unavailable reasons (no token/error leak); refresh policy merge/bounding, eligibility (unsupported/unauthenticated never fetch), health transitions, sanitized reasons.",
+      "displayMetadata": {
+        "schemaVersion": 1,
+        "title": "Configuration/provider/refresh regression matrix audit and gap-fill"
+      },
       "evidence": [],
       "id": "work-2.19",
       "labels": [],
@@ -1665,6 +1678,10 @@
       "dependencies": [],
       "dependencyEdges": [],
       "description": "Close plan unit U12 (requirements R1-R6, R15-R17, R29): exercise the ACTUAL /statusline command handler and user interactions through a deterministic driver, not only screen helpers. This is a COVERAGE-AUDIT + GAP-FILL unit. work-2.18 (U9) already added a settingsHarness + 4 integration tests (open/save/discard/storage-failure) in test/statusline.test.ts, and test/settings-ui.test.ts has 17 screen-level tests. Do NOT rewrite or duplicate those; EXPAND the command-driven matrix.\n\nApproach:\n- Read docs/plans/2026-07-31-001-feat-new-statusline-settings-ui-plan.md section U12 + requirements R1-R6, R15-R17, R29 + AC contracts, and items[\"work-2.18\"] notes (the settingsHarness driver), to enumerate the interaction matrix.\n- Cross-check each interaction bullet against existing tests. Add focused tests via the existing settingsHarness/driver in test/statusline.test.ts (command-level) and/or screen tests in test/settings-ui.test.ts, for any uncovered scenario.\n- Do NOT change production code unless a gap test exposes a genuine defect; if it does, fix + regression test + note it.\n\nInteraction matrix (gap-fill only): root open shows exactly Providers/Separators/Emojis; enter each section and navigate back; dynamic provider list (configured/active/stored, no catalog-only); toggle a segment; configure a provider (display mode/active-model/icon); edit a text field; reorder (Ctrl+Up/Down); preview updates on draft change; save applies + persists; discard changes nothing; unsaved-dirty close dialog (Save/Discard/Cancel); section/all reset; Escape/Quit; selected-row visibility without color; long-list navigation when rows exceed viewport; bare command is UI-only and the legacy provider-only menu is absent (no on/off/toggle behavior or completions).",
+      "displayMetadata": {
+        "schemaVersion": 1,
+        "title": "Command-driven UI interaction matrix audit and gap-fill"
+      },
       "evidence": [
         {
           "closeEvidence": "Completed by coded inline work path"
@@ -1691,6 +1708,10 @@
       "dependencies": [],
       "dependencyEdges": [],
       "description": "Close plan unit U13 (R30): replace obsolete Configure/provider-menu documentation in README.md with the shipped three-section settings UI (Providers/Separators/Emojis), UI-only /statusline command behavior, versioned settings schema + one-way migration + future-version read-only, dynamic provider list and per-window overrides, display modes, adapter reliability, 10s/5min refresh/cache policy, privacy/sanitization (no raw errors/tokens/credentials), and terminal icon fallbacks (ASCII/none). Renderer examples and applicability matrix kept where still accurate.",
+      "displayMetadata": {
+        "schemaVersion": 1,
+        "title": "Update README to reflect the settings UI and shipped behavior"
+      },
       "evidence": [
         {
           "closeEvidence": "Completed by coded inline work path"
@@ -1936,7 +1957,7 @@
       "recordCount": 11,
       "sourceFingerprint": "716c6815dbadf79dc70c6d01af6a643e7bcf36809c4af4405175a0d2a56789f1"
     },
-    "updatedAt": "2026-07-31T22:03:28.964Z"
+    "updatedAt": "2026-08-01T08:15:27.796Z"
   },
   "schemaVersion": 1
 }
