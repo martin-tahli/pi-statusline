@@ -17,7 +17,7 @@ import {
   reconcileProviders,
 } from "../src/settings/runtime.ts";
 import { saveStatuslineSettings } from "../src/settings/storage.ts";
-import { createSettingsUi, renderSettingsUi, resolveDirtyChoice, routeSettingsKey } from "../src/settings/ui.ts";
+import { createSettingsUi, renderSettingsWindow, resolveDirtyChoice, routeSettingsKey } from "../src/settings/ui.ts";
 import type { ProviderUiContext } from "../src/settings/provider-ui.ts";
 import { discoverProviders, type ModelRegistryLike } from "../src/settings/providers/discovery.ts";
 import { deriveCapability, type ProviderCapability } from "../src/settings/providers/capabilities.ts";
@@ -478,7 +478,10 @@ export default function statusline(pi: ExtensionAPI, providerUsageCache = new Pr
       const finish = () => { if (!finished) { finished = true; done(); } };
       return {
         invalidate() {},
-        render: (width: number) => renderSettingsUi(state, { width, providers }),
+        render: (width: number) => {
+          const rows = tui.terminal?.rows;
+          return renderSettingsWindow(state, { width, providers, viewportRows: rows ? rows - 2 : undefined });
+        },
         handleInput(data: string) {
           const key = translateKey(data);
           if (!key) return;
@@ -502,6 +505,9 @@ export default function statusline(pi: ExtensionAPI, providerUsageCache = new Pr
           tui.requestRender();
         },
       };
+    }, {
+      overlay: true,
+      overlayOptions: { width: "80%", anchor: "center", margin: 1 },
     });
   };
 

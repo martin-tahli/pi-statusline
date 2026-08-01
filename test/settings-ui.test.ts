@@ -10,6 +10,7 @@ import {
   resetDraft,
   resolveDirtyChoice,
   routeSettingsKey,
+  renderSettingsWindow,
 } from "../src/settings/ui.ts";
 import {
   buildProviderDetail,
@@ -576,4 +577,63 @@ test("long-list navigation: End jumps to last row, Home returns to first; select
   // ArrowUp at the first row must stay clamped at zero.
   state = routeSettingsKey(state, "ArrowUp").state;
   assert.equal(state.selected, 0, "ArrowUp at first row must stay clamped");
+});
+
+test("renderSettingsWindow draws a bordered window with a per-screen key legend", () => {
+  const providers = { descriptors: [], capabilities: {}, order: [], activeProvider: undefined };
+  const root = createSettingsUi(DEFAULT_STATUSLINE_SETTINGS);
+  const lines = renderSettingsWindow(root, { width: 80, providers });
+
+  // Bordered window: top/bottom borders and side rails on every line.
+  assert.ok(lines[0]!.startsWith("┌") && lines[0]!.endsWith("┐"), `top border missing: ${lines[0]}`);
+  assert.ok(lines.at(-1)!.startsWith("└") && lines.at(-1)!.endsWith("┘"), `bottom border missing: ${lines.at(-1)}`);
+  assert.ok(lines.every((line) => line.startsWith("│") || line.startsWith("┌") || line.startsWith("├") || line.startsWith("└")), "every line must carry window chrome");
+  // Title and root rows are present inside the box.
+  assert.ok(lines.some((line) => line.includes("Statusline")), "window title missing");
+  for (const label of ["Providers", "Separators", "Emojis"]) {
+    assert.ok(lines.some((line) => line.includes(label)), `root row ${label} missing`);
+  }
+  // Root legend mentions open/quit; never the detail-only keys.
+  assert.ok(lines.some((line) => line.includes("Enter Open") && line.includes("Esc Quit")), `root legend missing: ${JSON.stringify(lines)}`);
+  assert.equal(lines.some((line) => line.includes("Space Toggle")), false, "root legend must not show providers-list keys");
+});
+
+test("renderSettingsWindow legend adapts per active screen", () => {
+  const providers = { descriptors: [], capabilities: {}, order: [], activeProvider: undefined };
+  let state = createSettingsUi(DEFAULT_STATUSLINE_SETTINGS);
+
+  state = routeSettingsKey(state, "Enter", providers).state; // open Providers list
+  let providersLegend = renderSettingsWindow(state, { width: 80, providers }).filter((line) => line.includes("│↑↓"));
+  assert.ok(providersLegend.some((line) => line.includes("Space Toggle") && line.includes("Enter Details")), `providers legend missing: ${JSON.stringify(providersLegend)}`);
+
+  state = routeSettingsKey(state, "Escape", providers).state; // back to root
+  state = routeSettingsKey(state, "ArrowDown").state;
+  state = routeSettingsKey(state, "Enter", providers).state; // open Separators
+  const separatorsLegend = renderSettingsWindow(state, { width: 80, providers }).filter((line) => line.includes("│↑↓"));
+  assert.ok(separatorsLegend.some((line) => line.includes("←→/Enter Change") && line.includes("Ctrl↑↓ Reorder")), `separators legend missing: ${JSON.stringify(separatorsLegend)}`);
+});
+
+test("renderSettingsWindow scrolls to keep the selected row visible when content overflows the viewport", () => {
+  const providers = { descriptors: [], capabilities: {}, order: [], activeProvider: undefined };
+  let state = createSettingsUi(DEFAULT_STATUSLINE_SETTINGS);
+  // Open Separators: it has ~50 rows, far more than a tiny viewport.
+  state = routeSettingsKey(state, "ArrowDown").state;
+  state = routeSettingsKey(state, "Enter", providers).state;
+
+  // Tiny viewport forces scrolling; render returns fewer lines and a scroll indicator.
+  const scrolled = renderSettingsWindow(state, { width: 80, providers, viewportRows: 12 });
+  assert.ok(scrolled.length <= 12, `scrolled window must respect viewport (got ${scrolled.length})`);
+  assert.ok(scrolled.some((line) => /[↑↓]\d+ (above|below)/.test(line)), `scroll indicator missing: ${JSON.stringify(scrolled)}`);
+  assert.ok(scrolled.some((line) => line.includes("> ")), "selected row must remain visible while scrolled");
+
+  // Move the cursor far down; the viewport must follow it.
+  for (let i = 0; i < 40; i++) state = routeSettingsKey(state, "ArrowDown").state;
+  const farDown = renderSettingsWindow(state, { width: 80, providers, viewportRows: 12 });
+  assert.ok(farDown.some((line) => line.includes("> ")), "cursor far down must stay visible");
+  assert.ok(farDown.some((line) => /↑\d+ above/.test(line)), "scrolled-down view must report hidden rows above");
+
+  // Without a viewport hint, nothing is clipped (back-compat for non-overlay callers/tests).
+  const full = renderSettingsWindow(state, { width: 80, providers });
+  assert.ok(full.length > scrolled.length, "omitting viewportRows must render the full body");
+  assert.equal(full.some((line) => /[↑↓]\d+ (above|below)/.test(line)), false, "no scroll indicator when not overflowing");
 });

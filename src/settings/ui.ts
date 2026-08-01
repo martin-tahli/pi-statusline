@@ -1,3 +1,4 @@
+import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { DEFAULT_STATUSLINE_SETTINGS } from "./defaults.ts";
 import { buildEmojisScreen, routeEmojisKey } from "./emojis-screen.ts";
 import { renderPreview } from "./preview.ts";
@@ -345,6 +346,79 @@ export interface RenderSettingsUiOptions {
   previewMode?: PreviewMode;
   /** Caller-owned discovery/capability snapshot; rendering never performs discovery or refresh. */
   providers?: ProviderUiContext;
+  /** Available terminal rows; when set, the body scrolls to keep the selected row visible. */
+  viewportRows?: number;
+}
+
+/** Key bindings in effect for the active screen, shown as a legend inside the window. */
+function keyLegend(state: SettingsUiState): string {
+  if (state.confirmClose) return "S Save  ·  D Discard  ·  Esc Cancel";
+  if (state.selectedProviderId) return "↑↓ Move  ·  ←→/Enter Change  ·  Type chars  ·  ⌫ Delete  ·  Esc Back";
+  if (state.openRow === "providers") return "↑↓ Move  ·  Space Toggle  ·  Enter Details  ·  Ctrl↑↓ Reorder  ·  Esc Back";
+  if (state.openRow === "separators") return "↑↓ Move  ·  ←→/Enter Change  ·  Type chars  ·  ⌫ Delete  ·  Ctrl↑↓ Reorder  ·  Esc Back";
+  if (state.openRow === "emojis") return "↑↓ Move  ·  ←→/Enter Change  ·  Type chars  ·  ⌫ Delete  ·  Esc Back";
+  return "↑↓ Move  ·  Enter Open  ·  Esc Quit";
+}
+
+/** Greedy word wrap on the "·" separator so long legends never break the box. */
+function wrapLegend(text: string, width: number): string[] {
+  if (visibleWidth(text) <= width) return [text];
+  const lines: string[] = [];
+  let cur = "";
+  for (const part of text.split("  ·  ")) {
+    const candidate = cur ? `${cur}  ·  ${part}` : part;
+    if (visibleWidth(candidate) <= width) cur = candidate;
+    else {
+      if (cur) lines.push(cur);
+      cur = part;
+    }
+  }
+  if (cur) lines.push(cur);
+  return lines;
+}
+
+function fitLine(line: string, inner: number): string {
+  const truncated = visibleWidth(line) > inner ? truncateToWidth(line, inner, "") : line;
+  return truncated + " ".repeat(Math.max(0, inner - visibleWidth(truncated)));
+}
+
+/** Render the settings app as a centered, bordered window with a per-screen key legend.
+ *  When `viewportRows` is set and the content overflows, the body scrolls to keep the
+ *  selected row (the `> ` line) in view, with a `↑N above · ↓M below` indicator. */
+export function renderSettingsWindow(state: SettingsUiState, options: RenderSettingsUiOptions): string[] {
+  const width = Math.max(44, options.width);
+  const inner = width - 2;
+  const body = renderSettingsUi(state, { ...options, width: inner });
+  const legend = wrapLegend(keyLegend(state), inner);
+  const baseChrome = 3 + legend.length; // top border + separator + bottom border + legend
+  const viewportRows = options.viewportRows ?? 0;
+
+  let view = body;
+  let scrollNote: string | undefined;
+  if (viewportRows > 0 && body.length + baseChrome > viewportRows) {
+    const viewport = Math.max(5, viewportRows - baseChrome - 1); // -1 reserves the scroll-note row
+    const cursor = body.findIndex((line) => line.startsWith("> "));
+    let start = (cursor >= 0 ? cursor : 0) - Math.floor(viewport / 2);
+    start = Math.max(0, Math.min(start, Math.max(0, body.length - viewport)));
+    const end = start + viewport;
+    const above = start;
+    const below = Math.max(0, body.length - end);
+    view = body.slice(start, end);
+    const parts: string[] = [];
+    if (above > 0) parts.push(`↑${above} above`);
+    if (below > 0) parts.push(`↓${below} below`);
+    scrollNote = parts.join("  ·  ");
+  }
+
+  const title = " Statusline ";
+  const titleFill = Math.max(0, inner - 1 - visibleWidth(title));
+  const out: string[] = [
+    "┌─" + title + "─".repeat(titleFill) + "┐",
+    ...view.map((line) => `│${fitLine(line, inner)}│`),
+  ];
+  if (scrollNote) out.push(`│${fitLine(scrollNote, inner)}│`);
+  out.push("├" + "─".repeat(inner) + "┤", ...legend.map((hint) => `│${fitLine(hint, inner)}│`), "└" + "─".repeat(inner) + "┘");
+  return out;
 }
 
 /** Pure component rendering; previews use the production footer renderer. */

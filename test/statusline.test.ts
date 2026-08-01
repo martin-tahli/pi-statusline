@@ -45,7 +45,7 @@ test("stops the live timer when settled or the footer is disposed", async () => 
       },
     } as never;
 
-    statusline(pi, testCache());
+    statusline(pi, testCache(), join(cacheRoot, "defaults.json"));
     await handlers.get("session_start")!({}, ctx);
     const now = Date.now();
     handlers.get("turn_start")!({ timestamp: now });
@@ -107,7 +107,7 @@ test("renders emoji segments with themed semantic colors", async () => {
     },
   } as never;
 
-  statusline(pi, testCache());
+  statusline(pi, testCache(), join(cacheRoot, "defaults.json"));
   await handlers.get("session_start")!({}, ctx);
   const initial = footer!.render(500)[0]!;
   // Subscription (openai-codex + OAuth) hides the throughput ledger at idle; quota bars carry it.
@@ -197,7 +197,7 @@ test("loads Anthropic limits at session start", async () => {
       },
     } as never;
 
-    statusline(pi, testCache());
+    statusline(pi, testCache(), join(cacheRoot, "defaults.json"));
     await handlers.get("session_start")!({}, ctx);
     await new Promise<void>((resolve) => setImmediate(resolve));
 
@@ -252,7 +252,7 @@ test("ignores provider refreshes from a replaced session", async () => {
       },
     }) as never;
 
-    statusline(pi, testCache());
+    statusline(pi, testCache(), join(cacheRoot, "defaults.json"));
     await handlers.get("session_start")!({}, context(true));
     await new Promise<void>((resolve) => setImmediate(resolve));
     stale = true;
@@ -299,7 +299,7 @@ test("restores Anthropic limits when a session reloads", async () => {
     },
   } as never;
 
-  statusline(pi, testCache());
+  statusline(pi, testCache(), join(cacheRoot, "defaults.json"));
   await handlers.get("session_start")!({}, ctx);
   const resetAt = String(Math.floor((Date.now() + 3_600_000) / 1_000));
   handlers.get("after_provider_response")!({ headers: {
@@ -349,7 +349,7 @@ test("estimates throughput from response text when a provider reports no usage",
     },
   } as never;
 
-  statusline(pi, testCache());
+  statusline(pi, testCache(), join(cacheRoot, "defaults.json"));
   await handlers.get("session_start")!({}, ctx);
   handlers.get("context")!({ messages: [{ role: "user", content: "a".repeat(400) }] });
   const now = Date.now();
@@ -400,7 +400,7 @@ test("shows an API token ledger (not a bogus prompt rate) for hosted providers w
     },
   } as never;
 
-  statusline(pi, testCache());
+  statusline(pi, testCache(), join(cacheRoot, "defaults.json"));
   await handlers.get("session_start")!({}, ctx);
   handlers.get("context")!({ messages: [{ role: "user", content: "a".repeat(30_000) }] });
   const now = Date.now();
@@ -456,7 +456,7 @@ test("renders a fresh active provider beneath the session line without duplicate
       },
     } as never;
 
-    statusline(pi, testCache());
+    statusline(pi, testCache(), join(cacheRoot, "defaults.json"));
     await handlers.get("session_start")!({}, ctx);
     assert.ok(footer!.render(500)[1]?.includes("anthropic 5h — wk —"), "provider should render before its usage fetch completes");
     await new Promise<void>((resolve) => setImmediate(resolve));
@@ -701,7 +701,7 @@ test("an injected storage failure leaves the settings file unwritten and the sav
 
   assert.equal(existsSync(failPath), false, "a failed save must not create a partial file");
   assert.equal(h.doneResults.length, 0, "a failed save must not close the app (stays on the prompt)");
-  assert.ok(h.component.render(100).some((line) => line.startsWith("Save failed:")), "the failure must surface in the prompt");
+  assert.ok(h.component.render(100).some((line) => line.includes("Save failed:")), "the failure must surface in the prompt");
 });
 
 test("tracks every selected provider's usage simultaneously, not just the active model's", async () => {
@@ -757,7 +757,7 @@ test("tracks every selected provider's usage simultaneously, not just the active
       },
     } as never;
 
-    statusline(pi, testCache());
+    statusline(pi, testCache(), join(cacheRoot, "defaults.json"));
     await handlers.get("session_start")!({}, ctx);
     await new Promise<void>((resolve) => setImmediate(resolve));
     await new Promise<void>((resolve) => setImmediate(resolve));
@@ -807,7 +807,7 @@ test("refreshes git status on an interval independent of turn activity", async (
       },
     } as never;
 
-    statusline(pi, testCache());
+    statusline(pi, testCache(), join(cacheRoot, "defaults.json"));
     await handlers.get("session_start")!({}, ctx);
     const countAfterStart = execCount;
     assert.ok(intervalCallback, "expected a periodic git refresh interval");
@@ -836,9 +836,9 @@ test("navigates into Separators and Emojis sections via the command handler; cle
   input(K.down);
   input(K.enter);
   const sepLines = h.component.render(100);
-  assert.ok(sepLines[1]?.includes("Separators"), `expected Separators header, got: ${JSON.stringify(sepLines)}`);
+  assert.ok(sepLines.some((line) => line.includes("Separators")), `expected Separators header, got: ${JSON.stringify(sepLines)}`);
   // Rows are prefixed with ">" (selected) or " " — text-based, no ANSI color dependency.
-  assert.ok(sepLines.some((line) => line.startsWith(">") || line.startsWith(" ")), "selected-row indicator must be plain text");
+  assert.ok(sepLines.some((line) => line.includes("> Project / Git visibility")), "selected-row indicator must be plain text");
 
   // Escape back to root.
   input(K.escape);
@@ -852,7 +852,7 @@ test("navigates into Separators and Emojis sections via the command handler; cle
   input(K.down);
   input(K.enter);
   const emojiLines = h.component.render(100);
-  assert.ok(emojiLines[1]?.includes("Emojis"), `expected Emojis header, got: ${JSON.stringify(emojiLines)}`);
+  assert.ok(emojiLines.some((line) => line.includes("Emojis")), `expected Emojis header, got: ${JSON.stringify(emojiLines)}`);
 
   // Escape back to root.
   input(K.escape);
