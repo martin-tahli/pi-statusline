@@ -146,8 +146,8 @@ test("renders emoji segments with themed semantic colors", async () => {
 
   colorMode = "16";
   const semanticLine = footer!.render(1_000)[0]!;
-  assert.ok(semanticLine.includes("<warning>╺━━━━━━</warning><dim>────╴</dim> 60%"));
-  assert.ok(semanticLine.includes("<error>╺━━━━━━━━━</error><dim>─╴</dim> 80%"));
+  assert.ok(semanticLine.includes("<success>╺━━━━━━</success><dim>────╴</dim> 60%"));
+  assert.ok(semanticLine.includes("<warning>╺━━━━━━━━━</warning><dim>─╴</dim> 80%"));
 
   await handlers.get("model_select")!({}, ctx);
   assert.equal(footer!.render(500)[0]!.includes(" t/s"), false);
@@ -472,13 +472,15 @@ test("renders a fresh active provider beneath the session line without duplicate
   }
 });
 
-test("shows a tracked provider's fresh cross-session cache at startup", async () => {
+test("shows a tracked provider's last-known cross-session cache at startup", async () => {
   const handlers = new Map<string, (...args: any[]) => unknown>();
   let footer: { dispose?: () => void; render: (width: number) => string[] } | undefined;
   const configPath = join(cacheRoot, "tracked-cache.json");
   writeFileSync(configPath, JSON.stringify({ providerTracking: { selected: { anthropic: true }, order: ["anthropic"] } }));
-  const cache = testCache();
+  let clock = 1_000_000;
+  const cache = new ProviderUsageCache(join(cacheRoot, String(cacheNumber++)), 10_000, 10_000, () => clock);
   await cache.refresh("anthropic", async () => ({ limits: [{ label: "5h", used: 0.25 }] }));
+  clock += 6 * 60_000; // older than the normal 5-minute freshness window
   const pi = {
     on: (event: string, handler: (...args: any[]) => unknown) => handlers.set(event, handler),
     registerCommand: () => {},
@@ -572,6 +574,7 @@ function settingsHarness(options: { mode?: string; settingsPath?: string } = {})
   const handlers = new Map<string, (...args: any[]) => unknown>();
   const notifications: Array<[string, string]> = [];
   const doneResults: unknown[] = [];
+  const footerStates: boolean[] = [];
   let commandDef: { handler: (args: string, ctx: any) => Promise<void>; getArgumentCompletions?: unknown } | undefined;
   let customCount = 0;
   let component: { render: (width: number) => string[]; handleInput?: (data: string) => void; dispose?: () => void } | undefined;
@@ -595,7 +598,7 @@ function settingsHarness(options: { mode?: string; settingsPath?: string } = {})
     hasPendingMessages: () => false,
     sessionManager: { getBranch: () => [] },
     ui: {
-      setFooter: () => {},
+      setFooter: (factory: unknown) => footerStates.push(Boolean(factory)),
       notify: (message: string, level: string) => notifications.push([message, level]),
       custom: (factory: any) => {
         customCount++;
@@ -607,7 +610,7 @@ function settingsHarness(options: { mode?: string; settingsPath?: string } = {})
 
   statusline(pi, testCache(), options.settingsPath);
   return {
-    handlers, notifications, doneResults, ctx,
+    handlers, notifications, doneResults, footerStates, ctx,
     get commandDef() { return commandDef!; },
     get customCount() { return customCount; },
     get component() { return component!; },
@@ -620,7 +623,7 @@ const K = {
   down: "\x1b[B", up: "\x1b[A", end: "\x1b[F", home: "\x1b[H",
 } as const;
 
-test("bare /statusline in tui opens the settings app once at the three-row root without legacy args", async () => {
+test("bare /statusline in tui opens the settings app once at the root without legacy args", async () => {
   const h = settingsHarness();
   await h.handlers.get("session_start")!({}, h.ctx);
 
@@ -629,7 +632,7 @@ test("bare /statusline in tui opens the settings app once at the three-row root 
   assert.equal(h.customCount, 1, "bare /statusline must open ctx.ui.custom exactly once");
   assert.equal(h.notifications.length, 0, "opening the app must not notify");
   const root = h.component.render(100);
-  for (const label of ["Providers", "Separators", "Emojis"]) {
+  for (const label of ["Statusline & Providers", "Display", "Icons", "Reset all settings to default"]) {
     assert.ok(root.some((line) => line.includes(label)), `root screen missing ${label}: ${JSON.stringify(root)}`);
   }
 });
@@ -668,6 +671,20 @@ test("saving a changed draft persists it; discarding leaves the file untouched",
   assert.ok(existsSync(savePath), "save must persist the settings file");
   assert.equal(JSON.parse(readFileSync(savePath, "utf8")).enabled, false, "persisted draft must reflect the toggle");
   assert.equal(h.doneResults.length, 1, "a successful save closes the app");
+  assert.equal(h.footerStates.at(-1), false, "saving Disabled must leave the live footer removed");
+
+  const enablePath = join(cacheRoot, "enable-flow.json");
+  writeFileSync(enablePath, JSON.stringify({ version: 1, enabled: false }));
+  const e = settingsHarness({ settingsPath: enablePath });
+  await e.handlers.get("session_start")!({}, e.ctx);
+  await e.commandDef.handler("", e.ctx);
+  e.component.handleInput!(K.enter);
+  e.component.handleInput!(K.space);
+  e.component.handleInput!(K.escape);
+  e.component.handleInput!(K.escape);
+  e.component.handleInput!(K.save);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(e.footerStates.at(-1), true, "saving Enabled must install the live footer immediately");
 
   const discardPath = join(cacheRoot, "discard-flow.json");
   const d = settingsHarness({ settingsPath: discardPath });
@@ -826,7 +843,7 @@ test("refreshes git status on an interval independent of turn activity", async (
   }
 });
 
-test("navigates into Separators and Emojis sections via the command handler; clean Escape closes without a dialog", async () => {
+test("navigates into Display and Icons via the command handler; clean Escape closes without a dialog", async () => {
   const h = settingsHarness();
   await h.handlers.get("session_start")!({}, h.ctx);
   await h.commandDef.handler("", h.ctx);
@@ -836,28 +853,28 @@ test("navigates into Separators and Emojis sections via the command handler; cle
   input(K.down);
   input(K.enter);
   const sepLines = h.component.render(100);
-  assert.ok(sepLines.some((line) => line.includes("Separators")), `expected Separators header, got: ${JSON.stringify(sepLines)}`);
+  assert.ok(sepLines.some((line) => line.includes("Display")), `expected Display header, got: ${JSON.stringify(sepLines)}`);
   // Rows are prefixed with ">" (selected) or " " — text-based, no ANSI color dependency.
   assert.ok(sepLines.some((line) => line.includes("> Project / Git visibility")), "selected-row indicator must be plain text");
 
   // Escape back to root.
   input(K.escape);
   const rootAfterSep = h.component.render(100);
-  for (const label of ["Providers", "Separators", "Emojis"]) {
-    assert.ok(rootAfterSep.some((line) => line.includes(label)), `root must show ${label} after backing out of Separators`);
+  for (const label of ["Statusline & Providers", "Display", "Icons", "Reset all settings to default"]) {
+    assert.ok(rootAfterSep.some((line) => line.includes(label)), `root must show ${label} after backing out of Display`);
   }
 
-  // Navigate down twice to Emojis (index 2) and open it.
+  // Navigate down twice to Icons (index 2) and open it.
   input(K.down);
   input(K.down);
   input(K.enter);
   const emojiLines = h.component.render(100);
-  assert.ok(emojiLines.some((line) => line.includes("Emojis")), `expected Emojis header, got: ${JSON.stringify(emojiLines)}`);
+  assert.ok(emojiLines.some((line) => line.includes("Icons")), `expected Icons header, got: ${JSON.stringify(emojiLines)}`);
 
   // Escape back to root.
   input(K.escape);
   const rootAfterEmojis = h.component.render(100);
-  assert.ok(rootAfterEmojis.some((line) => line.includes("Providers")), "root must be restored after backing out of Emojis");
+  assert.ok(rootAfterEmojis.some((line) => line.includes("Statusline & Providers")), "root must be restored after backing out of Icons");
 
   // A clean Escape at root (no dirty changes) must close the app without a confirm dialog.
   input(K.escape);

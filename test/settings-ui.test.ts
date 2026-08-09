@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { visibleWidth } from "@earendil-works/pi-tui";
 import { DEFAULT_STATUSLINE_SETTINGS } from "../src/settings/defaults.ts";
 import {
   ROOT_ROWS,
@@ -32,7 +33,7 @@ import { buildSeparatorsScreen } from "../src/settings/separators-screen.ts";
 import { buildEmojisScreen, ICON_SYMBOLS } from "../src/settings/emojis-screen.ts";
 
 test("root rows and keyboard routing are exact and deterministic", () => {
-  assert.deepEqual(ROOT_ROWS.map(({ label }) => label), ["Providers", "Separators", "Emojis"]);
+  assert.deepEqual(ROOT_ROWS.map(({ label }) => label), ["Statusline & Providers", "Display", "Icons", "Reset all settings to default"]);
 
   const initial = createSettingsUi(DEFAULT_STATUSLINE_SETTINGS);
   assert.equal(routeSettingsKey(initial, "ArrowUp").state.selected, 0);
@@ -204,13 +205,11 @@ test("provider screen is truthful, capability-gated, and integrated without I/O"
   state.selected = 0;
   const lines = renderSettingsUi(state, { width: 79, providers: providerContext });
   assert.ok(lines.some((line) => line === "Provider: Dynamic A"));
-  assert.ok(lines.some((line) => line === "> Display mode: custom"));
-  assert.ok(lines.some((line) => line === "  Provider icon: custom"));
-  assert.ok(lines.some((line) => line === "  Provider icon value: D"));
-  assert.ok(lines.some((line) => line === "  Missing data: warning"));
-  assert.ok(lines.some((line) => line === "  Refresh now"));
+  assert.ok(lines.some((line) => line === "> Show project for this provider: on"));
+  assert.ok(lines.some((line) => line === "  Refresh usage now"));
   assert.ok(lines.some((line) => line === "  Mine Reset format: exact-date"));
   assert.ok(lines.some((line) => line === "  Mine Width: 18"));
+  assert.equal(lines.some((line) => /Display mode|Provider icon|Missing data|Use cache|Show zero/.test(line)), false);
 });
 
 test("provider draft actions retain configuration, stable order, overrides, and icon path", () => {
@@ -301,21 +300,9 @@ test("provider detail navigation routes every editable control through the share
     state = routed.state;
   };
 
-  edit("Display mode:");
-  assert.equal(state.draft.providers.records["dynamic-a"].displayMode, "custom");
-  edit("Active model context:");
-  assert.equal(state.draft.providers.records["dynamic-a"].activeModel.context, "off");
-  edit("Provider icon:");
-  assert.equal(state.draft.icons.providers["dynamic-a"].mode, "custom");
-  edit("Provider icon value:", "D");
-  assert.equal(state.draft.icons.providers["dynamic-a"].value, "D");
-  edit("Missing data:");
-  assert.equal(state.draft.providers.records["dynamic-a"].missingDataPolicy, "na");
-  edit("Refresh interval:");
-  assert.equal(state.draft.providers.records["dynamic-a"].refresh?.refreshIntervalMs, 20_000);
-  edit("Use cache:");
-  assert.equal(state.draft.providers.records["dynamic-a"].refresh?.useCache, false);
-  edit("Refresh now");
+  edit("Show context for this provider:");
+  assert.equal(state.draft.providers.records["dynamic-a"].activeModel.context, "on");
+  edit("Refresh usage now");
   assert.deepEqual(routed.effect, { type: "refresh-provider", providerId: "dynamic-a" });
   edit("Renamed Visible:");
   assert.equal(state.draft.providers.records["dynamic-a"].windows.short.visible, false);
@@ -327,7 +314,7 @@ test("provider detail navigation routes every editable control through the share
   assert.equal(state.selected, 2);
 });
 
-test("provider detail renders only capability-applicable rows", () => {
+test("provider detail shows only editable, working controls", () => {
   const renderDetail = (context: ProviderUiContext) => {
     const state = createSettingsUi(DEFAULT_STATUSLINE_SETTINGS);
     state.openRow = "providers";
@@ -335,32 +322,23 @@ test("provider detail renders only capability-applicable rows", () => {
     return renderSettingsUi(state, { width: 79, providers: context });
   };
   const subscription = renderDetail(providerContext);
-  assert.ok(subscription.includes("  Streaming output: Available"));
-  assert.ok(subscription.some((line) => line.includes("Refresh interval:")));
-  assert.equal(subscription.some((line) => /Local throughput|API token|API cost|Not available/.test(line)), false);
+  assert.ok(subscription.some((line) => line.includes("Refresh usage now")));
+  assert.ok(subscription.some((line) => line.includes("Renamed Visible:")));
 
   const contextFor = (id: string, capability: ProviderCapability): ProviderUiContext => ({
     descriptors: [{ id, displayName: id, provenance: ["available"], available: true, authenticated: true, models: [{ provider: id }] }],
     capabilities: { [id]: capability },
   });
-  const local = renderDetail(contextFor("local", {
-    ...supportedCapability, billing: "local", quotaSupport: "none", quotaReliability: "none",
-    localSpeed: true, hostedSpeed: false,
-  }));
-  assert.ok(local.includes("  Local throughput: Available"));
-  assert.equal(local.some((line) => /Streaming output|API token|API cost|Refresh interval|Not available/.test(line)), false);
-
-  const api = renderDetail(contextFor("api", {
-    ...supportedCapability, billing: "api", quotaSupport: "none", quotaReliability: "none",
-    tokenLedger: true, costLedger: true,
-  }));
-  assert.ok(api.includes("  Streaming output: Available"));
-  assert.ok(api.includes("  API token ledger: Available"));
-  assert.ok(api.includes("  API cost ledger: Available"));
-  assert.equal(api.some((line) => /Local throughput|Refresh interval|Not available/.test(line)), false);
+  for (const lines of [
+    renderDetail(contextFor("local", { ...supportedCapability, billing: "local", quotaSupport: "none", quotaReliability: "none", localSpeed: true, hostedSpeed: false })),
+    renderDetail(contextFor("api", { ...supportedCapability, billing: "api", quotaSupport: "none", quotaReliability: "none", tokenLedger: true, costLedger: true })),
+  ]) {
+    assert.equal(lines.some((line) => /Available|Refresh interval|Use cache|Missing data|Provider icon/.test(line)), false);
+    assert.ok(lines.some((line) => line.includes("Reset provider to default")));
+  }
 });
 
-test("R19-R25 separators screen makes every schema-backed presentation domain reachable", () => {
+test("display screen exposes working controls and omits inert settings", () => {
   let state = createSettingsUi(DEFAULT_STATUSLINE_SETTINGS);
   state.selected = 1;
   state = routeSettingsKey(state, "Enter", providerContext).state;
@@ -370,36 +348,32 @@ test("R19-R25 separators screen makes every schema-backed presentation domain re
   for (const id of [
     ...Object.keys(DEFAULT_STATUSLINE_SETTINGS.segments).map((key) => `segments.${key}`),
     ...Object.keys(DEFAULT_STATUSLINE_SETTINGS.extras).map((key) => `extras.${key}`),
-    "layout.segmentOrder.project", "layout.narrowPriority.time", "layout.providerRows", "layout.placement", "layout.maxWidth",
-    ...Object.keys(DEFAULT_STATUSLINE_SETTINGS.separators).map((key) => `separators.${key}`),
+    "layout.segmentOrder.project", "layout.narrowPriority.time",
+    "separators.main", "separators.projectGit", "separators.padding",
+    "separators.spacingBefore", "separators.spacingAfter", "separators.trailingSpacing",
     ...Object.keys(DEFAULT_STATUSLINE_SETTINGS.bars).map((key) => `bars.${key}`),
     ...Object.keys(DEFAULT_STATUSLINE_SETTINGS.thresholds).map((key) => `thresholds.${key}`),
-    ...Object.keys(DEFAULT_STATUSLINE_SETTINGS.timing).map((key) => `timing.${key}`),
-  ]) assert.ok(ids.includes(id), `missing settings row ${id}`);
+  ]) assert.ok(ids.includes(id), `missing working settings row ${id}`);
+  for (const id of [
+    "layout.providerRows", "layout.placement", "layout.maxWidth", "separators.window",
+    "separators.provider", "separators.iconLabel", "separators.labelValue", "separators.preset",
+    "timing.refreshIntervalMs", "timing.maxCacheAgeMs", "reset.all",
+  ]) assert.equal(ids.includes(id), false, `inert or duplicate row must stay hidden: ${id}`);
 
   const select = (id: string) => ({ ...state, selected: buildSeparatorsScreen(state.draft).findIndex((row) => row.id === id) });
   state = routeSettingsKey(select("segments.project"), "Space", providerContext).state;
   assert.equal(state.draft.segments.project, false);
-  assert.equal(DEFAULT_STATUSLINE_SETTINGS.segments.project, true);
-
   state = routeSettingsKey(select("layout.segmentOrder.model"), "Ctrl+ArrowUp", providerContext).state;
   assert.deepEqual(state.draft.layout.segmentOrder.slice(0, 2), ["model", "project"]);
   state = routeSettingsKey(select("layout.narrowPriority.throughput"), "Ctrl+ArrowUp", providerContext).state;
   assert.deepEqual(state.draft.layout.narrowPriority.slice(0, 2), ["throughput", "time"]);
 
   state = routeSettingsKey(select("separators.main"), "X", providerContext).state;
-  assert.equal(state.draft.separators.main, " · X");
-  assert.equal(state.draft.separators.provider, "\n", "editing one field must not normalize another");
+  assert.equal(state.draft.separators.main, " >X");
   state.draft.bars.width = 99;
   state = routeSettingsKey(select("reset.separators"), "Enter", providerContext).state;
   assert.deepEqual(state.draft.separators, DEFAULT_STATUSLINE_SETTINGS.separators);
   assert.equal(state.draft.bars.width, 99, "section reset must be isolated");
-
-  const original = structuredClone(state.original);
-  state = routeSettingsKey(state, "Escape", providerContext).state;
-  state = routeSettingsKey(state, "Escape", providerContext).state;
-  assert.equal(state.confirmClose, true);
-  assert.deepEqual(state.original, original);
 });
 
 test("text rows accept printable navigation letters and space before key actions", () => {
@@ -411,7 +385,7 @@ test("text rows accept printable navigation letters and space before key actions
     separators = routeSettingsKey(separators, key, providerContext).state;
     assert.equal(separators.selected, separatorRow);
   }
-  assert.equal(separators.draft.separators.main, " · hjkl ");
+  assert.equal(separators.draft.separators.main, " >hjkl ");
 
   let emojis = createSettingsUi(DEFAULT_STATUSLINE_SETTINGS);
   emojis.openRow = "emojis";
@@ -497,14 +471,92 @@ test("R26 emojis routes styles, named symbols, and dynamic provider icons throug
   state = routeSettingsKey(select("icons.symbols.project"), "P", providerContext).state;
   assert.equal(state.draft.icons.symbols.project, "P");
   state = routeSettingsKey(select("icons.providers.dynamic-a.mode"), "Enter", providerContext).state;
-  assert.equal(state.draft.icons.providers["dynamic-a"].mode, "global");
+  assert.equal(state.draft.icons.providers["dynamic-a"].mode, "custom");
   state = routeSettingsKey(select("icons.providers.dynamic-a.value"), "D", providerContext).state;
   assert.deepEqual(state.draft.icons.providers["dynamic-a"], { mode: "custom", value: "D" });
+  state = routeSettingsKey(select("icons.providers.dynamic-a.mode"), "Enter", providerContext).state;
+  assert.deepEqual(state.draft.icons.providers["dynamic-a"], { mode: "default", value: "D" });
+  state = routeSettingsKey(select("icons.providers.dynamic-a.mode"), "Enter", providerContext).state;
+  assert.deepEqual(state.draft.icons.providers["dynamic-a"], { mode: "custom", value: "D" }, "menu must not expose duplicate hidden mode");
 
   const detail = buildProviderDetail(state.draft, providerContext, "dynamic-a")!;
   assert.deepEqual(detail.providerIcon, state.draft.icons.providers["dynamic-a"]);
   state = routeSettingsKey(select("reset.icons"), "Enter", providerContext).state;
   assert.deepEqual(state.draft.icons, DEFAULT_STATUSLINE_SETTINGS.icons);
+});
+
+test("root reset row restores every group to default in the draft without touching the saved original", () => {
+  const original = structuredClone(DEFAULT_STATUSLINE_SETTINGS);
+  original.enabled = false;
+  original.bars.width = 7;
+  let state = createSettingsUi(original);
+  // Dirty the draft across several groups beyond what the saved original already carries.
+  state.draft.segments.project = false;
+  state.draft.layout.providerRows = "inline";
+  state.draft.separators.main = "X";
+  state.draft.thresholds.contextWarn = 50;
+  state.draft.timing.refreshIntervalMs = 99_000;
+  state.draft.icons.style = "ascii";
+  state.draft.preview.mode = "narrow";
+
+  state.selected = ROOT_ROWS.length - 1;
+  assert.equal(ROOT_ROWS[state.selected].id, "reset");
+  state = routeSettingsKey(state, "Enter").state;
+  assert.equal(state.draft.enabled, true);
+  assert.equal(state.draft.providers.enabled, true);
+  assert.equal(state.draft.segments.project, true);
+  assert.equal(state.draft.layout.providerRows, "newline");
+  assert.equal(state.draft.separators.main, " >");
+  assert.equal(state.draft.bars.width, 12);
+  assert.equal(state.draft.thresholds.contextWarn, 80);
+  assert.equal(state.draft.timing.refreshIntervalMs, 10_000);
+  assert.equal(state.draft.icons.style, "emoji");
+  assert.equal(state.draft.preview.mode, "current");
+  // The reset is a draft mutation: the saved original stays intact, so it stays dirty and reversible.
+  assert.equal(state.original.enabled, false);
+  assert.equal(state.original.bars.width, 7);
+  assert.equal(isDirty(state), true);
+  assert.notEqual(state.draft, state.original);
+});
+
+test("provider detail reset restores only the currently open provider", () => {
+  let state = createSettingsUi(DEFAULT_STATUSLINE_SETTINGS);
+  state.openRow = "providers";
+  state.selected = 2;
+  state = routeSettingsKey(state, "Enter", providerContext).state;
+  assert.equal(state.selectedProviderId, "dynamic-a");
+  setProviderDisplayMode(state.draft, "dynamic-a", "custom", providerContext.windows!["dynamic-a"]);
+  setProviderDisplayMode(state.draft, "stored-x", "custom", []);
+  setProviderIcon(state.draft, "dynamic-a", { mode: "custom", value: "D" });
+  setProviderIcon(state.draft, "stored-x", { mode: "custom", value: "S" });
+  assert.equal(state.draft.providers.records["dynamic-a"].displayMode, "custom");
+  assert.deepEqual(state.draft.icons.providers["dynamic-a"], { mode: "custom", value: "D" });
+
+  const lines = renderSettingsUi(state, { width: 79, providers: providerContext });
+  const resetLine = lines.findIndex((line) => line.includes("Reset provider to default"));
+  assert.ok(resetLine >= 2, "provider detail must show a reset row");
+  state.selected = resetLine - 2;
+  state = routeSettingsKey(state, "Enter", providerContext).state;
+
+  // dynamic-a is back to defaults (record and icon).
+  assert.equal(state.draft.providers.records["dynamic-a"].displayMode, "default");
+  assert.equal(state.draft.providers.records["dynamic-a"].enabled, true);
+  assert.equal(state.draft.icons.providers["dynamic-a"], undefined);
+  // stored-x is untouched: the reset is scoped to the open provider only.
+  assert.equal(state.draft.providers.records["stored-x"].displayMode, "custom");
+  assert.deepEqual(state.draft.icons.providers["stored-x"], { mode: "custom", value: "S" });
+  // Cursor stays on the reset row (now the last detail row for a default provider).
+  assert.ok(state.selected >= 0);
+});
+
+test("display screen has section resets but no duplicate reset-all action", () => {
+  const state = createSettingsUi(DEFAULT_STATUSLINE_SETTINGS);
+  state.openRow = "separators";
+  const ids = buildSeparatorsScreen(state.draft).map(({ id }) => id);
+  assert.equal(ids.includes("reset.all"), false);
+  for (const group of ["segments", "extras", "layout", "separators", "bars", "thresholds"]) {
+    assert.ok(ids.includes(`reset.${group}`));
+  }
 });
 
 test("default to custom snapshots every effective provider and window value", () => {
@@ -532,7 +584,7 @@ test("default to custom snapshots every effective provider and window value", ()
     refreshIntervalMs: 20_000, maxCacheAgeMs: 40_000, useCache: false,
     keepAfterFailure: false, refreshWhileActive: false, refreshDisabledProvider: true,
   });
-  assert.deepEqual(draft.icons.providers["dynamic-a"], { mode: "global", value: "" });
+  assert.equal(draft.icons.providers["dynamic-a"], undefined);
   assert.deepEqual(record.windows.short, {
     visible: true, label: "Effective", showBar: true, showPercent: false, showReset: true,
     resetFormat: "countdown", showUsed: true, showRemaining: true, showZero: false, width: 21,
@@ -590,7 +642,7 @@ test("renderSettingsWindow draws a bordered window with a per-screen key legend"
   assert.ok(lines.every((line) => line.startsWith("│") || line.startsWith("┌") || line.startsWith("├") || line.startsWith("└")), "every line must carry window chrome");
   // Title and root rows are present inside the box.
   assert.ok(lines.some((line) => line.includes("Statusline")), "window title missing");
-  for (const label of ["Providers", "Separators", "Emojis"]) {
+  for (const label of ["Statusline & Providers", "Display", "Icons", "Reset all settings to default"]) {
     assert.ok(lines.some((line) => line.includes(label)), `root row ${label} missing`);
   }
   // Root legend mentions open/quit; never the detail-only keys.
@@ -636,4 +688,30 @@ test("renderSettingsWindow scrolls to keep the selected row visible when content
   const full = renderSettingsWindow(state, { width: 80, providers });
   assert.ok(full.length > scrolled.length, "omitting viewportRows must render the full body");
   assert.equal(full.some((line) => /[↑↓]\d+ (above|below)/.test(line)), false, "no scroll indicator when not overflowing");
+});
+
+test("renderSettingsWindow keeps the preview pinned while Display settings scroll", () => {
+  const providers = { descriptors: [], capabilities: {}, order: [], activeProvider: undefined };
+  let state = createSettingsUi(DEFAULT_STATUSLINE_SETTINGS);
+  state = routeSettingsKey(routeSettingsKey(state, "ArrowDown").state, "Enter", providers).state;
+
+  const atTop = renderSettingsWindow(state, { width: 100, providers, viewportRows: 12 });
+  assert.ok(atTop.some((line) => line.includes("Current session preview")), "preview missing at top of Display list");
+
+  state = routeSettingsKey(state, "End").state;
+  const atBottom = renderSettingsWindow(state, { width: 100, providers, viewportRows: 12 });
+  assert.ok(atBottom.some((line) => line.includes("Current session preview")), "preview must remain pinned after scrolling");
+  assert.ok(atBottom.some((line) => line.includes("> ")), "selected setting must remain visible with pinned preview");
+});
+
+test("renderSettingsWindow stays within very small terminal bounds", () => {
+  const state = createSettingsUi(DEFAULT_STATUSLINE_SETTINGS);
+  const lines = renderSettingsWindow(state, { width: 20, viewportRows: 8 });
+  assert.ok(lines.length <= 8, `height overflow: ${lines.length}`);
+  assert.ok(lines.every((line) => visibleWidth(line) <= 20), `width overflow: ${JSON.stringify(lines)}`);
+  for (const width of [1, 2, 3]) {
+    const tiny = renderSettingsWindow(state, { width, viewportRows: width });
+    assert.ok(tiny.length <= width);
+    assert.ok(tiny.every((line) => visibleWidth(line) <= width));
+  }
 });

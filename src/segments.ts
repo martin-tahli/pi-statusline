@@ -28,7 +28,12 @@ export function createSegments(
 const COMPACT_ORDER: SegmentId[] = ["context", "session", "model", "effort", "project", "throughput", "time"];
 const DROP_ORDER = COMPACT_ORDER.slice(1).reverse();
 
-export function composeSegments(segments: Segment[], width: number, separator = " · "): string {
+export function composeSegments(
+  segments: Segment[],
+  width: number,
+  separator = " · ",
+  dropOrder: readonly SegmentId[] = DROP_ORDER,
+): string {
   if (width <= 0) return "";
   let parts = segments.flatMap((segment) => {
     if (!segment.enabled) return [];
@@ -38,7 +43,7 @@ export function composeSegments(segments: Segment[], width: number, separator = 
   const line = parts.map((part) => part.value).join(separator);
   if (visibleWidth(line) <= width) return line;
 
-  for (const id of DROP_ORDER) {
+  for (const id of dropOrder) {
     parts = parts.filter((part) => part.id !== id);
     const compactLine = parts.map((part) => part.value).join(separator);
     if (visibleWidth(compactLine) <= width) return compactLine;

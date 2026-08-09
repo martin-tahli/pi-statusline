@@ -29,7 +29,7 @@ pi -e .
 
 ## Segments
 
-At full width, segments render in the order below. When that line no longer fits, segments switch to compact priority order—`context`, `session`, `model`, `effort`, `project`, `throughput`, then `time`—and the lowest-priority available segment disappears first.
+At full width, segments render in the order below. When the line no longer fits, the configured narrow-drop priority removes segments one at a time; by default `time` drops first and `context` is retained until last.
 
 | Segment | Default | Contents |
 |---|---:|---|
@@ -43,7 +43,7 @@ At full width, segments render in the order below. When that line no longer fits
 
 The Git HUD defaults on inside repositories: `main ✓`. It shows `↓` incoming/behind and `↑` outgoing/ahead counts; `✓` means neither is pending. Local working-tree changes are intentionally ignored. Colors use the active theme's accent, success, warning, and error roles.
 
-Icons default to the **emoji** style. The **Emojis** section of `/statusline` switches the whole line to Nerd Font, Unicode, ASCII, minimal, or none (ASCII and none are the safe fallbacks for terminals without glyph or truecolor support), and overrides individual symbol or provider icons. Optional extras default off: `cost` (appends session `$cost` to the model segment), `sessionElapsed`, `lastTurn`, and `pending` — all toggleable in the **Separators** section.
+Icons default to the **emoji** style. The **Icons** section of `/statusline` switches the whole line to Nerd Font, Unicode, ASCII, minimal, or none (ASCII and none are safe fallbacks for terminals without glyph support), and overrides the symbols the footer actually renders plus provider icons. Optional extras default off: `cost` (appends session `$cost` to the model segment), `sessionElapsed`, `lastTurn`, and `pending` — all toggleable in **Display**.
 
 ## Configure
 
@@ -53,19 +53,19 @@ The app has three sections:
 
 | Section | Controls |
 |---|---|
-| **Providers** | Master footer on/off; select, reorder, and configure each provider — display mode, active-model override, per-window bar/percent/reset, missing-data policy, and refresh/cache. |
-| **Separators** | Segment visibility and extras (Git HUD, cost, elapsed/last-turn time, pending); segment order and narrow-drop priority; provider-row layout/placement/width; separators, spacing, padding, and presets; bar characters/width/thresholds; context warning/critical thresholds; footer refresh interval and cache age. |
-| **Emojis** | Global icon style (emoji / unicode / ascii / nerd font / minimal / none) and per-symbol/per-provider icons. |
+| **Statusline & Providers** | Master footer and provider-tracking toggles; enable, reorder, refresh, and configure each provider's active-model segments and available quota windows. |
+| **Display** | Segment visibility and extras (Git HUD, cost, elapsed/last-turn time, pending); segment order and narrow-drop priority; live separators/spacing/padding; bar style, characters, width, truecolor and thresholds; context warning/critical thresholds. |
+| **Icons** | Global icon style (emoji / unicode / ascii / nerd font / minimal / none), rendered symbol overrides, and per-provider icons. |
 
-The app opens a draft cloned from your live settings, renders a live preview through the real footer renderer, and writes only on **Save**. Saving is persist-first: the file is written before the live settings are swapped, so a failed write changes nothing. **Escape** on a dirty draft offers Save / Discard / Cancel; a clean draft closes immediately. Section and full resets restore defaults in the draft without touching the saved file until you save.
+The app opens a draft cloned from your live settings, renders a live preview through the real footer renderer, and writes only on **Save**. Saving is persist-first: the file is written before the live settings are swapped, so a failed write changes nothing. **Escape** on a dirty draft offers Save / Discard / Cancel; a clean draft closes immediately. Root, section, and provider resets update only the draft until you save.
 
 Settings persist as a versioned document in `~/.pi/agent/statusline.json`. An unversioned document from an earlier release is migrated once into the new shape on first load and becomes durable only on your next save. A document from a newer schema version than this extension supports opens read-only and is never overwritten. Provider refresh runs no faster than once every 10 seconds per provider (the settings preview itself performs no I/O, but the background coordinator keeps running and an eligible provider can be refreshed on demand); a shared cross-process cache (`~/.pi/agent/statusline/provider-usage/`) retains the last result for up to 5 minutes so a new session renders immediately and only one process fetches each provider.
 
 ## Provider tracking
 
-Configure providers in the **Providers** section of `/statusline`. It lists every provider returned by pi's configured `getAvailable()` models — whatever you're authenticated with, not a fixed list — and selects newly authenticated providers automatically while keeping your saved selection, order, and overrides.
+Configure providers in **Statusline & Providers** under `/statusline`. It lists every provider returned by pi's configured `getAvailable()` models — whatever you're authenticated with, not a fixed list — and selects newly authenticated providers automatically while keeping your saved selection, order, and overrides.
 
-For each provider you can toggle it on or off (its configuration is retained when turned back on), reorder it among the other selected providers, and override each usage window's bar, percent, and reset independently (`inherit` the shared default, `on`, or `off`). A provider with no adapter, or one that is unauthorized, stays listed but shows a sanitized reason instead of a row — never a raw error, token, or credential.
+For each provider you can toggle it on or off (its configuration is retained when turned back on), reorder it, override active-model segments, and configure each reported usage window's visibility, label, bar, percent, reset format, and width. A provider with no adapter, or one that is unauthorized, stays listed but shows a sanitized reason instead of a row — never a raw error, token, or credential.
 
 Fresh selected providers render in that saved order beneath the active-session line, **simultaneously and independently of which model is currently active**—selecting both Anthropic and Codex shows both rows at once even while you're talking to a third provider. Every pi process shares fresh quotas through `~/.pi/agent/statusline/provider-usage/`, so a new session renders the last result immediately and only one process fetches each provider every 10 seconds. A row is hidden when both enabled metrics are unavailable, or when its usage is missing, unauthorized, expired, or stale. The active provider's quota stays on its own row while visible and falls back to the plain session line otherwise, so it's never shown twice.
 

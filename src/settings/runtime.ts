@@ -24,6 +24,19 @@ export function configuredProviders(registry: AvailableModelRegistry): string[] 
     .filter((provider): provider is string => provider !== undefined)));
 }
 
+/** Pre-0.9 default separators. Now that the footer is settings-driven, a saved doc still
+ * holding these would flip the live look from `>` to `·`; migrate it once, in-memory and
+ * idempotently, so the documented look is preserved without touching a user's real edits. */
+const LEGACY_DEFAULT_SEPARATORS = { main: " · ", projectGit: " " } as const;
+
+function migrateLegacyDefaultSeparators(settings: StatuslineSettings): StatuslineSettings {
+  const { main, projectGit } = settings.separators;
+  if (main === LEGACY_DEFAULT_SEPARATORS.main && projectGit === LEGACY_DEFAULT_SEPARATORS.projectGit) {
+    return { ...settings, separators: { ...settings.separators, main: DEFAULT_STATUSLINE_SETTINGS.separators.main, projectGit: DEFAULT_STATUSLINE_SETTINGS.separators.projectGit } };
+  }
+  return settings;
+}
+
 /**
  * Load settings from disk, auto-migrating legacy (unversioned) documents to the new schema.
  * Missing file / invalid JSON -> a clone of defaults. Legacy docs (no `version`) are migrated
@@ -39,7 +52,7 @@ export function loadRuntimeSettings(path: string): StatuslineSettings {
   if (raw && typeof raw === "object" && !Array.isArray(raw) && !("version" in (raw as Record<string, unknown>))) {
     return parseStatuslineSettings(migrateLegacySettings(raw)).settings;
   }
-  return parseStatuslineSettings(raw).settings;
+  return migrateLegacyDefaultSeparators(parseStatuslineSettings(raw).settings);
 }
 
 /**

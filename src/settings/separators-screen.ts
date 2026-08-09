@@ -7,12 +7,12 @@ export interface SeparatorsScreenRow {
   label: string;
 }
 
-type Group = "segments" | "extras" | "layout" | "separators" | "bars" | "thresholds" | "timing";
+type Group = "segments" | "extras" | "layout" | "separators" | "bars" | "thresholds";
 type Row = SeparatorsScreenRow & (
   | { kind: "toggle"; group: "segments" | "extras" | "bars"; field: string }
   | { kind: "order"; field: "segmentOrder" | "narrowPriority"; index: number }
-  | { kind: "cycle"; group: "layout" | "separators" | "bars"; field: string; values: readonly string[] }
-  | { kind: "number"; group: "layout" | "separators" | "bars" | "thresholds" | "timing"; field: string; step: number }
+  | { kind: "cycle"; group: "bars"; field: string; values: readonly string[] }
+  | { kind: "number"; group: "separators" | "bars" | "thresholds"; field: string; step: number }
   | { kind: "text"; group: "separators" | "bars"; field: string }
   | { kind: "reset"; group: Group }
 );
@@ -33,10 +33,7 @@ const EXTRA_LABELS = {
   lastTurn: "Last-turn time",
   pending: "Pending indicator",
 } as const;
-const PRESETS = ["Default", "Compact", "Minimal", "Pipes", "Arrows", "Unicode", "ASCII", "Custom"] as const;
-const BAR_STYLES = ["rounded", "block", "line", "bracket", "ascii"] as const;
-const PROVIDER_ROWS = ["newline", "inline", "wrap"] as const;
-const PLACEMENTS = ["below", "above"] as const;
+const BAR_STYLES = ["rounded", "block"] as const;
 
 function shown(value: string): string {
   return JSON.stringify(value);
@@ -52,20 +49,14 @@ function rows(draft: StatuslineSettings): Row[] {
   }
   draft.layout.segmentOrder.forEach((id, index) => result.push({ id: `layout.segmentOrder.${id}`, label: `Segment order ${index + 1}: ${SEGMENT_LABELS[id]}`, kind: "order", field: "segmentOrder", index }));
   draft.layout.narrowPriority.forEach((id, index) => result.push({ id: `layout.narrowPriority.${id}`, label: `Narrow priority ${index + 1}: ${SEGMENT_LABELS[id]}`, kind: "order", field: "narrowPriority", index }));
-  result.push(
-    { id: "layout.providerRows", label: `Provider row layout: ${draft.layout.providerRows}`, kind: "cycle", group: "layout", field: "providerRows", values: PROVIDER_ROWS },
-    { id: "layout.placement", label: `Provider placement: ${draft.layout.placement}`, kind: "cycle", group: "layout", field: "placement", values: PLACEMENTS },
-    { id: "layout.maxWidth", label: `Provider maximum width: ${draft.layout.maxWidth}`, kind: "number", group: "layout", field: "maxWidth", step: 1 },
-  );
   for (const [field, label] of [
-    ["main", "Main separator"], ["projectGit", "Project / Git separator"], ["window", "Window separator"],
-    ["provider", "Provider separator"], ["iconLabel", "Icon / label separator"], ["labelValue", "Label / value separator"],
-    ["padding", "Custom padding"],
+    ["main", "Main separator"],
+    ["projectGit", "Project / Git separator"],
+    ["padding", "Separator padding"],
   ] as const) result.push({ id: `separators.${field}`, label: `${label}: ${shown(draft.separators[field])}`, kind: "text", group: "separators", field });
   for (const [field, label] of [
     ["spacingBefore", "Spacing before"], ["spacingAfter", "Spacing after"], ["trailingSpacing", "Trailing spacing"],
   ] as const) result.push({ id: `separators.${field}`, label: `${label}: ${draft.separators[field]}`, kind: "number", group: "separators", field, step: 1 });
-  result.push({ id: "separators.preset", label: `Separator preset: ${draft.separators.preset}`, kind: "cycle", group: "separators", field: "preset", values: PRESETS });
   result.push(
     { id: "bars.width", label: `Bar width: ${draft.bars.width}`, kind: "number", group: "bars", field: "width", step: 1 },
     ...(["fill", "empty", "capLeft", "capRight"] as const).map((field): Row => ({ id: `bars.${field}`, label: `Bar ${field}: ${shown(draft.bars[field])}`, kind: "text", group: "bars", field })),
@@ -76,10 +67,8 @@ function rows(draft: StatuslineSettings): Row[] {
     { id: "bars.critAt", label: `Bar critical threshold: ${draft.bars.critAt}`, kind: "number", group: "bars", field: "critAt", step: 1 },
     { id: "thresholds.contextWarn", label: `Context warning threshold: ${draft.thresholds.contextWarn}`, kind: "number", group: "thresholds", field: "contextWarn", step: 1 },
     { id: "thresholds.contextCrit", label: `Context critical threshold: ${draft.thresholds.contextCrit}`, kind: "number", group: "thresholds", field: "contextCrit", step: 1 },
-    { id: "timing.refreshIntervalMs", label: `Footer refresh interval: ${draft.timing.refreshIntervalMs}ms`, kind: "number", group: "timing", field: "refreshIntervalMs", step: 10_000 },
-    { id: "timing.maxCacheAgeMs", label: `Maximum cache age: ${draft.timing.maxCacheAgeMs}ms`, kind: "number", group: "timing", field: "maxCacheAgeMs", step: 10_000 },
   );
-  for (const group of ["segments", "extras", "layout", "separators", "bars", "thresholds", "timing"] as const) {
+  for (const group of ["segments", "extras", "layout", "separators", "bars", "thresholds"] as const) {
     result.push({ id: `reset.${group}`, label: `Reset ${group} to defaults`, kind: "reset", group });
   }
   return result;
