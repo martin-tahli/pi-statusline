@@ -45,7 +45,7 @@ test("state: mutating draft does not change source or DEFAULT_STATUSLINE_SETTING
   assert.equal(DEFAULT_STATUSLINE_SETTINGS.providers.enabled, true);
   assert.equal(DEFAULT_STATUSLINE_SETTINGS.providers.order.length, 0);
   assert.equal(DEFAULT_STATUSLINE_SETTINGS.layout.providerRows, "newline");
-  assert.equal(DEFAULT_STATUSLINE_SETTINGS.separators.main, " · ");
+  assert.equal(DEFAULT_STATUSLINE_SETTINGS.separators.main, " >");
   assert.equal(DEFAULT_STATUSLINE_SETTINGS.segments.project, true);
   assert.equal(DEFAULT_STATUSLINE_SETTINGS.bars.width, 12);
   assert.equal(DEFAULT_STATUSLINE_SETTINGS.thresholds.contextWarn, 80);
@@ -80,7 +80,7 @@ test("state: resetSelected nested path", () => {
   draft.separators.main = "|";
 
   resetSelected(draft, "separators.main");
-  assert.equal(draft.separators.main, " · "); // Default
+  assert.equal(draft.separators.main, " >"); // Default
 });
 
 test("state: resetProvider changes draft only", () => {
@@ -113,7 +113,7 @@ test("state: resetSection changes draft only", () => {
 
   resetSection(draft, "separators");
 
-  assert.equal(draft.separators.main, " · ");
+  assert.equal(draft.separators.main, " >");
   assert.equal(draft.separators.preset, "Default");
 });
 
@@ -146,7 +146,7 @@ test("state: resetAll changes draft only", () => {
   assert.equal(draft.enabled, true);
   assert.equal(draft.providers.enabled, true);
   assert.equal(draft.layout.providerRows, "newline");
-  assert.equal(draft.separators.main, " · ");
+  assert.equal(draft.separators.main, " >");
   assert.equal(draft.segments.project, true);
   assert.equal(draft.bars.width, 12);
   assert.equal(draft.thresholds.contextWarn, 80);

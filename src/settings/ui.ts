@@ -2,17 +2,16 @@ import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { DEFAULT_STATUSLINE_SETTINGS } from "./defaults.ts";
 import { buildEmojisScreen, routeEmojisKey } from "./emojis-screen.ts";
 import { renderPreview } from "./preview.ts";
+import type { ResolutionContext } from "./resolve.ts";
+import type { RenderTheme } from "../render.ts";
 import { buildSeparatorsScreen, routeSeparatorsKey } from "./separators-screen.ts";
+import { resetProvider } from "./state.ts";
 import {
   buildProviderDetail,
   buildProviderScreen,
   cycleActiveModelOverride,
   moveProvider,
   requestProviderRefresh,
-  setProviderDisplayMode,
-  setProviderIcon,
-  setProviderMissingDataPolicy,
-  setProviderRefreshOverrides,
   toggleProvider,
   toggleProviderTracking,
   toggleStatusline,
@@ -22,7 +21,6 @@ import {
   type ProviderUiEffect,
 } from "./provider-ui.ts";
 import type {
-  MissingDataPolicy,
   PreviewMode,
   SegmentId,
   StatuslineSettings,
@@ -30,9 +28,10 @@ import type {
 } from "./schema.ts";
 
 export const ROOT_ROWS = [
-  { id: "providers", label: "Providers" },
-  { id: "separators", label: "Separators" },
-  { id: "emojis", label: "Emojis" },
+  { id: "providers", label: "Statusline & Providers" },
+  { id: "separators", label: "Display" },
+  { id: "emojis", label: "Icons" },
+  { id: "reset", label: "Reset all settings to default" },
 ] as const;
 
 export type RootRowId = (typeof ROOT_ROWS)[number]["id"];
@@ -81,13 +80,10 @@ export function resetDraft(state: SettingsUiState): SettingsUiState {
 
 type DetailField = keyof WindowConfiguration;
 type DetailRow =
-  | { type: "display"; label: string }
   | { type: "active"; segment: SegmentId; label: string }
-  | { type: "icon-mode" | "icon-value" | "missing" | "capability"; label: string }
-  | { type: "refresh-number"; field: "refreshIntervalMs" | "maxCacheAgeMs"; label: string }
-  | { type: "refresh-toggle"; field: "useCache" | "keepAfterFailure" | "refreshWhileActive" | "refreshDisabledProvider"; label: string }
   | { type: "refresh-now"; label: string }
-  | { type: "window"; key: string; field: DetailField; label: string };
+  | { type: "window"; key: string; field: DetailField; label: string }
+  | { type: "reset"; label: string };
 
 function detailRows(
   state: SettingsUiState,
@@ -96,41 +92,16 @@ function detailRows(
 ): DetailRow[] {
   const providerId = state.selectedProviderId!;
   const capability = providers.capabilities[providerId];
-  const supported = state.draft.providers.records[providerId]?.supportedOverrides
-    ?? Object.keys(detail.activeModel) as SegmentId[];
-  const rows: DetailRow[] = [
-    { type: "display", label: `Display mode: ${detail.displayMode}` },
-    ...supported.map((segment): DetailRow => ({
-      type: "active", segment, label: `Active model ${segment}: ${detail.activeModel[segment]}`,
-    })),
-    { type: "icon-mode", label: `Provider icon: ${detail.providerIcon.mode}` },
-    { type: "icon-value", label: `Provider icon value: ${detail.providerIcon.value || "(empty)"}` },
-    { type: "missing", label: `Missing data: ${detail.missingDataPolicy}` },
-  ];
-
-  if (capability.billing === "local" && detail.localThroughput) {
-    rows.push({ type: "capability", label: "Local throughput: Available" });
-  }
-  if (capability.billing !== "local" && detail.hostedThroughput) {
-    rows.push({ type: "capability", label: "Streaming output: Available" });
-  }
-  if (capability.billing === "api" && detail.tokenLedger) {
-    rows.push({ type: "capability", label: "API token ledger: Available" });
-  }
-  if (capability.billing === "api" && detail.costLedger) {
-    rows.push({ type: "capability", label: "API cost ledger: Available" });
-  }
+  const configuredOverrides = state.draft.providers.records[providerId]?.supportedOverrides;
+  const supported = configuredOverrides?.length
+    ? configuredOverrides
+    : Object.keys(detail.activeModel) as SegmentId[];
+  const rows: DetailRow[] = supported.map((segment): DetailRow => ({
+    type: "active", segment, label: `Show ${segment} for this provider: ${detail.activeModel[segment]}`,
+  }));
 
   if (capability.billing === "subscription" && detail.quotaAvailable) {
-    rows.push(
-      { type: "refresh-number", field: "refreshIntervalMs", label: `Refresh interval: ${detail.refresh.intervalMs}ms` },
-      { type: "refresh-number", field: "maxCacheAgeMs", label: `Maximum cache age: ${detail.refresh.maxAgeMs}ms` },
-      { type: "refresh-toggle", field: "useCache", label: `Use cache: ${detail.refresh.useCache ? "On" : "Off"}` },
-      { type: "refresh-toggle", field: "keepAfterFailure", label: `Keep after failure: ${detail.refresh.keepAfterFailure ? "On" : "Off"}` },
-      { type: "refresh-toggle", field: "refreshWhileActive", label: `Refresh while active: ${detail.refresh.refreshWhileActive ? "On" : "Off"}` },
-      { type: "refresh-toggle", field: "refreshDisabledProvider", label: `Refresh disabled provider: ${detail.refresh.refreshDisabledProvider ? "On" : "Off"}` },
-      { type: "refresh-now", label: "Refresh now" },
-    );
+    rows.push({ type: "refresh-now", label: "Refresh usage now" });
     for (const window of detail.quotaWindows) {
       const settings = window.settings;
       const prefix = settings.label || window.label;
@@ -141,19 +112,15 @@ function detailRows(
         ["showPercent", `Percent: ${settings.showPercent ? "On" : "Off"}`],
         ["showReset", `Reset: ${settings.showReset ? "On" : "Off"}`],
         ["resetFormat", `Reset format: ${settings.resetFormat}`],
-        ["showUsed", `Used: ${settings.showUsed ? "On" : "Off"}`],
-        ["showRemaining", `Remaining: ${settings.showRemaining ? "On" : "Off"}`],
-        ["showZero", `Show zero: ${settings.showZero ? "On" : "Off"}`],
         ["width", `Width: ${settings.width}`],
       ];
       rows.push(...fields.map(([field, label]) => ({ type: "window" as const, key: window.key!, field, label: `${prefix} ${label}` })));
     }
   }
+  rows.push({ type: "reset", label: "Reset provider to default" });
   return rows;
 }
 
-const MISSING_POLICIES: readonly MissingDataPolicy[] = ["hide", "cached", "na", "warning", "provider-name"];
-const ICON_MODES = ["default", "global", "custom", "hidden"] as const;
 const RESET_FORMATS = ["countdown", "exact-time", "exact-date"] as const;
 
 function cycle<T>(values: readonly T[], current: T, backwards: boolean): T {
@@ -184,30 +151,16 @@ function routeProviderDetail(
   if (row.type === "refresh-now" && forwards) {
     return { state, action: "none", effect: requestProviderRefresh(draft, providerId, providers.capabilities[providerId], providers.activeProvider === providerId) };
   }
-  if (row.type === "display" && (forwards || backwards)) {
-    setProviderDisplayMode(draft, providerId, detail.displayMode === "default" ? "custom" : "default", providers.windows?.[providerId]);
-  } else if (row.type === "active" && (forwards || backwards)) {
+  if (row.type === "reset" && forwards) {
+    resetProvider(draft, providerId);
+    delete draft.icons.providers[providerId];
+    const resetDetail = buildProviderDetail(draft, providers, providerId);
+    const resetRows = resetDetail ? detailRows({ ...state, draft }, providers, resetDetail) : [];
+    return { state: { ...state, draft, selected: Math.max(0, resetRows.length - 1) }, action: "none" };
+  }
+  if (row.type === "active" && (forwards || backwards)) {
     cycleActiveModelOverride(draft, providerId, row.segment);
     if (backwards) cycleActiveModelOverride(draft, providerId, row.segment);
-  } else if (row.type === "icon-mode" && (forwards || backwards)) {
-    setProviderIcon(draft, providerId, { ...detail.providerIcon, mode: cycle(ICON_MODES, detail.providerIcon.mode, backwards) });
-  } else if (row.type === "icon-value" && (key === "Backspace" || key.length === 1)) {
-    const value = key === "Backspace" ? detail.providerIcon.value.slice(0, -1) : detail.providerIcon.value + key;
-    setProviderIcon(draft, providerId, { mode: "custom", value });
-  } else if (row.type === "missing" && (forwards || backwards)) {
-    setProviderMissingDataPolicy(draft, providerId, cycle(MISSING_POLICIES, detail.missingDataPolicy, backwards));
-  } else if (row.type === "refresh-number" && (forwards || backwards)) {
-    const current = row.field === "refreshIntervalMs" ? detail.refresh.intervalMs : detail.refresh.maxAgeMs;
-    setProviderRefreshOverrides(draft, providerId, {
-      ...state.draft.providers.records[providerId]?.refresh,
-      [row.field]: current + (backwards ? -10_000 : 10_000),
-    });
-  } else if (row.type === "refresh-toggle" && (forwards || backwards)) {
-    const current = detail.refresh[row.field];
-    setProviderRefreshOverrides(draft, providerId, {
-      ...state.draft.providers.records[providerId]?.refresh,
-      [row.field]: !current,
-    });
   } else if (row.type === "window") {
     const settings = detail.quotaWindows.find((window) => window.key === row.key)?.settings;
     if (!settings) return { state, action: "none" };
@@ -309,6 +262,7 @@ export function routeSettingsKey(
 
   if (key !== "Enter") return { state, action: "none" };
   const row = ROOT_ROWS[selected];
+  if (row.id === "reset") return { state: resetDraft(state), action: "none" };
   return { state: { ...state, openRow: row.id, selected: 0 }, action: "open" };
 }
 
@@ -344,10 +298,14 @@ export async function resolveDirtyChoice(
 export interface RenderSettingsUiOptions {
   width: number;
   previewMode?: PreviewMode;
+  /** Live session snapshot for the "current" preview mode, so the in-app preview reflects the real footer. */
+  current?: ResolutionContext;
   /** Caller-owned discovery/capability snapshot; rendering never performs discovery or refresh. */
   providers?: ProviderUiContext;
   /** Available terminal rows; when set, the body scrolls to keep the selected row visible. */
   viewportRows?: number;
+  /** Live terminal theme, so the preview line matches the footer's colors. */
+  theme?: RenderTheme;
 }
 
 /** Key bindings in effect for the active screen, shown as a legend inside the window. */
@@ -357,7 +315,7 @@ function keyLegend(state: SettingsUiState): string {
   if (state.openRow === "providers") return "↑↓ Move  ·  Space Toggle  ·  Enter Details  ·  Ctrl↑↓ Reorder  ·  Esc Back";
   if (state.openRow === "separators") return "↑↓ Move  ·  ←→/Enter Change  ·  Type chars  ·  ⌫ Delete  ·  Ctrl↑↓ Reorder  ·  Esc Back";
   if (state.openRow === "emojis") return "↑↓ Move  ·  ←→/Enter Change  ·  Type chars  ·  ⌫ Delete  ·  Esc Back";
-  return "↑↓ Move  ·  Enter Open  ·  Esc Quit";
+  return "↑↓ Move  ·  Enter Open / Reset  ·  Esc Quit";
 }
 
 /** Greedy word wrap on the "·" separator so long legends never break the box. */
@@ -386,17 +344,28 @@ function fitLine(line: string, inner: number): string {
  *  When `viewportRows` is set and the content overflows, the body scrolls to keep the
  *  selected row (the `> ` line) in view, with a `↑N above · ↓M below` indicator. */
 export function renderSettingsWindow(state: SettingsUiState, options: RenderSettingsUiOptions): string[] {
-  const width = Math.max(44, options.width);
-  const inner = width - 2;
-  const body = renderSettingsUi(state, { ...options, width: inner });
-  const legend = wrapLegend(keyLegend(state), inner);
-  const baseChrome = 3 + legend.length; // top border + separator + bottom border + legend
   const viewportRows = options.viewportRows ?? 0;
+  if (options.width < 4 || (viewportRows > 0 && viewportRows < 4)) {
+    return [truncateToWidth("Statusline", Math.max(0, options.width), "")];
+  }
+  const width = options.width;
+  const inner = width - 2;
+  const rendered = renderSettingsUi(state, { ...options, width: inner });
+  const previewStart = rendered.indexOf("");
+  const body = previewStart < 0 ? rendered : rendered.slice(0, previewStart);
+  let preview = previewStart < 0 ? [] : rendered.slice(previewStart + 1);
+  let legend = wrapLegend(keyLegend(state), inner);
+  if (viewportRows > 0 && 3 + legend.length >= viewportRows) legend = [keyLegend(state)];
+  const baseChrome = 3 + legend.length; // top border + legend separator + bottom border + legend
+  if (viewportRows > 0) preview = preview.slice(0, Math.max(0, viewportRows - baseChrome - 2));
+  const previewRows = preview.length ? preview.length + 1 : 0; // pinned preview plus its separator
 
   let view = body;
   let scrollNote: string | undefined;
-  if (viewportRows > 0 && body.length + baseChrome > viewportRows) {
-    const viewport = Math.max(5, viewportRows - baseChrome - 1); // -1 reserves the scroll-note row
+  if (viewportRows > 0 && body.length + previewRows + baseChrome > viewportRows) {
+    const available = Math.max(0, viewportRows - previewRows - baseChrome);
+    const showScrollNote = available >= 2;
+    const viewport = Math.max(0, available - (showScrollNote ? 1 : 0));
     const cursor = body.findIndex((line) => line.startsWith("> "));
     let start = (cursor >= 0 ? cursor : 0) - Math.floor(viewport / 2);
     start = Math.max(0, Math.min(start, Math.max(0, body.length - viewport)));
@@ -407,16 +376,17 @@ export function renderSettingsWindow(state: SettingsUiState, options: RenderSett
     const parts: string[] = [];
     if (above > 0) parts.push(`↑${above} above`);
     if (below > 0) parts.push(`↓${below} below`);
-    scrollNote = parts.join("  ·  ");
+    if (showScrollNote) scrollNote = parts.join("  ·  ");
   }
 
-  const title = " Statusline ";
+  const title = truncateToWidth(" Statusline ", Math.max(0, inner - 1), "");
   const titleFill = Math.max(0, inner - 1 - visibleWidth(title));
   const out: string[] = [
     "┌─" + title + "─".repeat(titleFill) + "┐",
     ...view.map((line) => `│${fitLine(line, inner)}│`),
   ];
   if (scrollNote) out.push(`│${fitLine(scrollNote, inner)}│`);
+  if (preview.length) out.push("├" + "─".repeat(inner) + "┤", ...preview.map((line) => `│${fitLine(line, inner)}│`));
   out.push("├" + "─".repeat(inner) + "┤", ...legend.map((hint) => `│${fitLine(hint, inner)}│`), "└" + "─".repeat(inner) + "┘");
   return out;
 }
@@ -425,12 +395,12 @@ export function renderSettingsWindow(state: SettingsUiState, options: RenderSett
 export function renderSettingsUi(state: SettingsUiState, options: RenderSettingsUiOptions): string[] {
   const lines = ["Statusline settings"];
   if (state.openRow === "separators") {
-    lines.push("Separators");
+    lines.push("Display");
     for (const [index, row] of buildSeparatorsScreen(state.draft).entries()) {
       lines.push(`${state.selected === index ? ">" : " "} ${row.label}`);
     }
   } else if (state.openRow === "emojis") {
-    lines.push("Emojis");
+    lines.push("Icons");
     const providerIds = options.providers?.descriptors.map(({ id }) => id) ?? [];
     for (const [index, row] of buildEmojisScreen(state.draft, providerIds).entries()) {
       lines.push(`${state.selected === index ? ">" : " "} ${row.label}`);
@@ -466,6 +436,10 @@ export function renderSettingsUi(state: SettingsUiState, options: RenderSettings
       settings: state.draft,
       mode: options.previewMode ?? state.draft.preview.mode,
       width: options.width,
+      current: options.current,
+      providers: options.providers,
+      selectedProviderId: state.selectedProviderId,
+      theme: options.theme,
     }));
   }
   if (state.confirmClose) lines.push("", "Unsaved changes: Save / Discard / Cancel");

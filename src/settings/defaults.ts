@@ -58,10 +58,10 @@ const DEFAULT_PROVIDER_DEFAULTS: ProviderDefaults = {
   refreshDisabledProvider: false,
 };
 
-/** Default separators. */
+/** Default separators — match the live footer's documented look (` >` between segments). */
 const DEFAULT_SEPARATORS = {
-  main: " · ",
-  projectGit: " ",
+  main: " >",
+  projectGit: " > ",
   window: " | ",
   provider: "\n",
   iconLabel: "",
@@ -158,7 +158,7 @@ const DEFAULT_SEGMENTS: Record<SegmentId, boolean> = {
  * - thresholds: 80/95 warning/critical
  * - refreshIntervalMs: 10000 (min 10000), maxCacheAgeMs: 300000
  * - icon style: 'emoji'
- * - separators main: ' · '
+ * - separators main: ' >'
  */
 export const DEFAULT_STATUSLINE_SETTINGS: StatuslineSettings = {
   version: 1,

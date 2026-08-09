@@ -16,6 +16,16 @@ export interface ProviderAdapter {
   refresh(signal: AbortSignal): Promise<ProviderUsage | undefined>;
 }
 
+/** Thrown by a provider usage fetch on HTTP 429. The provider-usage cache catches it to apply a
+ *  shared, persisted backoff, so every session and every caller (background poll, session start,
+ *  model select) stops hammering the endpoint until the cooldown elapses. */
+export class RateLimitedError extends Error {
+  constructor() {
+    super("usage endpoint returned 429");
+    this.name = "RateLimitedError";
+  }
+}
+
 /** Never surface thrown provider data; these are deliberately short UI-safe reasons. */
 export function sanitizedReason(provider: string, error?: unknown): string {
   // OpenRouter's only usage endpoint requires a separate management key pi doesn't manage

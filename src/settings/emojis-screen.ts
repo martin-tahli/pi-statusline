@@ -15,14 +15,11 @@ type Row = EmojisScreenRow & (
   | { kind: "reset" }
 );
 
-export const ICON_SYMBOLS = [
-  "project", "model", "thinking", "context", "throughput", "ledger", "reset", "time", "pending", "provider",
-  "gitBranch", "gitAhead", "gitBehind", "gitDirty", "gitClean", "gitError",
-  "healthFresh", "healthWarning", "healthCritical", "healthUnavailable",
-] as const;
+export const ICON_SYMBOLS = ["project", "model", "thinking", "context", "throughput"] as const;
 
 const ICON_STYLES = ["emoji", "unicode", "ascii", "nerdfont", "minimal", "none", "custom"] as const;
-const PROVIDER_ICON_MODES = ["default", "global", "custom", "hidden"] as const;
+// "default" already renders no provider glyph, so exposing "hidden" would be a duplicate control.
+const PROVIDER_ICON_MODES = ["default", "custom"] as const;
 
 function shown(value: string): string {
   return JSON.stringify(value);
@@ -41,7 +38,7 @@ function rows(draft: StatuslineSettings, providerIds: readonly string[]): Row[] 
       { id: `icons.providers.${providerId}.value`, label: `Provider ${providerId} icon value: ${shown(icon.value)}`, kind: "provider-value", providerId },
     );
   }
-  result.push({ id: "reset.icons", label: "Reset icons to defaults", kind: "reset" });
+  result.push({ id: "reset.icons", label: "Reset to default", kind: "reset" });
   return result;
 }
 

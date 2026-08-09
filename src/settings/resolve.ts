@@ -1,14 +1,21 @@
-import { SEGMENT_ORDER, createSegments, composeSegments, type SegmentId } from "../segments.ts";
-import { deriveProject, deriveModel, deriveEffort, deriveContext, type ContextUsage } from "../derive.ts";
-import { formatRate, formatPercent, formatTime } from "../format.ts";
+import { SEGMENT_ORDER, type SegmentId } from "../segments.ts";
+import { type ContextUsage } from "../derive.ts";
 import type { StatuslineSettings, ActiveModelToggle } from "./schema.ts";
 import type { ProviderCapability } from "./providers/capabilities.ts";
 import type { RateLimitWindow } from "../ratelimit.ts";
+import type { GitStatusState } from "../git.ts";
+import { renderMainLine, type RenderTheme } from "../render.ts";
+
+/**
+ * Resolution helpers for the settings UI/tests. The actual line rendering lives in
+ * ../render.ts (`renderMainLine`) and is shared with the live footer, so the preview
+ * and the footer can never drift — only the data (live vs fixture) differs.
+ */
 
 /** Immutable runtime inputs the renderer reads (footer uses live state, preview uses a fixture). */
 export interface RuntimeSnapshot {
   cwd?: string;
-  model?: { id: string; provider?: string; reasoning?: boolean };
+  model?: { id: string; provider?: string; reasoning?: boolean; baseUrl?: string };
   /** Active provider id, used to resolve per-provider activeModel tri-state overrides. */
   activeProvider?: string;
   thinkingLevel?: string;
@@ -20,7 +27,17 @@ export interface RuntimeSnapshot {
   elapsedMs?: number;
   lastTurnMs?: number;
   pending?: boolean;
+  /** Session token/cost totals, used for the API ledger preview. */
+  totals?: { input: number; output: number; cost: number };
   now?: number;
+  // Live-only fields (the "current" preview forwards these so it matches the footer exactly).
+  gitBranch?: string | null;
+  gitStatus?: GitStatusState;
+  turnActive?: boolean;
+  subscription?: boolean;
+  lastContextChars?: number;
+  activeProviderHasRow?: boolean;
+  sessionPlaceholder?: string;
 }
 
 export interface ResolutionContext {
@@ -91,54 +108,6 @@ export function resolveOrder(settings: StatuslineSettings): {
   };
 }
 
-function throughputLabel(runtime: RuntimeSnapshot): string {
-  const { inputRate, outputRate } = runtime.throughput ?? {};
-  const parts: string[] = [];
-  if (inputRate !== undefined) parts.push(`↑ ${formatRate(inputRate)}`);
-  if (outputRate !== undefined) parts.push(`↓ ${formatRate(outputRate)}`);
-  return parts.join(" ");
-}
-
-function icon(settings: StatuslineSettings, name: string): string {
-  const override = settings.icons.symbols[name];
-  if (override !== undefined) return override;
-  const presets: Record<StatuslineSettings["icons"]["style"], Record<string, string>> = {
-    emoji: { project: "📁", model: "🤖", thinking: "💭", context: "🪟", session: "📊", throughput: "⚡", time: "⏱", provider: "🔌" },
-    unicode: { project: "◆", model: "◇", thinking: "◌", context: "▣", session: "▥", throughput: "↕", time: "◷", provider: "●" },
-    ascii: { project: "P", model: "M", thinking: "T", context: "C", session: "Q", throughput: "R", time: "@", provider: "*" },
-    nerdfont: { project: "󰉋", model: "󰧑", thinking: "󰔟", context: "󰍛", session: "󰄬", throughput: "󰓅", time: "󰥔", provider: "󰒋" },
-    minimal: { project: "·", model: "·", thinking: "·", context: "·", session: "·", throughput: "·", time: "·", provider: "·" },
-    none: {},
-    custom: {},
-  };
-  return presets[settings.icons.style][name] ?? "";
-}
-
-function withIcon(settings: StatuslineSettings, name: string, value: string): string {
-  const symbol = icon(settings, name);
-  return symbol ? `${symbol}${settings.separators.iconLabel}${value}` : value;
-}
-
-function providerIcon(settings: StatuslineSettings, providerId: string | undefined): string {
-  if (!providerId) return "";
-  const configured = settings.icons.providers[providerId];
-  if (configured?.mode === "hidden") return "";
-  if (configured?.mode === "custom") return configured.value;
-  return icon(settings, "provider");
-}
-
-function sessionLabel(settings: StatuslineSettings, runtime: RuntimeSnapshot): string {
-  const windows = runtime.sessionWindows ?? [];
-  const bar = resolveBarConfig(settings);
-  const separator = settings.layout.providerRows === "newline" ? settings.separators.provider : settings.separators.window;
-  return windows.map((window) => {
-    const used = Math.max(0, Math.min(1, window.used));
-    const filled = Math.round(used * bar.width);
-    const track = `${bar.capLeft}${bar.fill.repeat(filled)}${bar.empty.repeat(bar.width - filled)}${bar.capRight}`;
-    return `${window.label}${settings.separators.labelValue}${track}${bar.showPercent ? settings.separators.labelValue + formatPercent(used) : ""}`;
-  }).join(separator);
-}
-
 /** Resolved bar configuration derived (and bounded) from settings.bars. */
 export interface ResolvedBar {
   width: number;
@@ -165,41 +134,43 @@ export function resolveBarConfig(settings: StatuslineSettings): ResolvedBar {
 }
 
 /**
- * Compose the single main statusline line through the existing production path
- * (createSegments + composeSegments), driven entirely by resolved settings.
- * KTD3: footer and preview share this one function so they cannot drift.
+ * Compose the single main statusline line through the SAME renderer as the live footer
+ * (../render.ts renderMainLine), so preview and footer cannot drift. Pure: no I/O. The
+ * optional theme lets the in-app preview render with the live terminal colors.
  */
 export function composeFooterLine(
   settings: StatuslineSettings,
   ctx: ResolutionContext,
   width: number,
+  theme?: RenderTheme,
 ): string {
-  const visibility = resolveSegmentVisibility(settings, ctx);
-  const { runtime } = ctx;
-  const renderers = {
-    project: () => withIcon(settings, "project", deriveProject(runtime.cwd ?? "")),
-    model: () => {
-      const value = deriveModel(runtime.model);
-      const provider = providerIcon(settings, runtime.activeProvider);
-      return withIcon(settings, "model", provider ? `${provider}${settings.separators.iconLabel}${value}` : value);
+  const { runtime, capability } = ctx;
+  return renderMainLine(settings, {
+    cwd: runtime.cwd ?? "",
+    model: runtime.model
+      ? { id: runtime.model.id, provider: runtime.model.provider, reasoning: runtime.model.reasoning, baseUrl: runtime.model.baseUrl }
+      : undefined,
+    thinkingLevel: runtime.thinkingLevel,
+    contextUsage: runtime.contextUsage,
+    pending: runtime.pending,
+    // billingMode(isLocalEndpoint(baseUrl), subscription): local endpoints win regardless. Fall
+    // back to the capability-derived billing for fixture modes that don't pass it explicitly.
+    subscription: runtime.subscription ?? (capability?.billing === "subscription"),
+    turnActive: runtime.turnActive ?? false,
+    meter: {
+      avgInputRate: runtime.throughput?.inputRate,
+      avgOutputRate: runtime.throughput?.outputRate,
+      activeMs: runtime.activeMs,
+      elapsedMs: runtime.elapsedMs,
+      lastTurnMs: runtime.lastTurnMs,
     },
-    effort: () => withIcon(settings, "thinking", deriveEffort(runtime.thinkingLevel ?? "off", runtime.model)),
-    context: () => {
-      const derived = deriveContext(runtime.contextUsage)?.label ?? "";
-      const rawPercent = runtime.contextUsage?.percent;
-      const percent = typeof rawPercent === "number" && rawPercent <= 1 ? rawPercent * 100 : rawPercent;
-      const state = typeof percent === "number" && percent >= settings.thresholds.contextCrit ? "!!"
-        : typeof percent === "number" && percent >= settings.thresholds.contextWarn ? "!" : "";
-      return withIcon(settings, "context", `${derived}${state}`);
-    },
-    session: () => withIcon(settings, "session", sessionLabel(settings, runtime)),
-    throughput: () => withIcon(settings, "throughput", throughputLabel(runtime)),
-    time: () => withIcon(settings, "time", formatTime(runtime.activeMs ?? 0, runtime.elapsedMs, runtime.lastTurnMs)),
-  } as const;
-  const order = resolveOrder(settings).segmentOrder;
-  const rank = new Map(order.map((id, index) => [id, index]));
-  const segments = createSegments(visibility, renderers).sort((a, b) => (rank.get(a.id) ?? order.length) - (rank.get(b.id) ?? order.length));
-  const separator = `${settings.separators.padding}${" ".repeat(settings.separators.spacingBefore)}${settings.separators.main || " · "}${" ".repeat(settings.separators.spacingAfter)}`;
-  const trailingSpacing = Math.min(settings.separators.trailingSpacing, Math.max(0, width));
-  return composeSegments(segments, width - trailingSpacing, separator) + " ".repeat(trailingSpacing);
+    totals: runtime.totals,
+    sessionWindows: runtime.sessionWindows,
+    activeProviderHasRow: runtime.activeProviderHasRow ?? false,
+    sessionPlaceholder: runtime.sessionPlaceholder ?? "",
+    gitBranch: runtime.gitBranch,
+    gitStatus: runtime.gitStatus,
+    lastContextChars: runtime.lastContextChars,
+    now: runtime.now,
+  }, width, theme);
 }

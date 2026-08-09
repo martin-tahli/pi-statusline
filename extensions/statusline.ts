@@ -1,14 +1,13 @@
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { parseKey, truncateToWidth } from "@earendil-works/pi-tui";
-import { renderBar, type BarStyle } from "../src/bar.ts";
-import { billingMode, contextSeverity, deriveContext, deriveEffort, deriveModel, deriveProject, isLocalEndpoint } from "../src/derive.ts";
-import { formatRate, formatResetCountdown, formatTime, formatWindow } from "../src/format.ts";
-import { gitBranchSymbol, gitStatusTokens, parseGitStatus, type GitStatusState, type GitTokenKind } from "../src/git.ts";
+import { billingMode, isLocalEndpoint } from "../src/derive.ts";
+import { formatResetCountdown, formatTime } from "../src/format.ts";
+import { parseGitStatus, type GitStatusState } from "../src/git.ts";
 import { parseAnthropicUsage, parseCodexUsage, parseRateLimits, parseStoredRateLimits, parseZaiUsage, type RateLimits, type RateLimitWindow } from "../src/ratelimit.ts";
 import { ProviderUsageCache } from "../src/provider-cache.ts";
-import { ProviderRefreshCoordinator, type ProviderAdapter } from "../src/providers.ts";
-import { composeSegments, createSegments } from "../src/segments.ts";
+import { ProviderRefreshCoordinator, RateLimitedError, type ProviderAdapter } from "../src/providers.ts";
+import { renderMainLine, renderProviderRows, providerHasRow, type ProviderRowSource } from "../src/render.ts";
 import { estimateTokens, sumTextLength, TurnMeter } from "../src/throughput.ts";
 import {
   DEFAULT_STATUSLINE_CONFIG_PATH,
@@ -16,6 +15,7 @@ import {
   loadRuntimeSettings,
   reconcileProviders,
 } from "../src/settings/runtime.ts";
+import type { ResolutionContext } from "../src/settings/resolve.ts";
 import { saveStatuslineSettings } from "../src/settings/storage.ts";
 import { createSettingsUi, renderSettingsWindow, resolveDirtyChoice, routeSettingsKey } from "../src/settings/ui.ts";
 import type { ProviderUiContext } from "../src/settings/provider-ui.ts";
@@ -24,15 +24,15 @@ import { deriveCapability, type ProviderCapability } from "../src/settings/provi
 import type { RefreshHealth } from "../src/settings/refresh.ts";
 import type { StatuslineSettings } from "../src/settings/schema.ts";
 
-const GIT_ROLES: Record<GitTokenKind, "accent" | "success" | "warning" | "error"> = {
-  ahead: "accent",
-  behind: "warning",
-  dirty: "warning",
-  clean: "success",
-  error: "error",
-};
+// Anthropic's OAuth usage endpoint (api.anthropic.com/api/oauth/usage) throttles hard and hands
+// out sticky 429s, so poll it less often than the 10s cadence the other providers share.
+const ANTHROPIC_REFRESH_MS = 30_000;
 
-export default function statusline(pi: ExtensionAPI, providerUsageCache = new ProviderUsageCache(), settingsPath = DEFAULT_STATUSLINE_CONFIG_PATH) {
+export default function statusline(
+  pi: ExtensionAPI,
+  providerUsageCache = new ProviderUsageCache(undefined, undefined, undefined, undefined, { anthropic: ANTHROPIC_REFRESH_MS }),
+  settingsPath = DEFAULT_STATUSLINE_CONFIG_PATH,
+) {
   let settings: StatuslineSettings = loadRuntimeSettings(settingsPath);
   let meter = new TurnMeter();
   let limits: RateLimits = [];
@@ -47,6 +47,10 @@ export default function statusline(pi: ExtensionAPI, providerUsageCache = new Pr
   let sessionActive = false;
   let sessionEpoch = 0;
   let turnActive = false;
+  // Last git branch the footer rendered, captured so the settings preview can show the same HUD.
+  let liveGitBranch: string | null | undefined;
+  // True while the settings overlay is open; keeps commitSettings from flashing the live footer.
+  let settingsOverlayOpen = false;
   let providerRefresh: ProviderRefreshCoordinator | undefined;
   const isCurrentSession = (epoch: number) => sessionActive && epoch === sessionEpoch;
   const ANTHROPIC_RETRY_DELAYS_MS = [1_500, 3_000];
@@ -183,10 +187,15 @@ export default function statusline(pi: ExtensionAPI, providerUsageCache = new Pr
         },
         signal: AbortSignal.timeout(3_000),
       });
+      // 429: surface to the provider-usage cache so every session and every caller backs off
+      // instead of re-hammering the endpoint each refresh (Anthropic's retry-after: 0 is useless).
+      if (response.status === 429) throw new RateLimitedError();
       if (!response.ok) return [];
       return parseAnthropicUsage(await response.json());
-    } catch {
-      // Best effort: unavailable account usage falls back to response headers.
+    } catch (error) {
+      // Best effort: unavailable account usage falls back to response headers — but let the 429
+      // signal through so the cache can apply its shared backoff.
+      if (error instanceof RateLimitedError) throw error;
       return [];
     }
   };
@@ -296,111 +305,56 @@ export default function statusline(pi: ExtensionAPI, providerUsageCache = new Pr
         },
         invalidate() {},
         render(width: number): string[] {
-          const context = deriveContext(ctx.getContextUsage());
-          const snapshot = meter.snapshot();
-          const branch = settings.extras.branch ? footerData.getGitBranch() : undefined;
-          const branchSymbol = gitBranchSymbol(settings.icons.style === "nerdfont");
-          const git = branch
-            ? [
-              theme.fg("accent", `${branchSymbol ? `${branchSymbol} ` : ""}${branch}`),
-              ...(gitStatus ? gitStatusTokens(gitStatus).map((token) => theme.fg(GIT_ROLES[token.kind], token.text)) : []),
-            ].join(" ")
-            : "";
-          const pending = settings.extras.pending && ctx.hasPendingMessages();
-          const model = deriveModel(ctx.model);
-          const effort = deriveEffort(pi.getThinkingLevel(), ctx.model);
-          const localModel = isLocalEndpoint(ctx.model?.baseUrl);
+          const provider = ctx.model?.provider;
           const subscription = ctx.model !== undefined
             && (ctx.model.provider === "openai-codex" || ctx.modelRegistry.isUsingOAuth(ctx.model));
-          const mode = billingMode(localModel, subscription);
+          const mode = billingMode(isLocalEndpoint(ctx.model?.baseUrl), subscription);
           // Walk the branch for totals only when something actually shows them (opt-in cost, or the
           // API token ledger while idle), not on every render tick.
           const needTotals = settings.extras.cost || (mode === "api" && !turnActive);
           const totals = needTotals ? sessionTotals(ctx) : undefined;
-          const cost = settings.extras.cost ? totals!.cost : undefined;
-          const liveOutputRate = turnActive && snapshot.outputRate !== undefined ? snapshot.outputRate : undefined;
-          const outputRateLabel = () => theme.fg(snapshot.outputLevel ?? "muted", `↓${formatRate(liveOutputRate ?? snapshot.avgOutputRate ?? 0)}`);
-          // The ⚡ segment adapts to the billing model:
-          //  local        → live ↑/↓ token rates (the rate is the real, measurable point)
-          //  hosted+turn  → live ↓ speed pulse ("is it working, how fast") for API and subscription
-          //  subscription → idle: nothing; the 5h/wk quota bars are the real budget meter
-          //  api          → idle: 🧾 running token totals + session cost (what you're spending)
-          const throughput = (() => {
-            if (mode === "local") {
-              // While the prompt is still ingesting, estimate ↑ from the known prompt size; once a
-              // turn settles, fall back to the rolling average rather than freezing on one number.
-              const promptRate = snapshot.waitingMs ? estimateTokens(lastContextChars) / (snapshot.waitingMs / 1_000) : undefined;
-              const inputRate = promptRate ?? snapshot.avgInputRate ?? 0;
-              const input = theme.fg(snapshot.inputLevel ?? "muted", `↑${formatRate(inputRate)}`);
-              return `${theme.fg("muted", "⚡")}${input} ${outputRateLabel()}${theme.fg("muted", " t/s")}`;
-            }
-            if (turnActive) return `${theme.fg("muted", "⚡")}${outputRateLabel()}${theme.fg("muted", " t/s")}`;
-            if (mode === "subscription") return "";
-            if (!totals || (!totals.input && !totals.output)) return "";
-            return theme.fg("muted", `🧾 ↑${formatWindow(totals.input)} ↓${formatWindow(totals.output)} $${totals.cost.toFixed(3)}`);
-          })();
-          const time = timeLabel();
-          lastRenderedTime = tickLabel(time);
-          const truecolor = theme.getColorMode() === "truecolor";
-          const barStyle = (used: number): BarStyle => ({
-            fill: truecolor
-              ? (text, [r, g, b]) => `\x1b[38;2;${r};${g};${b}m${text}\x1b[39m`
-              : (text) => theme.fg(used >= 0.8 ? "error" : used >= 0.6 ? "warning" : "success", text),
-            track: truecolor
-              ? (text) => `\x1b[38;2;58;63;70m${text}\x1b[39m`
-              : (text) => theme.fg("dim", text),
-          });
-          const sessionBar = (limit: RateLimitWindow) => {
-            const reset = limit.resetAt === undefined
-              ? ""
-              : theme.fg("dim", ` ↻ ${formatResetCountdown(limit.resetAt)}`);
-            return `${theme.fg("muted", `${limit.label} `)}${renderBar(limit.used, 12, barStyle(limit.used))}${reset}`;
-          };
-          const providerSettings = settings.providers;
-          const providerRows = !providerSettings.enabled ? [] : providerSettings.order.flatMap((provider) => {
-            const record = providerSettings.records[provider];
+          const snapshot = meter.snapshot();
+          // Provider-tracking rows share the settings-preview renderer (renderProviderRows) so the
+          // multi-line footer and the in-app preview can never drift. Sources are built here from
+          // live refresh health; per-window display (visible/bar/percent/reset/label/width) is read
+          // from settings inside the shared renderer, keyed by each window's stable adapter key.
+          const sources: ProviderRowSource[] = settings.providers.enabled ? settings.providers.order.flatMap((p) => {
+            const record = settings.providers.records[p];
             if (!record?.enabled) return [];
-            const health = providerRefresh?.get(provider);
-            const window = record.windows["default"];
-            const showBar = window?.showBar ?? true;
-            const showPercent = window?.showPercent ?? true;
-            const showReset = window?.showReset ?? true;
-            if (health?.state !== "fresh") {
+            const health = providerRefresh?.get(p);
+            if (health?.state === "fresh") return [{ provider: p, windows: health.usage.limits }];
+            // Before a subscription provider's usage loads, anthropic+OAuth earns a placeholder row.
+            if (p === "anthropic") {
               const registry = ctx.modelRegistry as unknown as { getAvailable?: () => Array<{ provider: string }> };
-              const model = provider === "anthropic" && registry.getAvailable ? findAvailableModel(ctx, provider) : undefined;
-              return provider === "anthropic" && model && ctx.modelRegistry.isUsingOAuth(model) && (showBar || showReset)
-                ? [{ provider, line: theme.fg("muted", "anthropic 5h — wk —") }]
-                : [];
+              const model = registry.getAvailable ? findAvailableModel(ctx, p) : undefined;
+              if (model && ctx.modelRegistry.isUsingOAuth(model)) return [{ provider: p, windows: [], placeholder: "5h — wk —" }];
             }
-            const windows = health.usage.limits.flatMap((limit) => {
-              const usage = showBar ? renderBar(limit.used, 12, barStyle(limit.used), undefined, showPercent) : "";
-              const reset = showReset && limit.resetAt !== undefined
-                ? theme.fg("dim", ` ↻ ${formatResetCountdown(limit.resetAt)}`)
-                : "";
-              return usage || reset ? [`${theme.fg("muted", `${limit.label} `)}${usage}${reset}`] : [];
-            });
-            return windows.length ? [{ provider, line: `${theme.fg("muted", `${provider} `)}${windows.join(theme.fg("dim", " >"))}` }] : [];
-          });
-          const activeProviderHasRow = providerRows.some((row) => row.provider === ctx.model?.provider);
-          const provider = ctx.model?.provider;
-          const session = activeProviderHasRow ? "" : limits.length
-            ? limits.map(sessionBar).join(theme.fg("dim", " >"))
-            : provider === "anthropic" && ctx.model !== undefined && ctx.modelRegistry.isUsingOAuth(ctx.model)
-              ? theme.fg("muted", "5h — wk —")
-              : "";
-
-          const line = composeSegments(createSegments(settings.segments, {
-            project: () => `${theme.fg("muted", `📁 ${deriveProject(ctx.cwd)}`)}${git ? `${theme.fg("dim", " > ")}${git}` : ""}${pending ? ` ${theme.fg("muted", "queued")}` : ""}`,
-            model: () => model ? theme.fg("muted", `🤖 ${model}${cost === undefined ? "" : ` $${cost.toFixed(3)}`}`) : "",
-            effort: () => effort ? theme.fg("muted", `🧠 ${effort}`) : "",
-            context: () => context
-              ? `${theme.fg("muted", "🪟  ")}${theme.fg(contextSeverity(context), context.label)}`
-              : "",
-            session: () => session,
-            throughput: () => throughput,
-            time: () => time ? theme.fg("muted", time) : "",
-          }), width, theme.fg("dim", " >"));
-          return [line, ...providerRows.map((row) => truncateToWidth(row.line, width, ""))];
+            return [];
+          }) : [];
+          const activeProviderHasRow = providerHasRow(settings, sources, provider);
+          const sessionPlaceholder = !activeProviderHasRow && provider === "anthropic" && ctx.model !== undefined && ctx.modelRegistry.isUsingOAuth(ctx.model)
+            ? theme.fg("muted", "5h — wk —")
+            : "";
+          lastRenderedTime = tickLabel();
+          const line = renderMainLine(settings, {
+            cwd: ctx.cwd,
+            model: ctx.model,
+            thinkingLevel: pi.getThinkingLevel(),
+            contextUsage: ctx.getContextUsage(),
+            gitBranch: (liveGitBranch = footerData.getGitBranch()),
+            gitStatus,
+            pending: ctx.hasPendingMessages(),
+            subscription,
+            turnActive,
+            meter: { ...snapshot, activeMs: snapshot.activeMs + meter.liveElapsedMs() },
+            lastContextChars,
+            totals,
+            sessionWindows: limits,
+            activeProviderHasRow,
+            sessionPlaceholder,
+          }, width, theme);
+          const providerRowLines = renderProviderRows(settings, sources, theme, Date.now());
+          return [line, ...providerRowLines.map((rowLine) => truncateToWidth(rowLine, width, ""))];
         },
       };
     });
@@ -462,8 +416,13 @@ export default function statusline(pi: ExtensionAPI, providerUsageCache = new Pr
     const next = availableProviders(ctx).length ? reconcileProviders(draft, ctx.modelRegistry) : draft;
     saveStatuslineSettings(next, settingsPath);
     settings = next;
-    if (settings.enabled) installFooter(ctx);
-    else ctx.ui.setFooter(undefined);
+    // While the settings overlay is open the live footer is intentionally hidden (the in-app
+    // preview stands in); skip re-installing it here so it doesn't flash behind the overlay.
+    // The close handler restores it based on the final `settings.enabled`.
+    if (!settingsOverlayOpen) {
+      if (settings.enabled) installFooter(ctx);
+      else ctx.ui.setFooter(undefined);
+    }
     syncTick();
     syncGitTick(ctx);
     void refreshGit(ctx);
@@ -472,15 +431,69 @@ export default function statusline(pi: ExtensionAPI, providerUsageCache = new Pr
 
   const openSettingsApp = (ctx: ExtensionContext) => {
     const providers = buildProviderContext(ctx);
-    return ctx.ui.custom<void>((tui, _theme, _keybindings, done) => {
+    const previewCapability = ctx.model?.provider ? providers.capabilities[ctx.model.provider] : undefined;
+    // Live snapshot of the current session, fed to the in-app preview so it shows exactly what the
+    // footer will look like under the DRAFT settings (cwd, model, context, quota, ticking clock).
+    // Reads the draft (not the committed settings) so toggling extras like cost / session-elapsed /
+    // last-turn is visible before saving — the preview is a live reflection of the draft.
+    const currentPreviewContext = (draft: StatuslineSettings): ResolutionContext => {
+      const snapshot = meter.snapshot();
+      const subscription = ctx.model !== undefined
+        && (ctx.model.provider === "openai-codex" || ctx.modelRegistry.isUsingOAuth(ctx.model));
+      const mode = billingMode(isLocalEndpoint(ctx.model?.baseUrl), subscription);
+      // Mirror the footer's own render inputs so the "current" preview is byte-identical to the
+      // live main line under the draft settings (git HUD, ledger, quota, ticking clock, theme).
+      const needTotals = draft.extras.cost || (mode === "api" && !turnActive);
+      const totals = needTotals ? sessionTotals(ctx) : undefined;
+      return {
+        capability: previewCapability,
+        runtime: {
+          cwd: ctx.cwd,
+          model: ctx.model ? { id: ctx.model.id, provider: ctx.model.provider, reasoning: ctx.model.reasoning, baseUrl: ctx.model.baseUrl } : undefined,
+          activeProvider: ctx.model?.provider,
+          thinkingLevel: pi.getThinkingLevel(),
+          contextUsage: ctx.getContextUsage() ?? undefined,
+          throughput: { inputRate: snapshot.avgInputRate, outputRate: snapshot.avgOutputRate },
+          sessionWindows: limits,
+          activeMs: snapshot.activeMs + meter.liveElapsedMs(),
+          elapsedMs: draft.extras.sessionElapsed ? snapshot.elapsedMs : undefined,
+          lastTurnMs: draft.extras.lastTurn ? snapshot.lastTurnMs : undefined,
+          gitBranch: liveGitBranch,
+          gitStatus,
+          pending: ctx.hasPendingMessages(),
+          subscription,
+          turnActive,
+          lastContextChars,
+          totals,
+        },
+      };
+    };
+    // The live footer would duplicate the preview's clock; hide it while settings are open so there
+    // is exactly one statusline on screen — the interactive preview. Restored on close.
+    const footerWasEnabled = settings.enabled;
+    settingsOverlayOpen = true;
+    if (footerWasEnabled) ctx.ui.setFooter(undefined);
+    return ctx.ui.custom<void>((tui, theme, _keybindings, done) => {
       let state = createSettingsUi(settings);
       let finished = false;
-      const finish = () => { if (!finished) { finished = true; done(); } };
+      // Re-render every second so the preview's clock ticks live (the footer's own tick is gone).
+      const previewTick = setInterval(() => tui.requestRender(), 1_000);
+      previewTick.unref?.();
+      const finish = () => {
+        if (finished) return;
+        finished = true;
+        clearInterval(previewTick);
+        settingsOverlayOpen = false;
+        if (settings.enabled) installFooter(ctx);
+        else ctx.ui.setFooter(undefined);
+        done();
+      };
       return {
         invalidate() {},
+        dispose() { clearInterval(previewTick); },
         render: (width: number) => {
           const rows = tui.terminal?.rows;
-          return renderSettingsWindow(state, { width, providers, viewportRows: rows ? rows - 2 : undefined });
+          return renderSettingsWindow(state, { width, providers, viewportRows: rows ? rows - 2 : undefined, current: currentPreviewContext(state.draft), theme });
         },
         handleInput(data: string) {
           const key = translateKey(data);
@@ -536,7 +549,10 @@ export default function statusline(pi: ExtensionAPI, providerUsageCache = new Pr
     if (availableProviders(ctx).length) settings = reconcileProviders(settings, ctx.modelRegistry);
     meter = new TurnMeter();
     limits = isAnthropicOAuth(ctx) ? restoreAnthropicLimits(ctx) : [];
-    if (!limits.length) limits = providerUsageCache.getFresh(ctx.model?.provider ?? "")?.limits ?? [];
+    if (!limits.length) {
+      const provider = ctx.model?.provider ?? "";
+      limits = (provider === "anthropic" ? providerUsageCache.get(provider) : providerUsageCache.getFresh(provider))?.limits ?? [];
+    }
     gitStatus = undefined;
     const providers = availableProviders(ctx);
     // Saved providers may not be available in this process yet. Keep their last fresh cross-session
@@ -557,8 +573,8 @@ export default function statusline(pi: ExtensionAPI, providerUsageCache = new Pr
       requestRender?.();
     });
     for (const provider of trackedProviders) {
-      const cached = providerUsageCache.getFresh(provider);
-      if (cached) providerRefresh.prime(provider, cached, cached.updatedAt);
+      const cached = provider === "anthropic" ? providerUsageCache.get(provider) : providerUsageCache.getFresh(provider);
+      if (cached?.limits.length) providerRefresh.prime(provider, cached, provider === "anthropic" ? Date.now() : cached.updatedAt);
     }
     if (settings.enabled) installFooter(ctx, epoch);
     providerRefresh.start(trackedProviders);

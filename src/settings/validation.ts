@@ -303,8 +303,8 @@ function parseSeparators(value: unknown): StatuslineSettings["separators"] {
   // ponytail: default only when the field is ABSENT; a present value that sanitizes to "" stays ""
   const sep = (v: unknown, d: string): string => (v === undefined || v === null ? d : sanitizeDisplayString(v));
   return {
-    main: sep(input.main, " · "),
-    projectGit: sep(input.projectGit, " "),
+    main: sep(input.main, DEFAULT_STATUSLINE_SETTINGS.separators.main),
+    projectGit: sep(input.projectGit, DEFAULT_STATUSLINE_SETTINGS.separators.projectGit),
     window: sep(input.window, " | "),
     provider: sep(input.provider, "\n"),
     iconLabel: sep(input.iconLabel, ""),
@@ -334,6 +334,8 @@ function parseSegments(value: unknown): StatuslineSettings["segments"] {
 function parseBars(value: unknown): StatuslineSettings["bars"] {
   const input = value && typeof value === "object" ? value as Record<string, unknown> : {};
   const styles = ["rounded", "block", "line", "bracket", "ascii"] as const;
+  const warnAt = typeof input.warnAt === "number" && input.warnAt >= 0 && input.warnAt <= 100 ? input.warnAt : 80;
+  const critAt = typeof input.critAt === "number" && input.critAt >= 0 && input.critAt <= 100 ? input.critAt : 95;
   return {
     width: clamp(typeof input.width === "number" ? input.width : 12, 1, 200),
     fill: sanitizeDisplayString(input.fill) || "█",
@@ -343,9 +345,9 @@ function parseBars(value: unknown): StatuslineSettings["bars"] {
     showPercent: typeof input.showPercent === "boolean" ? input.showPercent : true,
     style: styles.includes(input.style as typeof styles[number]) ? (input.style as typeof styles[number]) : "rounded",
     truecolor: typeof input.truecolor === "boolean" ? input.truecolor : true,
-    // ponytail: impossible thresholds (non-number or outside 0-100) fall back to default rather than clamp
-    warnAt: typeof input.warnAt === "number" && input.warnAt >= 0 && input.warnAt <= 100 ? input.warnAt : 80,
-    critAt: typeof input.critAt === "number" && input.critAt >= 0 && input.critAt <= 100 ? input.critAt : 95,
+    // ponytail: impossible/inverted thresholds fall back together rather than creating a misleading scale.
+    warnAt: warnAt < critAt ? warnAt : 80,
+    critAt: warnAt < critAt ? critAt : 95,
   };
 }
 

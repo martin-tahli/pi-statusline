@@ -205,7 +205,6 @@ export function setProviderDisplayMode(
       refreshWhileActive: refresh.refreshWhileActive,
       refreshDisabledProvider: refresh.refreshDisabledProvider,
     };
-    draft.icons.providers[providerId] ??= { mode: "global", value: "" };
     for (const window of windows) {
       record.windows[window.key!] ??= {
         ...createWindowConfig(),

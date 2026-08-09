@@ -201,6 +201,6 @@ test("migration: output does not alias the singleton defaults", () => {
   migrated.timing!.refreshIntervalMs = 1;
   assert.equal(DEFAULT_STATUSLINE_SETTINGS.icons.symbols["poison"], undefined);
   assert.equal(DEFAULT_STATUSLINE_SETTINGS.icons.providers["evil"], undefined);
-  assert.equal(DEFAULT_STATUSLINE_SETTINGS.separators.main, " · ");
+  assert.equal(DEFAULT_STATUSLINE_SETTINGS.separators.main, " >");
   assert.equal(DEFAULT_STATUSLINE_SETTINGS.timing.refreshIntervalMs, 10000);
 });

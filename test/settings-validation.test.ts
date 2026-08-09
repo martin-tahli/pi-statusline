@@ -160,6 +160,10 @@ test("validation: invalid - impossible order/width/interval normalized", () => {
   assert.equal(result.settings.bars.critAt, 95);
   assert.equal(result.settings.timing.refreshIntervalMs, 10000); // min 10000
   assert.equal(result.settings.timing.maxCacheAgeMs, 10000); // >= refreshIntervalMs
+
+  const inverted = parseStatuslineSettings({ bars: { warnAt: 90, critAt: 20 } });
+  assert.equal(inverted.settings.bars.warnAt, 80);
+  assert.equal(inverted.settings.bars.critAt, 95);
 });
 
 test("validation: hostile input - control chars stripped from display strings", () => {
@@ -318,6 +322,10 @@ test("validation: sparse doc falls back to full defaults (not empty order/segmen
   const result = parseStatuslineSettings({ version: CURRENT_VERSION });
   assert.deepEqual([...result.settings.layout.segmentOrder], ["project", "model", "effort", "context", "session", "throughput", "time"]);
   assert.deepEqual(Object.keys(result.settings.segments).sort(), ["context", "effort", "model", "project", "session", "throughput", "time"]);
+  assert.deepEqual(result.settings.separators, DEFAULT_STATUSLINE_SETTINGS.separators);
+  assert.deepEqual(result.settings.bars, DEFAULT_STATUSLINE_SETTINGS.bars);
+  assert.deepEqual(result.settings.thresholds, DEFAULT_STATUSLINE_SETTINGS.thresholds);
+  assert.deepEqual(result.settings.timing, DEFAULT_STATUSLINE_SETTINGS.timing);
 });
 
 test("validation: null input returns a clone, not the singleton", () => {

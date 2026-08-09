@@ -35,7 +35,7 @@ function localRuntime(extra: Partial<RuntimeSnapshot> = {}): RuntimeSnapshot {
     model: { id: "qwen2.5-coder", provider: "ollama", reasoning: true },
     activeProvider: "ollama",
     thinkingLevel: "medium",
-    contextUsage: { percent: 0.55, tokens: 550_000, contextWindow: 1_000_000 },
+    contextUsage: { percent: 55, tokens: 550_000, contextWindow: 1_000_000 },
     throughput: { inputRate: 850, outputRate: 62 },
     ...extra,
   };
@@ -177,10 +177,6 @@ test("preview: representative U8 draft presentation settings alter the shared re
   bars.bars.width = 3;
   assert.notEqual(line(bars, "subscription"), line(DEFAULT_STATUSLINE_SETTINGS, "subscription"));
 
-  const thresholds = structuredClone(DEFAULT_STATUSLINE_SETTINGS);
-  thresholds.thresholds.contextWarn = 50;
-  assert.notEqual(line(thresholds), baseline);
-
   const ascii = structuredClone(DEFAULT_STATUSLINE_SETTINGS);
   ascii.icons.style = "ascii";
   const none = structuredClone(DEFAULT_STATUSLINE_SETTINGS);
@@ -216,21 +212,23 @@ test("preview: parity — equals composeFooterLine for all four fixture modes", 
   }
 });
 
-// U11 gap-fill: context threshold markers (! / !!) appear in the composed footer line.
-test("resolution: context threshold markers appear in the composed line at warn and crit percentages", () => {
+// Context threshold settings now drive the context segment's color role (the footer never had
+// text markers); verify the role flips at the configured warn/crit percentages via a themed paint.
+test("resolution: context threshold color role changes at warn and crit percentages", () => {
+  const theme = { fg: (role: string, text: string) => `<${role}>${text}</${role}>` } as never;
   const ctx = (percent: number): ResolutionContext => ({
     capability: localCapability,
     runtime: localRuntime({ contextUsage: { percent, tokens: percent * 1_000, contextWindow: 100_000 } }),
   });
-  // Below warn (default 80): no marker.
-  const safe = composeFooterLine(DEFAULT_STATUSLINE_SETTINGS, ctx(79), 200);
-  assert.ok(!safe.includes("!"), `expected no marker below warn, got: ${safe}`);
-  // At/above warn (80) but below crit (95): single '!'.
-  const warn = composeFooterLine(DEFAULT_STATUSLINE_SETTINGS, ctx(80), 200);
-  assert.ok(warn.includes("!") && !warn.includes("!!"), `expected '!' at warn, got: ${warn}`);
-  // At/above crit (95): double '!!'.
-  const crit = composeFooterLine(DEFAULT_STATUSLINE_SETTINGS, ctx(95), 200);
-  assert.ok(crit.includes("!!"), `expected '!!' at crit, got: ${crit}`);
+  // Below warn (default 80): success.
+  const safe = composeFooterLine(DEFAULT_STATUSLINE_SETTINGS, ctx(79), 200, theme);
+  assert.ok(safe.includes("<success>"), `expected success below warn, got: ${safe}`);
+  // At/above warn (80) but below crit (95): warning.
+  const warn = composeFooterLine(DEFAULT_STATUSLINE_SETTINGS, ctx(80), 200, theme);
+  assert.ok(warn.includes("<warning>"), `expected warning at warn, got: ${warn}`);
+  // At/above crit (95): error.
+  const crit = composeFooterLine(DEFAULT_STATUSLINE_SETTINGS, ctx(95), 200, theme);
+  assert.ok(crit.includes("<error>"), `expected error at crit, got: ${crit}`);
 });
 
 // U11 gap-fill: icon-style content — ascii emits letter codes; none produces no symbol prefix.
@@ -239,11 +237,11 @@ test("resolution: icon style ascii emits letter codes; none produces no symbol p
   const ascii = structuredClone(DEFAULT_STATUSLINE_SETTINGS);
   ascii.icons.style = "ascii";
   const asciiLine = composeFooterLine(ascii, ctx, 200);
-  // ascii preset: project='P', model='M', thinking='T', context='C', throughput='R'.
-  // iconLabel defaults to "", so icons are adjacent to their values.
-  assert.ok(asciiLine.includes("Pproject"), `ascii: expected 'Pproject' icon+label, got: ${asciiLine}`);
-  assert.ok(asciiLine.startsWith("P") || asciiLine.includes(" P"), `ascii: expected project 'P' icon, got: ${asciiLine}`);
-  assert.ok(asciiLine.includes("Tmedium") || asciiLine.includes("Toff"), `ascii: expected thinking 'T' icon, got: ${asciiLine}`);
+  // ascii preset: project='P', model='M', thinking='T', context='C', throughput='R'. Each icon is
+  // followed by a space (matching the live footer's `📁 project` spacing).
+  assert.ok(asciiLine.includes("P project"), `ascii: expected 'P project' icon+label, got: ${asciiLine}`);
+  assert.ok(asciiLine.startsWith("P "), `ascii: expected project 'P' icon, got: ${asciiLine}`);
+  assert.ok(asciiLine.includes("T medium"), `ascii: expected thinking 'T' icon, got: ${asciiLine}`);
 
   const none = structuredClone(DEFAULT_STATUSLINE_SETTINGS);
   none.icons.style = "none";
