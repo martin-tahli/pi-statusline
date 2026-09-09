@@ -49,8 +49,8 @@ export function sumTextLength(value: unknown): number {
   if (Array.isArray(value)) return value.reduce((sum: number, item) => sum + sumTextLength(item), 0);
   if (value && typeof value === "object") {
     return Object.entries(value as Record<string, unknown>).reduce((sum, [key, part]) => {
-      if ((key === "text" || key === "thinking") && typeof part === "string") return sum + part.length;
-      if (key === "content") return sum + sumTextLength(part);
+      if ((key === "text" || key === "thinking" || key === "system") && typeof part === "string") return sum + part.length;
+      if (key === "content" || key === "messages") return sum + sumTextLength(part);
       return sum;
     }, 0);
   }

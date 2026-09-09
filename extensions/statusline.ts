@@ -353,7 +353,7 @@ export default function statusline(
             activeProviderHasRow,
             sessionPlaceholder,
           }, width, theme);
-          const providerRowLines = renderProviderRows(settings, sources, theme, Date.now());
+          const providerRowLines = renderProviderRows(settings, sources, theme, Date.now(), width);
           return [line, ...providerRowLines.map((rowLine) => truncateToWidth(rowLine, width, ""))];
         },
       };
@@ -616,6 +616,13 @@ export default function statusline(
 
   pi.on("context", (event) => {
     lastContextChars = sumTextLength(event.messages);
+  });
+
+  // The `context` event omits the system prompt and tools, which dominate first-prompt prefill;
+  // the outgoing request payload is the full size the server actually has to process.
+  pi.on("before_provider_request", (event) => {
+    const chars = sumTextLength(event.payload);
+    if (chars > 0) lastContextChars = chars;
   });
 
   pi.on("turn_end", async (event, ctx) => {

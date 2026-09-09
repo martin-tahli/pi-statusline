@@ -1,4 +1,5 @@
 import { renderBar, DEFAULT_STOPS, type BarStyle, type ColorStops } from "./bar.ts";
+import { visibleWidth } from "@earendil-works/pi-tui";
 import { composeSegments, createSegments, SEGMENT_ORDER, type SegmentId } from "./segments.ts";
 import {
   billingMode,
@@ -185,6 +186,49 @@ function renderSessionBar(settings: StatuslineSettings, provider: string | undef
   return `${paint("muted", `${display.label} `)}${bar}${reset}`;
 }
 
+/** Compact no-bar form of one window: the numbers the reader actually needs (label, %, ↻ reset). */
+function compactSessionBar(settings: StatuslineSettings, provider: string | undefined, window: RateLimitWindow, theme: RenderTheme | undefined, now: number): string {
+  const paint = (r: ThemeColor, text: string) => (theme?.fg ? theme.fg(r, text) : text);
+  const display = resolveWindowDisplay(settings, provider, window);
+  const used = Math.max(0, Math.min(1, window.used));
+  const pct = display.showPercent ? `${Math.round(used * 100)}%` : "";
+  const reset = display.showReset && window.resetAt !== undefined ? paint("dim", ` ↻ ${formatReset(window.resetAt, display.resetFormat, now)}`) : "";
+  const body = `${pct}${reset}`.replace(/^\s+/, "");
+  return body ? `${paint("muted", `${display.label} `)}${body}` : "";
+}
+
+const WINDOW_SEPARATOR = " >";
+
+/**
+ * Render a provider's quota windows to fit `budget` visible columns. Full bars when they fit;
+ * under pressure drop bars before numbers, then drop the soonest-resetting window first — so the
+ * weekly window (the one that actually gates usage) keeps its % and reset on narrow screens.
+ * Shared by the main-line session segment, the provider rows, and the settings preview.
+ */
+export function renderSessionWindows(
+  settings: StatuslineSettings,
+  provider: string | undefined,
+  windows: readonly RateLimitWindow[],
+  theme: RenderTheme | undefined,
+  now: number,
+  budget?: number,
+): string {
+  const sep = theme?.fg ? theme.fg("dim", WINDOW_SEPARATOR) : WINDOW_SEPARATOR;
+  const full = windows.map((window) => renderSessionBar(settings, provider, window, theme, now)).join(sep);
+  if (budget === undefined || visibleWidth(full) <= budget) return full;
+  const ordered = [...windows].sort((a, b) => (a.resetAt ?? -Infinity) - (b.resetAt ?? -Infinity));
+  const compact = () => ordered
+    .map((window) => compactSessionBar(settings, provider, window, theme, now))
+    .filter((bar) => bar.trim().length > 0)
+    .join(sep);
+  let result = compact();
+  while (visibleWidth(result) > budget && ordered.length > 1) {
+    ordered.shift();
+    result = compact();
+  }
+  return result;
+}
+
 /** One provider's data for a tracking row (caller pre-filters order/enabled/health). */
 export interface ProviderRowSource {
   provider: string;
@@ -218,20 +262,24 @@ export function renderProviderRows(
   sources: readonly ProviderRowSource[],
   theme: RenderTheme | undefined,
   now: number,
+  width?: number,
 ): string[] {
   if (!settings.providers.enabled) return [];
   const paint = (r: ThemeColor, text: string) => (theme?.fg ? theme.fg(r, text) : text);
-  const sep = paint("dim", " >");
+  const sep = paint("dim", WINDOW_SEPARATOR);
   const lines: string[] = [];
   for (const source of sources) {
     if (settings.providers.records[source.provider]?.enabled === false) continue;
-    const rendered = source.windows
-      .filter((window) => resolveWindowDisplay(settings, source.provider, window).visible)
-      .map((window) => renderSessionBar(settings, source.provider, window, theme, now))
-      .filter((bar) => bar.trim().length > 0)
-      .join(sep);
-    if (rendered) lines.push(`${paint("muted", `${source.provider} `)}${rendered}`);
-    else if (source.placeholder) lines.push(paint("muted", `${source.provider} ${source.placeholder}`));
+    const prefix = paint("muted", `${source.provider} `);
+    const visible = source.windows.filter((window) => resolveWindowDisplay(settings, source.provider, window).visible);
+    if (visible.length) {
+      // Width-aware: degrade in place (bars, then extra windows) instead of being chopped mid-bar.
+      const budget = width === undefined ? undefined : Math.max(0, width - visibleWidth(prefix));
+      const rendered = renderSessionWindows(settings, source.provider, visible, theme, now, budget);
+      if (rendered.trim().length > 0) lines.push(`${prefix}${rendered}`);
+    } else if (source.placeholder) {
+      lines.push(paint("muted", `${source.provider} ${source.placeholder}`));
+    }
   }
   return lines;
 }
@@ -296,11 +344,11 @@ export function renderMainLine(
 
   const sessionWindows = snap.activeProviderHasRow ? [] : (snap.sessionWindows ?? []);
   const sessionProvider = snap.model?.provider;
-  const session = sessionWindows.length
-    ? sessionWindows
-      .filter((window) => resolveWindowDisplay(settings, sessionProvider, window).visible)
-      .map((window) => renderSessionBar(settings, sessionProvider, window, theme, now))
-      .join(paint("dim", " >"))
+  const visibleSessionWindows = sessionWindows.filter((window) => resolveWindowDisplay(settings, sessionProvider, window).visible);
+  // Width-aware: composeSegments offers this renderer the leftover columns under width pressure,
+  // so the quota degrades (bars, then extra windows) instead of being dropped or chopped mid-bar.
+  const session = (budget?: number) => visibleSessionWindows.length
+    ? renderSessionWindows(settings, sessionProvider, visibleSessionWindows, theme, now, budget)
     : (snap.sessionPlaceholder ?? "");
 
   const withSpace = (name: string, value: string) => {
@@ -336,7 +384,7 @@ export function renderMainLine(
       const head = paint("muted", glyph ? `${glyph}  ` : "");
       return `${head}${paint(contextRole(context), context.label)}`;
     },
-    session: () => session,
+    session,
     throughput: () => throughput,
     // formatTime already carries its own ⏳ glyph; no icon prefix.
     time: () => time ? paint("muted", time) : "",

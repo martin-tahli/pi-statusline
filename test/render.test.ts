@@ -61,6 +61,45 @@ test("renderProviderRows: honors per-window showBar / showReset / label", () => 
   assert.equal(line!.includes("%"), false, `showBar off hides the bar (and its percent)`);
 });
 
+test("renderProviderRows: narrow width keeps the weekly numbers and reset instead of chopping mid-bar", () => {
+  const s = settingsWith("anthropic", {});
+  const soon: RateLimitWindow = { key: "five-hour", label: "5h", used: 0.11, resetAt: 100 * 60_000 };
+  const weekly: RateLimitWindow = { key: "seven-day", label: "wk", used: 0.42, resetAt: 3.4 * 86_400_000 };
+  const rows = renderProviderRows(s, [{ provider: "anthropic", windows: [soon, weekly] }], undefined, 0, 45);
+  const row = rows[0]!;
+  assert.ok(row.includes("wk 42%"), `weekly percent survives: ${row}`);
+  assert.ok(row.includes("\u21bb"), `weekly reset survives: ${row}`);
+  assert.equal(row.includes("\u257a"), false, `bars degrade before numbers: ${row}`);
+});
+
+test("renderProviderRows: extreme narrow width drops the sooner-resetting window, keeping weekly", () => {
+  const s = settingsWith("anthropic", {});
+  const soon: RateLimitWindow = { key: "five-hour", label: "5h", used: 0.11, resetAt: 100 * 60_000 };
+  const weekly: RateLimitWindow = { key: "seven-day", label: "wk", used: 0.42, resetAt: 3.4 * 86_400_000 };
+  const rows = renderProviderRows(s, [{ provider: "anthropic", windows: [soon, weekly] }], undefined, 0, 20);
+  const row = rows[0]!;
+  assert.equal(row.includes("5h"), false, `5h dropped first: ${row}`);
+  assert.ok(row.includes("wk 42%"), `weekly kept: ${row}`);
+});
+
+test("renderMainLine: narrow width degrades the session quota instead of dropping it", () => {
+  const settings = structuredClone(DEFAULT_STATUSLINE_SETTINGS);
+  settings.providers.enabled = false;
+  const line = renderMainLine(settings, {
+    cwd: "/tmp/project",
+    model: { id: "claude-sonnet-4-5", provider: "anthropic", reasoning: false },
+    contextUsage: { percent: 23.4, tokens: 46_800, contextWindow: 200_000 },
+    subscription: true,
+    sessionWindows: [
+      { key: "five-hour", label: "5h", used: 0.23, resetAt: 47 * 60_000 },
+      { key: "seven-day", label: "wk", used: 0.42, resetAt: 3.4 * 86_400_000 },
+    ],
+    now: 0,
+  }, 40);
+  assert.ok(line.includes("wk 42%"), `weekly percent on main line: ${line}`);
+  assert.ok(line.includes("\u21bb"), `weekly reset on main line: ${line}`);
+});
+
 test("renderProviderRows: placeholder renders when a provider has no windows yet", () => {
   const rows = renderProviderRows(DEFAULT_STATUSLINE_SETTINGS, [{ provider: "anthropic", windows: [], placeholder: "5h — wk —" }], undefined, 0);
   assert.deepEqual(rows, ["anthropic 5h — wk —"]);

@@ -14,6 +14,7 @@ test("sums text across nested message content, ignoring non-text fields", () => 
   assert.equal(sumTextLength({ role: "user", content: [{ type: "text", text: "abcdefgh" }] }), 8);
   assert.equal(sumTextLength([{ role: "assistant", content: "hi" }, { role: "toolResult", toolCallId: "1" }]), 2);
   assert.equal(sumTextLength(undefined), 0);
+  assert.equal(sumTextLength({ system: "abcd", messages: [{ role: "user", content: "ef" }] }), 6);
 });
 
 test("measures streamed windows and independently falls back to the whole turn", () => {

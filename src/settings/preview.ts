@@ -207,7 +207,7 @@ export function renderPreview(input: PreviewInput): string[] {
     if (!settings.enabled) return [label, "Statusline disabled"];
     const now = ctx.runtime.now ?? Date.now();
     const main = composeFooterLine(settings, ctx, width, theme);
-    const rows = renderProviderRows(settings, sources, theme, now);
+    const rows = renderProviderRows(settings, sources, theme, now, width);
     return [label, main, ...rows];
   }
   const fixture = PREVIEW_FIXTURES[mode as "local" | "subscription" | "api" | "narrow"];

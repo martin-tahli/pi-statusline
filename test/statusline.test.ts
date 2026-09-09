@@ -321,6 +321,49 @@ test("restores Anthropic limits when a session reloads", async () => {
   footer?.dispose?.();
 });
 
+test("estimates prefill speed from the outgoing payload on the first prompt", async () => {
+  const handlers = new Map<string, (...args: any[]) => unknown>();
+  let footer: { dispose?: () => void; render: (width: number) => string[] } | undefined;
+  const pi = {
+    on: (event: string, handler: (...args: any[]) => unknown) => handlers.set(event, handler),
+    registerCommand: () => {},
+    getThinkingLevel: () => "off",
+    exec: async () => ({ code: 0, stdout: "", stderr: "" }),
+  } as never;
+  const ctx = {
+    cwd: process.cwd(),
+    model: { id: "llama-local", provider: "llama-cpp", baseUrl: "http://localhost:8080/v1" },
+    modelRegistry: { isUsingOAuth: () => false, getApiKeyForProvider: async () => undefined },
+    getContextUsage: () => undefined,
+    hasPendingMessages: () => false,
+    sessionManager: { getBranch: () => [] },
+    ui: {
+      setFooter: (factory: any) => {
+        footer = factory?.(
+          { requestRender: () => {} },
+          { fg: (_: string, text: string) => text, getColorMode: () => "16", getFgAnsi: () => "" },
+          { getGitBranch: () => null, getAvailableProviderCount: () => 1, onBranchChange: () => () => {} },
+        );
+      },
+      notify: () => {},
+    },
+  } as never;
+
+  statusline(pi, testCache(), join(cacheRoot, "defaults.json"));
+  await handlers.get("session_start")!({}, ctx);
+  // First prompt: `context` only sees the user message; the payload adds the system prompt.
+  handlers.get("context")!({ messages: [{ role: "user", content: "tiny" }] });
+  handlers.get("before_provider_request")!({ payload: { messages: [
+    { role: "system", content: "s".repeat(119_996) },
+    { role: "user", content: "tiny" },
+  ] } });
+  handlers.get("turn_start")!({ timestamp: Date.now() - 1_000 });
+
+  const line = footer!.render(500)[0]!;
+  assert.ok(/↑30\.0k/.test(line), `expected payload-based prefill rate, got: ${line}`);
+  footer?.dispose?.();
+});
+
 test("estimates throughput from response text when a provider reports no usage", async () => {
   const handlers = new Map<string, (...args: any[]) => unknown>();
   let footer: { dispose?: () => void; render: (width: number) => string[] } | undefined;

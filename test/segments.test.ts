@@ -32,3 +32,16 @@ test("composition is one width-bounded line", () => {
   assert.ok(visibleWidth(line) <= 40);
   assert.equal(line.includes("\n"), false);
 });
+
+test("a width-aware segment shrinks to the leftover columns instead of being dropped", () => {
+  const renderers = Object.fromEntries(SEGMENT_ORDER.map((id) => [
+    id,
+    id === "session" ? (budget?: number) => (budget === undefined || budget > 8 ? "session-long-value" : "session") : () => `${id}-long-value`,
+  ])) as Record<(typeof SEGMENT_ORDER)[number], (budget?: number) => string>;
+  // Everything at full length cannot fit; dropping per priority would remove session entirely.
+  // context-long-value (18) + sep (1) + shrunk session (7) = 26.
+  const line = composeSegments(createSegments(enabled, renderers), 26, " ");
+  assert.ok(line.includes("session"), `session degraded in place: ${line}`);
+  assert.equal(line.includes("session-long-value"), false, `session took the shrunk form: ${line}`);
+  assert.ok(visibleWidth(line) <= 26, line);
+});
