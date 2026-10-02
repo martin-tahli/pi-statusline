@@ -292,7 +292,8 @@ test("provider detail navigation routes every editable control through the share
     const lines = renderSettingsUi(state, { width: 79, providers: providerContext });
     const line = lines.findIndex((value) => value.includes(text));
     assert.ok(line >= 2, `missing detail row: ${text}`);
-    state = { ...state, selected: line - 2 };
+    const firstControl = lines.findIndex((value) => /^[ >] (Show |Refresh usage now|.* Visible:)/.test(value));
+    state = { ...state, selected: line - firstControl };
   };
   const edit = (text: string, key = "Enter") => {
     select(text);
@@ -535,7 +536,7 @@ test("provider detail reset restores only the currently open provider", () => {
   const lines = renderSettingsUi(state, { width: 79, providers: providerContext });
   const resetLine = lines.findIndex((line) => line.includes("Reset provider to default"));
   assert.ok(resetLine >= 2, "provider detail must show a reset row");
-  state.selected = resetLine - 2;
+  state.selected = resetLine - lines.findIndex((value) => /^[ >] (Show |Refresh usage now|.* Visible:)/.test(value));
   state = routeSettingsKey(state, "Enter", providerContext).state;
 
   // dynamic-a is back to defaults (record and icon).

@@ -36,6 +36,7 @@ export function resetSelected(draft: StatuslineSettings, path: string): Statusli
 
 /** Reset a provider's configuration in the draft. */
 export function resetProvider(draft: StatuslineSettings, providerId: string): StatuslineSettings {
+  delete draft.icons.providers[providerId];
   if (draft.providers.records[providerId]) {
     draft.providers.records[providerId] = createProviderConfig();
   }

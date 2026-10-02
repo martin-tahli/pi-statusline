@@ -56,7 +56,7 @@ test("keeps the last fresh usage through a transient refresh failure", async () 
   const fresh = coordinator.get("anthropic");
   available = false;
   await coordinator.refresh("anthropic");
-  assert.deepEqual(coordinator.get("anthropic"), fresh);
+  assert.deepEqual(coordinator.get("anthropic"), { ...fresh, usage: { ...usage, cached: true } });
   assert.deepEqual(coordinator.get("anthropic", fresh.updatedAt! + 21), {
     state: "hidden",
     reason: "usage data is stale",
@@ -109,5 +109,5 @@ test("hides stale results and reports specific reasons for providers without an 
   await coordinator.refresh("anthropic");
   assert.deepEqual(coordinator.get("anthropic", Date.now() + 21), { state: "hidden", reason: "usage data is stale", updatedAt: coordinator.get("anthropic").updatedAt });
   assert.equal(sanitizedReason("zai"), "usage unavailable");
-  assert.equal(sanitizedReason("openrouter"), "usage requires an OpenRouter management key pi doesn't manage");
+  assert.equal(sanitizedReason("openrouter"), "usage unavailable");
 });

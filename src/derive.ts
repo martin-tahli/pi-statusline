@@ -23,7 +23,7 @@ export function isLocalEndpoint(baseUrl?: string): boolean {
   if (!baseUrl) return false;
   let host: string;
   try {
-    host = new URL(baseUrl).hostname;
+    host = new URL(baseUrl).hostname.replace(/^\[|\]$/g, "");
   } catch {
     return false;
   }
@@ -56,7 +56,7 @@ export function deriveEffort(
 }
 
 export function deriveContext(usage?: ContextUsage): { label: string; percent: number; tokens: number | null } | undefined {
-  if (!usage || usage.percent === null) return undefined;
+  if (!usage || usage.percent === null || !Number.isFinite(usage.percent) || !Number.isFinite(usage.contextWindow) || usage.contextWindow <= 0) return undefined;
   return {
     label: `${formatContextPercent(usage.percent)}/${formatWindow(usage.contextWindow)}`,
     percent: usage.percent,

@@ -58,7 +58,7 @@ test("renderProviderRows: honors per-window showBar / showReset / label", () => 
   const [line] = renderProviderRows(s, [{ provider: "anthropic", windows: [{ ...fiveHour, resetAt: 9_000 }] }], undefined, 0);
   assert.ok(line!.includes("FIVE"), `custom label renders: ${line}`);
   assert.equal(line!.includes("↻"), false, `showReset off hides the reset countdown`);
-  assert.equal(line!.includes("%"), false, `showBar off hides the bar (and its percent)`);
+  assert.equal(line!.includes("%"), true, `showBar off leaves the separately enabled percent visible`);
 });
 
 test("renderProviderRows: narrow width keeps the weekly numbers and reset instead of chopping mid-bar", () => {

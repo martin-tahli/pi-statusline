@@ -57,7 +57,7 @@ test("parses Codex account usage by the windows returned by the account", () => 
   assert.deepEqual(parseCodexUsage({ rate_limit: null }), []);
 });
 
-test("parses Z.AI TOKENS_LIMIT windows, ordering the untouched/sooner-resetting one as 5h", () => {
+test("parses Z.AI TOKENS_LIMIT windows without guessing durations from resets", () => {
   assert.deepEqual(parseZaiUsage({
     data: {
       limits: [
@@ -69,12 +69,12 @@ test("parses Z.AI TOKENS_LIMIT windows, ordering the untouched/sooner-resetting 
     },
     success: true,
   }), [
-    { key: "five-hour", label: "5h", used: 0 },
-    { key: "weekly", label: "wk", used: 0.05, resetAt: 1_785_753_049_998 },
+    { key: "window-1", label: "quota1", used: 0, resetAt: undefined },
+    { key: "window-2", label: "quota2", used: 0.05, resetAt: 1_785_753_049_998 },
   ]);
 });
 
-test("orders two reset-bearing Z.AI windows by which resets sooner", () => {
+test("keeps Z.AI window identities when reset order reverses", () => {
   assert.deepEqual(parseZaiUsage({
     data: {
       limits: [
@@ -83,15 +83,15 @@ test("orders two reset-bearing Z.AI windows by which resets sooner", () => {
       ],
     },
   }), [
-    { key: "five-hour", label: "5h", used: 0.1, resetAt: 1_785_000_049_998 },
-    { key: "weekly", label: "wk", used: 0.4, resetAt: 1_785_753_049_998 },
+    { key: "window-1", label: "quota1", used: 0.4, resetAt: 1_785_753_049_998 },
+    { key: "window-2", label: "quota2", used: 0.1, resetAt: 1_785_000_049_998 },
   ]);
 });
 
 test("hides Z.AI usage on any unexpected shape rather than guessing", () => {
-  assert.deepEqual(parseZaiUsage({ data: { limits: [{ type: "TOKENS_LIMIT", percentage: 10 }] } }), []);
+  assert.deepEqual(parseZaiUsage({ data: { limits: [{ type: "TOKENS_LIMIT", percentage: 10 }] } }), [{ key: "window-1", label: "quota1", used: 0.1, resetAt: undefined }]);
   assert.deepEqual(parseZaiUsage({ data: { limits: [] } }), []);
-  assert.deepEqual(parseZaiUsage({ data: { limits: [{ type: "TOKENS_LIMIT", percentage: 101 }, { type: "TOKENS_LIMIT", percentage: 5 }] } }), []);
+  assert.deepEqual(parseZaiUsage({ data: { limits: [{ type: "TOKENS_LIMIT", percentage: 101 }, { type: "TOKENS_LIMIT", percentage: 5 }] } }), [{ key: "window-2", label: "quota2", used: 0.05, resetAt: undefined }]);
   assert.deepEqual(parseZaiUsage({}), []);
   assert.deepEqual(parseZaiUsage(null), []);
 });

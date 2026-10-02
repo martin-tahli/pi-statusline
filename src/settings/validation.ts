@@ -83,7 +83,7 @@ function sanitizeDisplayString(value: unknown): string {
 
 /** Sanitize a generic string (provider IDs, keys). */
 function sanitizeString(value: unknown): string {
-  if (typeof value !== "string") return "";
+  if (typeof value !== "string" || ["__proto__", "constructor", "prototype"].includes(value)) return "";
   return value
     .replace(ANSI_ESCAPE_REGEX, "")
     .replace(CONTROL_CHAR_REGEX, "")
@@ -93,7 +93,7 @@ function sanitizeString(value: unknown): string {
 
 /** Clamp a number to bounds. */
 function clamp(n: number, min: number, max: number): number {
-  return Math.max(min, Math.min(max, n));
+  return Number.isFinite(n) ? Math.max(min, Math.min(max, Math.floor(n))) : min;
 }
 
 /** Parse and validate a version field. */
@@ -123,7 +123,7 @@ function parseProviders(value: unknown): StatuslineSettings["providers"] {
     }
   }
 
-  return { enabled, order, defaults, records };
+  return { enabled, scope: input.scope === "selected" ? "selected" : "active", order: [...new Set(order)], defaults, records };
 }
 
 /** Parse provider defaults. */
@@ -306,7 +306,7 @@ function parseSeparators(value: unknown): StatuslineSettings["separators"] {
     main: sep(input.main, DEFAULT_STATUSLINE_SETTINGS.separators.main),
     projectGit: sep(input.projectGit, DEFAULT_STATUSLINE_SETTINGS.separators.projectGit),
     window: sep(input.window, " | "),
-    provider: sep(input.provider, "\n"),
+    provider: input.provider === "\n" ? "\n" : sep(input.provider, "\n"),
     iconLabel: sep(input.iconLabel, ""),
     labelValue: sep(input.labelValue, " "),
     spacingBefore: clamp(typeof input.spacingBefore === "number" ? input.spacingBefore : 0, 0, 10),
@@ -324,7 +324,7 @@ function parseSegments(value: unknown): StatuslineSettings["segments"] {
   const result = structuredClone(DEFAULT_STATUSLINE_SETTINGS.segments);
   for (const [key, val] of Object.entries(input)) {
     if (VALID_SEGMENT_IDS.has(key)) {
-      result[key as SegmentId] = typeof val === "boolean" ? val : true;
+      result[key as SegmentId] = typeof val === "boolean" || val === "auto" ? val : result[key as SegmentId];
     }
   }
   return result;
@@ -337,6 +337,7 @@ function parseBars(value: unknown): StatuslineSettings["bars"] {
   const warnAt = typeof input.warnAt === "number" && input.warnAt >= 0 && input.warnAt <= 100 ? input.warnAt : 80;
   const critAt = typeof input.critAt === "number" && input.critAt >= 0 && input.critAt <= 100 ? input.critAt : 95;
   return {
+    format: input.format === "percent" || input.format === "detailed" ? input.format : "bar",
     width: clamp(typeof input.width === "number" ? input.width : 12, 1, 200),
     fill: sanitizeDisplayString(input.fill) || "█",
     empty: sanitizeDisplayString(input.empty) || "░",
@@ -380,7 +381,7 @@ function parseIcons(value: unknown): StatuslineSettings["icons"] {
   const providers: Record<string, { mode: "default" | "global" | "custom" | "hidden"; value: string }> = {};
   if (input.providers && typeof input.providers === "object") {
     for (const [provider, config] of Object.entries(input.providers as Record<string, unknown>)) {
-      const c = config as Record<string, unknown>;
+      const c = config && typeof config === "object" ? config as Record<string, unknown> : {};
       const mode = ["default", "global", "custom", "hidden"].includes(c.mode as string)
         ? (c.mode as "default" | "global" | "custom" | "hidden")
         : "default";
@@ -409,6 +410,7 @@ function parseExtras(value: unknown): StatuslineSettings["extras"] {
   const input = value && typeof value === "object" ? value as Record<string, unknown> : {};
   const bool = (v: unknown, d: boolean): boolean => typeof v === "boolean" ? v : d;
   return {
+    extensionStatuses: bool(input.extensionStatuses, false),
     branch: bool(input.branch, true),
     cost: bool(input.cost, false),
     sessionElapsed: bool(input.sessionElapsed, false),
@@ -419,9 +421,10 @@ function parseExtras(value: unknown): StatuslineSettings["extras"] {
 
 /** Collect unknown fields from an object. */
 function collectUnknown(input: Record<string, unknown>, knownFields: Set<string>): Record<string, unknown> {
-  const result: Record<string, unknown> = {};
+  const result: Record<string, unknown> = input.__unknown && typeof input.__unknown === "object" && !Array.isArray(input.__unknown)
+    ? { ...input.__unknown as Record<string, unknown> } : {};
   for (const [key, value] of Object.entries(input)) {
-    if (!knownFields.has(key)) {
+    if (key !== "__unknown" && !knownFields.has(key)) {
       result[key] = value;
     }
   }
@@ -432,7 +435,7 @@ function collectUnknown(input: Record<string, unknown>, knownFields: Set<string>
  * Safe parse/normalize function for StatuslineSettings.
  * Validates, normalizes, bounds, and falls back to defaults for invalid documents.
  * Preserves unknown fields via opaque __unknown bag.
- * Future versions (> CURRENT_VERSION) return readOnly: true and are returned unchanged.
+ * Future versions (> CURRENT_VERSION) return a safe read-only view; saving is refused.
  */
 export function parseStatuslineSettings(unknown: unknown): ParsedSettings {
   // Handle null/undefined/non-object — return a CLONE so callers can never mutate the singleton.
@@ -443,16 +446,7 @@ export function parseStatuslineSettings(unknown: unknown): ParsedSettings {
   const input = unknown as Record<string, unknown>;
   const version = parseVersion(input.version);
 
-  // Future version: read-only and returned UNCHANGED (no normalization/bounding).
-  // Preserve the document's own values; collect only the unknown top-level keys into __unknown.
-  // structuredClone de-aliases nested default objects so a read-only doc can't leak into the singleton.
-  if (version > CURRENT_VERSION) {
-    const __unknown = collectUnknown(input, KNOWN_TOP_LEVEL_FIELDS);
-    return {
-      settings: structuredClone({ ...DEFAULT_STATUSLINE_SETTINGS, ...input, version, __unknown }) as unknown as StatuslineSettings,
-      readOnly: true,
-    };
-  }
+  // Future documents stay untouched on disk; render only a validated compatible view.
 
   // Current or past version: normalize and validate
   const providers = parseProviders(input.providers);
@@ -488,8 +482,9 @@ export function parseStatuslineSettings(unknown: unknown): ParsedSettings {
         }
         // Collect unknown window fields
         if (configInput.windows && typeof configInput.windows === "object") {
-          for (const [winKey, winConfig] of Object.entries(configInput.windows as Record<string, unknown>)) {
-            if (!(winConfig && typeof winConfig === "object")) continue;
+          for (const [rawKey, winConfig] of Object.entries(configInput.windows as Record<string, unknown>)) {
+            const winKey = sanitizeString(rawKey);
+            if (!winKey || !(winConfig && typeof winConfig === "object")) continue;
             const winInput = winConfig as Record<string, unknown>;
             const unknownWin = collectUnknown(winInput, KNOWN_WINDOW_FIELDS);
             if (Object.keys(unknownWin).length > 0) {
@@ -506,7 +501,7 @@ export function parseStatuslineSettings(unknown: unknown): ParsedSettings {
 
   return {
     settings: {
-      version: CURRENT_VERSION,
+      version,
       enabled,
       providers,
       layout,
@@ -520,5 +515,6 @@ export function parseStatuslineSettings(unknown: unknown): ParsedSettings {
       extras,
       __unknown,
     },
+    ...(version > CURRENT_VERSION ? { readOnly: true } : {}),
   };
 }

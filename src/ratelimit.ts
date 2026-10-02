@@ -4,6 +4,9 @@ export interface RateLimitWindow {
   label: string;
   used: number;
   resetAt?: number;
+  usedAmount?: number;
+  remainingAmount?: number;
+  unit?: "USD";
 }
 
 export type RateLimits = RateLimitWindow[];
@@ -22,9 +25,8 @@ function numberInRange(value: string | undefined, max: number): number | undefin
 function reset(value: string | number | undefined): number | undefined {
   if (value === undefined || value === "") return undefined;
   const numeric = Number(value);
-  if (Number.isFinite(numeric)) return numeric < 1_000_000_000_000 ? numeric * 1_000 : numeric;
-  const parsed = Date.parse(String(value));
-  return Number.isNaN(parsed) ? undefined : parsed;
+  const parsed = Number.isFinite(numeric) ? (numeric < 1_000_000_000_000 ? numeric * 1_000 : numeric) : Date.parse(String(value));
+  return Number.isFinite(parsed) && parsed > 0 && parsed <= 8.64e15 ? parsed : undefined;
 }
 
 function durationLabel(minutes: number): string {
@@ -59,7 +61,7 @@ export function parseCodexUsage(payload: unknown): RateLimits {
     const window = value as Record<string, unknown>;
     const percent = typeof window.used_percent === "number" ? window.used_percent : undefined;
     const seconds = typeof window.limit_window_seconds === "number" ? window.limit_window_seconds : undefined;
-    if (percent === undefined || percent < 0 || percent > 100 || seconds === undefined || seconds <= 0) return [];
+    if (percent === undefined || !Number.isFinite(percent) || percent < 0 || percent > 100 || seconds === undefined || !Number.isFinite(seconds) || seconds <= 0) return [];
     const resetAt = reset(typeof window.reset_at === "number" ? window.reset_at : undefined);
     return [{
       key: name === "primary_window" ? "primary" : "secondary",
@@ -83,33 +85,35 @@ export function parseZaiUsage(payload: unknown): RateLimits {
 
   // Only TOKENS_LIMIT entries are the coding-plan credit windows; TIME_LIMIT entries are an
   // unrelated MCP tool-call budget (search-prime/web-reader/zread), not the model quota.
-  const windows = rawLimits.flatMap((entry) => {
+  const windows = rawLimits.filter((entry) => entry?.type === "TOKENS_LIMIT").flatMap((entry, index) => {
     if (!entry || typeof entry !== "object") return [];
     const window = entry as Record<string, unknown>;
     if (window.type !== "TOKENS_LIMIT") return [];
     const percentage = window.percentage;
     if (typeof percentage !== "number" || !Number.isFinite(percentage) || percentage < 0 || percentage > 100) return [];
-    return [{ used: percentage / 100, resetAt: reset(typeof window.nextResetTime === "number" ? window.nextResetTime : undefined) }];
+    return [{ key: `window-${index + 1}`, label: `quota${index + 1}`, used: percentage / 100, resetAt: reset(typeof window.nextResetTime === "number" ? window.nextResetTime : undefined) }];
   });
-  // The response has no documented field naming which window is 5h vs weekly. A window with no
-  // active reset countdown hasn't been touched since its last reset (Z.AI docs: 5h credits reset
-  // 5 hours *after consumption*, so an untouched window has no countdown; weekly credits always
-  // count down once subscribed), so it's the 5h window; otherwise the sooner-resetting window is
-  // the 5h one. Fail closed (no row) unless exactly two windows come back, since that's the only
-  // shape this heuristic was verified against.
-  if (windows.length !== 2) return [];
-  const [first, second] = [...windows].sort((a, b) => (a.resetAt ?? -Infinity) - (b.resetAt ?? -Infinity));
-  return [
-    { key: "five-hour", label: "5h", used: first!.used, ...(first!.resetAt === undefined ? {} : { resetAt: first!.resetAt }) },
-    { key: "weekly", label: "wk", used: second!.used, ...(second!.resetAt === undefined ? {} : { resetAt: second!.resetAt }) },
-  ];
+  // ponytail: undocumented identities; preserve response order with neutral labels until the
+  // endpoint supplies verified window IDs. Reset order cannot distinguish 5h from weekly.
+  return windows;
+}
+
+export function parseOpenRouterUsage(payload: unknown): RateLimits {
+  const data = payload && typeof payload === "object" ? (payload as Record<string, unknown>).data : undefined;
+  if (!data || typeof data !== "object") return [];
+  const { limit, limit_remaining } = data as Record<string, unknown>;
+  if (typeof limit !== "number" || !Number.isFinite(limit) || limit <= 0
+    || typeof limit_remaining !== "number" || !Number.isFinite(limit_remaining)) return [];
+  const remaining = Math.max(0, Math.min(limit, limit_remaining));
+  return [{ key: "key-budget", label: "key budget", used: (limit - remaining) / limit,
+    usedAmount: limit - remaining, remainingAmount: remaining, unit: "USD" }];
 }
 
 export function parseStoredRateLimits(value: unknown): RateLimits {
   if (!Array.isArray(value)) return [];
   return value.flatMap((window) => {
     if (!window || typeof window !== "object") return [];
-    const { key, label, used, resetAt } = window as Record<string, unknown>;
+    const { key, label, used, resetAt, usedAmount, remainingAmount, unit } = window as Record<string, unknown>;
     if (key !== undefined && (typeof key !== "string" || !key.trim())) return [];
     if (typeof label !== "string" || !label || typeof used !== "number" || !Number.isFinite(used) || used < 0 || used > 1) return [];
     const parsedResetAt = reset(typeof resetAt === "number" ? resetAt : undefined);
@@ -118,6 +122,8 @@ export function parseStoredRateLimits(value: unknown): RateLimits {
       label,
       used,
       ...(parsedResetAt === undefined ? {} : { resetAt: parsedResetAt }),
+      ...(unit === "USD" && typeof usedAmount === "number" && Number.isFinite(usedAmount) && usedAmount >= 0 ? { usedAmount, unit } : {}),
+      ...(unit === "USD" && typeof remainingAmount === "number" && Number.isFinite(remainingAmount) && remainingAmount >= 0 ? { remainingAmount, unit } : {}),
     }];
   });
 }

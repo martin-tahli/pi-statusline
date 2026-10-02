@@ -113,7 +113,7 @@ test("policy: sparse provider overrides resolve over globals and stay bounded", 
   };
   const policy = resolveProviderRefreshPolicy(s, "dynamic", officialCap);
   assert.deepEqual(policy, {
-    intervalMs: 20_000, maxAgeMs: 20_000, useCache: false, keepAfterFailure: true,
+    intervalMs: 20_000, maxAgeMs: 20_000, useCache: false, keepAfterFailure: false,
     refreshWhileActive: true, refreshDisabledProvider: true,
   });
 });

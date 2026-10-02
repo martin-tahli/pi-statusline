@@ -1,5 +1,6 @@
 import { DEFAULT_STATUSLINE_SETTINGS } from "./defaults.ts";
 import type { SegmentId, StatuslineSettings } from "./schema.ts";
+import { applyPreset, type Preset } from "./presets.ts";
 import { parseStatuslineSettings } from "./validation.ts";
 
 export interface SeparatorsScreenRow {
@@ -9,6 +10,9 @@ export interface SeparatorsScreenRow {
 
 type Group = "segments" | "extras" | "layout" | "separators" | "bars" | "thresholds";
 type Row = SeparatorsScreenRow & (
+  | { kind: "preset"; preset: Preset }
+  | { kind: "scope" }
+  | { kind: "visibility"; field: SegmentId }
   | { kind: "toggle"; group: "segments" | "extras" | "bars"; field: string }
   | { kind: "order"; field: "segmentOrder" | "narrowPriority"; index: number }
   | { kind: "cycle"; group: "bars"; field: string; values: readonly string[] }
@@ -32,6 +36,7 @@ const EXTRA_LABELS = {
   sessionElapsed: "Elapsed time",
   lastTurn: "Last-turn time",
   pending: "Pending indicator",
+  extensionStatuses: "Other extensions' status messages",
 } as const;
 const BAR_STYLES = ["rounded", "block"] as const;
 
@@ -42,11 +47,14 @@ function shown(value: string): string {
 function rows(draft: StatuslineSettings): Row[] {
   const result: Row[] = [];
   for (const id of Object.keys(SEGMENT_LABELS) as SegmentId[]) {
-    result.push({ id: `segments.${id}`, label: `${SEGMENT_LABELS[id]} visibility: ${draft.segments[id] ? "On" : "Off"}`, kind: "toggle", group: "segments", field: id });
+    result.push({ id: `segments.${id}`, label: `${SEGMENT_LABELS[id]} visibility: ${draft.segments[id] === "auto" ? "Auto" : draft.segments[id] ? "Always" : "Off"}`, kind: "visibility", field: id });
   }
   for (const [field, label] of Object.entries(EXTRA_LABELS)) {
     result.push({ id: `extras.${field}`, label: `${label}: ${draft.extras[field as keyof typeof EXTRA_LABELS] ? "On" : "Off"}`, kind: "toggle", group: "extras", field });
   }
+  for (const preset of ["minimal", "balanced", "detailed"] as const) result.push({ id: `preset.${preset}`, label: `Apply ${preset} preset`, kind: "preset", preset });
+  result.push({ id: "providers.scope", label: `Provider scope: ${draft.providers.scope}`, kind: "scope" });
+  result.push({ id: "bars.format", label: `Quota format: ${draft.bars.format}`, kind: "cycle", group: "bars", field: "format", values: ["percent", "bar", "detailed"] });
   draft.layout.segmentOrder.forEach((id, index) => result.push({ id: `layout.segmentOrder.${id}`, label: `Segment order ${index + 1}: ${SEGMENT_LABELS[id]}`, kind: "order", field: "segmentOrder", index }));
   draft.layout.narrowPriority.forEach((id, index) => result.push({ id: `layout.narrowPriority.${id}`, label: `Narrow priority ${index + 1}: ${SEGMENT_LABELS[id]}`, kind: "order", field: "narrowPriority", index }));
   for (const [field, label] of [
@@ -128,6 +136,17 @@ export function routeSeparatorsKey(
       return { draft: next, selected: selected + direction };
     }
     return { draft, selected };
+  }
+  if (row.kind === "preset" && forwards) return { draft: applyPreset(draft, row.preset), selected };
+  if (row.kind === "scope" && (forwards || backwards)) {
+    next.providers.scope = next.providers.scope === "active" ? "selected" : "active";
+    return { draft: next, selected };
+  }
+  if (row.kind === "visibility" && (forwards || backwards)) {
+    const values = [false, "auto", true] as const;
+    const index = values.indexOf(next.segments[row.field]);
+    next.segments[row.field] = values[(index + (backwards ? 2 : 1)) % 3];
+    return { draft: next, selected };
   }
   if (row.kind === "toggle" && forwards) {
     const group = next[row.group] as unknown as Record<string, boolean>;

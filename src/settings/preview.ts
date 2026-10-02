@@ -88,7 +88,7 @@ const apiFixture: PreviewFixture = Object.freeze({
     hostedSpeed: true,
     tokenLedger: true,
     costLedger: true,
-    unavailableReason: "usage requires an OpenRouter management key pi doesn't manage",
+    unavailableReason: "no key budget in this example",
   } as ProviderCapability),
 });
 
@@ -132,12 +132,17 @@ function liveSources(
   const order = settings.providers.order.length ? settings.providers.order : providers.descriptors.map((d) => d.id);
   const activeProvider = live.runtime.activeProvider;
   return order.flatMap((provider) => {
-    if (settings.providers.records[provider]?.enabled === false) return [];
+    if (settings.providers.records[provider]?.enabled === false || (settings.providers.scope === "active" && provider !== activeProvider)) return [];
     const windows = providers.windows?.[provider] ?? (provider === activeProvider ? (live.runtime.sessionWindows ?? []) : []);
     if (windows.length) return [{ provider, windows }];
-    // Match the footer's pre-load affordance for an eligible subscription provider.
-    if (provider === "anthropic" && providers.capabilities[provider]?.quotaSupport === "official") {
-      return [{ provider, windows: [], placeholder: "5h — wk —" }];
+    const health = providers.health?.[provider];
+    if (provider === "zai" && health?.reason === "usage unavailable") {
+      return [{ provider, windows: [], placeholder: health.reason }];
+    }
+    // Match the footer: an OAuth login earns the loading placeholder; anything else says "log in".
+    const cap = provider === "anthropic" ? providers.capabilities[provider] : undefined;
+    if (cap?.quotaSupport === "official") {
+      return [{ provider, windows: [], placeholder: cap.billing === "subscription" ? "5h — wk —" : "log in" }];
     }
     return [];
   });
@@ -172,20 +177,11 @@ function resolveCurrentPreview(input: PreviewInput): { label: string; ctx: Resol
     capability: cap ?? live.capability,
     runtime: {
       cwd: live.runtime.cwd,
-      thinkingLevel: live.runtime.thinkingLevel,
-      contextUsage: live.runtime.contextUsage,
-      throughput: live.runtime.throughput,
-      activeMs: live.runtime.activeMs,
-      elapsedMs: live.runtime.elapsedMs,
-      lastTurnMs: live.runtime.lastTurnMs,
       gitBranch: live.runtime.gitBranch,
       gitStatus: live.runtime.gitStatus,
       pending: live.runtime.pending,
-      turnActive: live.runtime.turnActive,
-      lastContextChars: live.runtime.lastContextChars,
-      totals: live.runtime.totals,
       activeProvider: target,
-      model: { id: displayName, provider: target, reasoning: live.runtime.model?.reasoning ?? true, baseUrl: live.runtime.model?.baseUrl },
+      model: { id: displayName, provider: target, baseUrl: providers.descriptors.find((d) => d.id === target)?.models[0]?.baseUrl },
       sessionWindows: [...windows],
       activeProviderHasRow,
     },

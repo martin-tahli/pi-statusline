@@ -31,6 +31,7 @@ export function migrateLegacySettings(legacy: unknown): Partial<StatuslineSettin
   // Provider settings
   const providers: StatuslineSettings["providers"] = {
     enabled: merged.providerTracking.enabled,
+    scope: "selected",
     order: [...merged.providerTracking.order],
     defaults: structuredClone(DEFAULT_STATUSLINE_SETTINGS.providers.defaults),
     records: {},
@@ -92,6 +93,7 @@ export function migrateLegacySettings(legacy: unknown): Partial<StatuslineSettin
 
   // Extras: preserve the remaining legacy display toggles (nerdFont migrated to icons above).
   result.extras = {
+    extensionStatuses: false,
     branch: merged.extras.branch,
     cost: merged.extras.cost,
     sessionElapsed: merged.extras.sessionElapsed,

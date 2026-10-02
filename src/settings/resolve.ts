@@ -4,7 +4,7 @@ import type { StatuslineSettings, ActiveModelToggle } from "./schema.ts";
 import type { ProviderCapability } from "./providers/capabilities.ts";
 import type { RateLimitWindow } from "../ratelimit.ts";
 import type { GitStatusState } from "../git.ts";
-import { renderMainLine, type RenderTheme } from "../render.ts";
+import { renderMainLine, type RenderTheme, type MeterSnapshot } from "../render.ts";
 
 /**
  * Resolution helpers for the settings UI/tests. The actual line rendering lives in
@@ -21,6 +21,8 @@ export interface RuntimeSnapshot {
   thinkingLevel?: string;
   contextUsage?: ContextUsage;
   throughput?: { inputRate?: number; outputRate?: number };
+  meter?: MeterSnapshot;
+  sessionFreshness?: string;
   /** Active subscription quota windows, when the active provider reports them. */
   sessionWindows?: RateLimitWindow[];
   activeMs?: number;
@@ -28,7 +30,7 @@ export interface RuntimeSnapshot {
   lastTurnMs?: number;
   pending?: boolean;
   /** Session token/cost totals, used for the API ledger preview. */
-  totals?: { input: number; output: number; cost: number };
+  totals?: { input: number; output: number; cost?: number; cacheRead?: number; cacheWrite?: number };
   now?: number;
   // Live-only fields (the "current" preview forwards these so it matches the footer exactly).
   gitBranch?: string | null;
@@ -157,7 +159,8 @@ export function composeFooterLine(
     // back to the capability-derived billing for fixture modes that don't pass it explicitly.
     subscription: runtime.subscription ?? (capability?.billing === "subscription"),
     turnActive: runtime.turnActive ?? false,
-    meter: {
+    sessionFreshness: runtime.sessionFreshness,
+    meter: runtime.meter ?? {
       avgInputRate: runtime.throughput?.inputRate,
       avgOutputRate: runtime.throughput?.outputRate,
       activeMs: runtime.activeMs,

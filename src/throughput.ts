@@ -1,6 +1,8 @@
 export interface TokenUsage {
   input: number;
   output: number;
+  inputEstimated?: boolean;
+  outputEstimated?: boolean;
 }
 
 export type ThroughputLevel = "muted" | "success" | "warning" | "error";
@@ -8,6 +10,9 @@ export type ThroughputLevel = "muted" | "success" | "warning" | "error";
 export interface MeterSnapshot {
   inputRate?: number;
   outputRate?: number;
+  inputEstimated?: boolean;
+  outputEstimated?: boolean;
+  tools?: boolean;
   inputLevel?: ThroughputLevel;
   outputLevel?: ThroughputLevel;
   activeMs: number;
@@ -72,6 +77,8 @@ export class TurnMeter {
   private activeMs = 0;
   private lastTurnMs?: number;
   private liveOutputChars = 0;
+  private inputEstimated = false;
+  private outputEstimated = false;
 
   constructor(clock: () => number = Date.now) {
     this.clock = clock;
@@ -95,6 +102,8 @@ export class TurnMeter {
     this.outputRate = undefined;
     this.inputLevel = undefined;
     this.outputLevel = undefined;
+    this.inputEstimated = false;
+    this.outputEstimated = false;
   }
 
   startTurn(at = this.clock()): void {
@@ -146,6 +155,8 @@ export class TurnMeter {
     const outputMs = this.firstUpdateAt === undefined || this.messageEndedAt === undefined
       ? 0
       : this.messageEndedAt - this.firstUpdateAt;
+    this.inputEstimated = usage.inputEstimated ?? false;
+    this.outputEstimated = usage.outputEstimated ?? false;
     this.inputRate = fallbackRate(usage.input, inputMs, duration);
     this.outputRate = fallbackRate(usage.output, outputMs, duration);
     this.inputLevel = rateLevel(this.inputRate, this.inputHistory);
@@ -168,11 +179,14 @@ export class TurnMeter {
     // While streaming, override the last-turn rate with a live one so the UI updates continuously
     // instead of freezing until the turn finishes.
     const liveOutputRate = turnRunning && this.firstUpdateAt !== undefined
-      ? fallbackRate(estimateTokens(this.liveOutputChars), now - this.firstUpdateAt, 0)
+      ? fallbackRate(estimateTokens(this.liveOutputChars), (this.messageEndedAt ?? now) - this.firstUpdateAt, 0)
       : undefined;
     return {
       inputRate: this.inputRate,
       outputRate: liveOutputRate ?? this.outputRate,
+      inputEstimated: this.inputEstimated,
+      outputEstimated: liveOutputRate !== undefined || this.outputEstimated,
+      tools: turnRunning && this.messageEndedAt !== undefined,
       inputLevel: this.inputLevel,
       outputLevel: liveOutputRate !== undefined ? rateLevel(liveOutputRate, this.outputHistory, true) : this.outputLevel,
       activeMs: this.activeMs,

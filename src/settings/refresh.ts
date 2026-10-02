@@ -1,3 +1,4 @@
+import { DEFAULT_STATUSLINE_SETTINGS } from "./defaults.ts";
 import type { MissingDataPolicy, StatuslineSettings } from "./schema.ts";
 import type { ProviderCapability } from "./providers/capabilities.ts";
 
@@ -27,6 +28,8 @@ export interface RefreshHealth {
   state: RefreshHealthState;
   /** Sanitized reason for stale/unknown (never a secret or raw error). */
   reason?: string;
+  updatedAt?: number;
+  cached?: boolean;
 }
 
 /** Merge provider defaults with sparse per-provider overrides, then bound the result. */
@@ -37,11 +40,11 @@ export function resolveProviderRefreshPolicy(
 ): RefreshPolicy {
   const defaults = settings.providers.defaults;
   const override = settings.providers.records[providerId]?.refresh;
-  const requestedInterval = override?.refreshIntervalMs ?? defaults.refreshIntervalMs;
+  const requestedInterval = override?.refreshIntervalMs ?? (defaults.refreshIntervalMs === DEFAULT_STATUSLINE_SETTINGS.providers.defaults.refreshIntervalMs ? settings.timing.refreshIntervalMs : defaults.refreshIntervalMs);
   const intervalMs = Number.isFinite(requestedInterval)
     ? Math.min(86_400_000, Math.max(MIN_INTERVAL_MS, Math.floor(requestedInterval)))
     : MIN_INTERVAL_MS;
-  const requestedMaxAge = override?.maxCacheAgeMs ?? defaults.maxCacheAgeMs;
+  const requestedMaxAge = override?.maxCacheAgeMs ?? (defaults.maxCacheAgeMs === DEFAULT_STATUSLINE_SETTINGS.providers.defaults.maxCacheAgeMs ? settings.timing.maxCacheAgeMs : defaults.maxCacheAgeMs);
   const maxAgeMs = Number.isFinite(requestedMaxAge)
     ? Math.min(604_800_000, Math.max(intervalMs, Math.floor(requestedMaxAge)))
     : intervalMs;
@@ -49,7 +52,9 @@ export function resolveProviderRefreshPolicy(
     intervalMs,
     maxAgeMs,
     useCache: override?.useCache ?? defaults.useCache,
-    keepAfterFailure: override?.keepAfterFailure ?? defaults.keepAfterFailure,
+    keepAfterFailure: (override?.useCache ?? defaults.useCache)
+      && resolveProviderMissingDataPolicy(settings, providerId) === "cached"
+      && (override?.keepAfterFailure ?? defaults.keepAfterFailure),
     refreshWhileActive: override?.refreshWhileActive ?? defaults.refreshWhileActive,
     refreshDisabledProvider: override?.refreshDisabledProvider ?? defaults.refreshDisabledProvider,
   };

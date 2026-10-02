@@ -4,9 +4,9 @@ import { parseKey, truncateToWidth } from "@earendil-works/pi-tui";
 import { billingMode, isLocalEndpoint } from "../src/derive.ts";
 import { formatResetCountdown, formatTime } from "../src/format.ts";
 import { parseGitStatus, type GitStatusState } from "../src/git.ts";
-import { parseAnthropicUsage, parseCodexUsage, parseRateLimits, parseStoredRateLimits, parseZaiUsage, type RateLimits, type RateLimitWindow } from "../src/ratelimit.ts";
+import { parseAnthropicUsage, parseCodexUsage, parseRateLimits, parseStoredRateLimits, type RateLimits, type RateLimitWindow } from "../src/ratelimit.ts";
 import { ProviderUsageCache } from "../src/provider-cache.ts";
-import { ProviderRefreshCoordinator, RateLimitedError, type ProviderAdapter } from "../src/providers.ts";
+import { ProviderRefreshCoordinator, RateLimitedError, UsageUnavailableError, type ProviderAdapter } from "../src/providers.ts";
 import { renderMainLine, renderProviderRows, providerHasRow, type ProviderRowSource } from "../src/render.ts";
 import { estimateTokens, sumTextLength, TurnMeter } from "../src/throughput.ts";
 import {
@@ -21,8 +21,9 @@ import { createSettingsUi, renderSettingsWindow, resolveDirtyChoice, routeSettin
 import type { ProviderUiContext } from "../src/settings/provider-ui.ts";
 import { discoverProviders, type ModelRegistryLike } from "../src/settings/providers/discovery.ts";
 import { deriveCapability, type ProviderCapability } from "../src/settings/providers/capabilities.ts";
-import type { RefreshHealth } from "../src/settings/refresh.ts";
+import { resolveProviderRefreshPolicy, resolveProviderMissingDataPolicy, type RefreshHealth } from "../src/settings/refresh.ts";
 import type { StatuslineSettings } from "../src/settings/schema.ts";
+import { getAdapter } from "../src/settings/providers/adapters.ts";
 
 // Anthropic's OAuth usage endpoint (api.anthropic.com/api/oauth/usage) throttles hard and hands
 // out sticky 429s, so poll it less often than the 10s cadence the other providers share.
@@ -52,6 +53,8 @@ export default function statusline(
   // True while the settings overlay is open; keeps commitSettings from flashing the live footer.
   let settingsOverlayOpen = false;
   let providerRefresh: ProviderRefreshCoordinator | undefined;
+  let limitsUpdatedAt = 0;
+  let limitsCached = false;
   const isCurrentSession = (epoch: number) => sessionActive && epoch === sessionEpoch;
   const ANTHROPIC_RETRY_DELAYS_MS = [1_500, 3_000];
 
@@ -84,13 +87,15 @@ export default function statusline(
         lastRenderedTime = next;
         requestRender?.();
       }
-      if (!turnActive && !hasUpcomingReset()) stopTick();
+      syncTick();
     }, 1_000);
     tick.unref?.();
   };
   const syncTick = () => {
     const shouldTick = sessionActive && settings.enabled
-      && ((turnActive && (settings.segments.time || settings.segments.throughput)) || (settings.segments.session && hasUpcomingReset()));
+      && ((turnActive && (settings.segments.time || settings.segments.throughput))
+        || (settings.segments.time && settings.extras.sessionElapsed)
+        || (settings.segments.session && hasUpcomingReset()));
     if (shouldTick && !tick) startTick();
     else if (!shouldTick && tick) stopTick();
   };
@@ -146,7 +151,16 @@ export default function statusline(
   // provider-tracking rows need usage for every *selected* provider, so resolve each provider's
   // own model from the registry instead of assuming it's the one currently in use.
   const findAvailableModel = (ctx: ExtensionContext, provider: string) =>
-    ctx.modelRegistry.getAvailable().find((model) => model.provider === provider);
+    ctx.modelRegistry.getAvailable?.().find((model) => model.provider === provider) ?? (ctx.model?.provider === provider ? ctx.model : undefined);
+
+  // Anthropic's own login state, independent of the active model: undefined means "not logged in",
+  // in which case subscription usage is unreachable — not even the last cached numbers.
+  const anthropicOAuthModel = (ctx: ExtensionContext) => {
+    const registry = ctx.modelRegistry as unknown as { getAvailable?: () => Array<{ provider: string }> };
+    if (!registry.getAvailable) return isAnthropicOAuth(ctx) ? ctx.model : undefined;
+    const model = findAvailableModel(ctx, "anthropic");
+    return model && ctx.modelRegistry.isUsingOAuth(model) ? model : undefined;
+  };
 
   const codexAccountId = (token: string): string | undefined => {
     try {
@@ -162,6 +176,10 @@ export default function statusline(
     for (let index = branch.length - 1; index >= 0; index--) {
       const entry = branch[index];
       if (entry?.type === "custom" && entry.customType === ANTHROPIC_LIMITS_ENTRY) {
+        const updatedAt = Date.parse(entry.timestamp);
+        if (!Number.isFinite(updatedAt) || updatedAt > Date.now() || Date.now() - updatedAt > resolveProviderRefreshPolicy(settings, "anthropic").maxAgeMs) return [];
+        limitsUpdatedAt = updatedAt;
+        limitsCached = true;
         return parseStoredRateLimits(entry.data);
       }
     }
@@ -190,31 +208,22 @@ export default function statusline(
       // 429: surface to the provider-usage cache so every session and every caller backs off
       // instead of re-hammering the endpoint each refresh (Anthropic's retry-after: 0 is useless).
       if (response.status === 429) throw new RateLimitedError();
+      if (response.status === 401 || response.status === 403) throw new UsageUnavailableError();
       if (!response.ok) return [];
       return parseAnthropicUsage(await response.json());
     } catch (error) {
       // Best effort: unavailable account usage falls back to response headers — but let the 429
       // signal through so the cache can apply its shared backoff.
-      if (error instanceof RateLimitedError) throw error;
+      if (RateLimitedError.is(error) || UsageUnavailableError.is(error)) throw error;
       return [];
     }
   };
 
-  // Undocumented by Z.AI (see src/ratelimit.ts parseZaiUsage), used anyway at the user's request.
   const fetchZaiUsage = async (ctx: ExtensionContext, model: ReturnType<typeof findAvailableModel>): Promise<RateLimits> => {
     if (!model) return [];
-    try {
-      const access = await ctx.modelRegistry.getApiKeyForProvider("zai");
-      if (!access) return [];
-      const response = await fetch("https://api.z.ai/api/monitor/usage/quota/limit", {
-        headers: { authorization: `Bearer ${access}`, accept: "application/json", "user-agent": "pi-statusline" },
-        signal: AbortSignal.timeout(3_000),
-      });
-      if (!response.ok) return [];
-      return parseZaiUsage(await response.json());
-    } catch {
-      return [];
-    }
+    return getAdapter("zai").refresh?.({
+      getToken: () => ctx.modelRegistry.getApiKeyForProvider("zai"),
+    }, AbortSignal.timeout(3_000)) ?? [];
   };
 
   const fetchCodexUsage = async (ctx: ExtensionContext, model: ReturnType<typeof findAvailableModel>): Promise<RateLimits> => {
@@ -223,7 +232,7 @@ export default function statusline(
       const access = await ctx.modelRegistry.getApiKeyForProvider("openai-codex");
       const accountId = access ? codexAccountId(access) : undefined;
       if (!access || !accountId) return [];
-      const origin = new URL(model.baseUrl).origin;
+      const origin = "https://chatgpt.com";
       const response = await fetch(`${origin}/backend-api/wham/usage`, {
         headers: {
           authorization: `Bearer ${access}`,
@@ -232,9 +241,12 @@ export default function statusline(
         },
         signal: AbortSignal.timeout(3_000),
       });
+      if (response.status === 429) throw new RateLimitedError();
+      if (response.status === 401 || response.status === 403) throw new UsageUnavailableError();
       if (!response.ok) return [];
       return parseCodexUsage(await response.json());
-    } catch {
+    } catch (error) {
+      if (RateLimitedError.is(error) || UsageUnavailableError.is(error)) throw error;
       return [];
     }
   };
@@ -243,29 +255,46 @@ export default function statusline(
     providerUsageCache.refresh(provider, async () => {
       const next = await fetchLimits();
       return next.length ? { limits: next } : undefined;
-    });
+    }, resolveProviderRefreshPolicy(settings, provider));
+
+  const refreshEligible = (ctx: ExtensionContext, provider: string) => {
+    if (!settings.enabled) return false;
+    const policy = resolveProviderRefreshPolicy(settings, provider);
+    const active = ctx.model?.provider === provider;
+    if (active) return policy.refreshWhileActive && Boolean(settings.segments.session || settings.providers.enabled);
+    return settings.providers.enabled && settings.providers.scope === "selected"
+      && (settings.providers.records[provider]?.enabled !== false || policy.refreshDisabledProvider);
+  };
+  const freshness = (updatedAt: number, cached: boolean) => {
+    if (!updatedAt) return undefined;
+    return cached ? `cached ${Math.max(0, Math.floor((Date.now() - updatedAt) / 60_000))}m` : undefined;
+  };
 
   // Active-session wrappers: only apply fetched usage to the shared `limits`/tick/persisted entry
   // when the fetched provider is actually the active model, so a background provider-tracking
   // fetch for a different provider never clobbers what the session line shows.
   const refreshAnthropicLimits = async (ctx: ExtensionContext, epoch = sessionEpoch): Promise<RateLimits> => {
-    if (!isCurrentSession(epoch) || !isAnthropicOAuth(ctx)) return [];
-    const usage = await refreshProviderUsage("anthropic", () => fetchAnthropicUsage(ctx, ctx.model));
+    if (!isCurrentSession(epoch) || !isAnthropicOAuth(ctx) || !refreshEligible(ctx, "anthropic")) return [];
+    const usage = await refreshProviderUsage("anthropic", () => fetchAnthropicUsage(ctx, ctx.model)).catch(() => undefined);
     const next = usage?.limits ?? [];
     if (!next.length || !isCurrentSession(epoch) || !isAnthropicOAuth(ctx)) return [];
     limits = next;
-    pi.appendEntry(ANTHROPIC_LIMITS_ENTRY, limits);
+    limitsUpdatedAt = usage?.updatedAt ?? Date.now();
+    limitsCached = usage?.cached ?? false;
+    if (!limitsCached) pi.appendEntry(ANTHROPIC_LIMITS_ENTRY, limits);
     syncTick();
     requestRender?.();
     return next;
   };
 
   const refreshCodexLimits = async (ctx: ExtensionContext, epoch = sessionEpoch): Promise<RateLimits> => {
-    if (!isCurrentSession(epoch) || ctx.model?.provider !== "openai-codex") return [];
-    const usage = await refreshProviderUsage("openai-codex", () => fetchCodexUsage(ctx, ctx.model));
+    if (!isCurrentSession(epoch) || ctx.model?.provider !== "openai-codex" || !refreshEligible(ctx, "openai-codex")) return [];
+    const usage = await refreshProviderUsage("openai-codex", () => fetchCodexUsage(ctx, ctx.model)).catch(() => undefined);
     const next = usage?.limits ?? [];
     if (!next.length || !isCurrentSession(epoch) || ctx.model?.provider !== "openai-codex") return [];
     limits = next;
+    limitsUpdatedAt = usage?.updatedAt ?? Date.now();
+    limitsCached = usage?.cached ?? false;
     syncTick();
     requestRender?.();
     return next;
@@ -273,22 +302,29 @@ export default function statusline(
 
   // Sum token usage across the session's assistant messages. "input" folds cached and
   // cache-write tokens into the prompt total; cost.total already reflects the cache discount.
-  const sessionTotals = (ctx: ExtensionContext): { input: number; output: number; cost: number } => {
-    let input = 0, output = 0, cost = 0;
+  const sessionTotals = (ctx: ExtensionContext) => {
+    let input = 0, output = 0, cost = 0, cacheRead = 0, cacheWrite = 0, available = false, costAvailable = false;
+    const finite = (value: unknown) => typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : 0;
     for (const entry of ctx.sessionManager.getBranch()) {
-      if (entry.type === "message" && entry.message.role === "assistant") {
-        const usage = (entry.message as AssistantMessage).usage;
-        input += usage.input + usage.cacheRead + usage.cacheWrite;
-        output += usage.output;
-        cost += usage.cost.total;
-      }
+      if (entry.type !== "message" || entry.message.role !== "assistant") continue;
+      const usage = (entry.message as AssistantMessage).usage;
+      if (!usage) continue;
+      available = true;
+      cacheRead += finite(usage.cacheRead);
+      cacheWrite += finite(usage.cacheWrite);
+      input += finite(usage.input) + finite(usage.cacheRead) + finite(usage.cacheWrite);
+      output += finite(usage.output);
+      costAvailable ||= Number.isFinite(usage.cost?.total);
+      cost += finite(usage.cost?.total);
     }
-    return { input, output, cost };
+    return available ? { input, output, cost: costAvailable ? cost : undefined, cacheRead, cacheWrite } : undefined;
   };
 
   const installFooter = (ctx: ExtensionContext, epoch = sessionEpoch) => {
     if (!isCurrentSession(epoch)) return;
     ctx.ui.setFooter((tui, theme, footerData) => {
+      syncGitTick(ctx, epoch);
+      syncTick();
       requestRender = () => tui.requestRender();
       const unsubscribe = footerData.onBranchChange(() => {
         gitStatus = undefined;
@@ -318,23 +354,27 @@ export default function statusline(
           // multi-line footer and the in-app preview can never drift. Sources are built here from
           // live refresh health; per-window display (visible/bar/percent/reset/label/width) is read
           // from settings inside the shared renderer, keyed by each window's stable adapter key.
-          const sources: ProviderRowSource[] = settings.providers.enabled ? settings.providers.order.flatMap((p) => {
+          const sources: ProviderRowSource[] = settings.providers.enabled ? settings.providers.order.flatMap<ProviderRowSource>((p) => {
             const record = settings.providers.records[p];
-            if (!record?.enabled) return [];
+            if (!record?.enabled || (settings.providers.scope === "active" && p !== provider)) return [];
             const health = providerRefresh?.get(p);
-            if (health?.state === "fresh") return [{ provider: p, windows: health.usage.limits }];
-            // Before a subscription provider's usage loads, anthropic+OAuth earns a placeholder row.
+            if (health?.state === "fresh") return [{ provider: p, windows: health.usage.limits, freshness: freshness(health.updatedAt, health.usage.cached ?? false) }];
+            if (resolveProviderMissingDataPolicy(settings, p) === "hide") return [];
+            // No windows: an OAuth login earns the loading placeholder; anything else (not
+            // logged in, API key) has no access to subscription usage, so the row says "log in"
+            // instead of going blank or showing stale numbers.
             if (p === "anthropic") {
               const registry = ctx.modelRegistry as unknown as { getAvailable?: () => Array<{ provider: string }> };
-              const model = registry.getAvailable ? findAvailableModel(ctx, p) : undefined;
-              if (model && ctx.modelRegistry.isUsingOAuth(model)) return [{ provider: p, windows: [], placeholder: "5h — wk —" }];
+              if (registry.getAvailable) {
+                return [{ provider: p, windows: [], placeholder: anthropicOAuthModel(ctx) ? "5h — wk —" : "log in" }];
+              }
             }
-            return [];
+            return [{ provider: p, windows: [], placeholder: health?.reason ?? "usage unavailable" }];
           }) : [];
           const activeProviderHasRow = providerHasRow(settings, sources, provider);
-          const sessionPlaceholder = !activeProviderHasRow && provider === "anthropic" && ctx.model !== undefined && ctx.modelRegistry.isUsingOAuth(ctx.model)
-            ? theme.fg("muted", "5h — wk —")
-            : "";
+          const sessionPlaceholder = !activeProviderHasRow && provider && getAdapter(provider).support !== "none"
+            && resolveProviderMissingDataPolicy(settings, provider) !== "hide"
+            ? theme.fg("muted", "usage unavailable") : "";
           lastRenderedTime = tickLabel();
           const line = renderMainLine(settings, {
             cwd: ctx.cwd,
@@ -349,12 +389,14 @@ export default function statusline(
             meter: { ...snapshot, activeMs: snapshot.activeMs + meter.liveElapsedMs() },
             lastContextChars,
             totals,
-            sessionWindows: limits,
+            sessionWindows: Date.now() - limitsUpdatedAt <= resolveProviderRefreshPolicy(settings, provider ?? "").maxAgeMs ? limits : [],
+            sessionFreshness: freshness(limitsUpdatedAt, limitsCached),
             activeProviderHasRow,
             sessionPlaceholder,
           }, width, theme);
           const providerRowLines = renderProviderRows(settings, sources, theme, Date.now(), width);
-          return [line, ...providerRowLines.map((rowLine) => truncateToWidth(rowLine, width, ""))];
+          const statuses = settings.extras.extensionStatuses ? [...(footerData.getExtensionStatuses?.().values() ?? [])].join(" · ") : "";
+          return [line, ...providerRowLines.map((rowLine) => truncateToWidth(rowLine, width, "")), ...(statuses ? [truncateToWidth(statuses, width, "")] : [])];
         },
       };
     });
@@ -388,10 +430,10 @@ export default function statusline(
       capabilities[descriptor.id] = deriveCapability(descriptor, { oauth });
       const snapshot = providerRefresh?.get(descriptor.id);
       if (snapshot?.state === "fresh") {
-        health[descriptor.id] = { state: "fresh" };
+        health[descriptor.id] = { state: "fresh", updatedAt: snapshot.updatedAt, cached: snapshot.usage.cached };
         windows[descriptor.id] = snapshot.usage.limits;
       } else if (snapshot) {
-        health[descriptor.id] = { state: "unknown" };
+        health[descriptor.id] = { state: snapshot.updatedAt ? "stale" : "unknown", reason: snapshot.reason, updatedAt: snapshot.updatedAt };
       }
     }
     return { descriptors, capabilities, health, windows, activeProvider: ctx.model?.provider };
@@ -430,8 +472,7 @@ export default function statusline(
   };
 
   const openSettingsApp = (ctx: ExtensionContext) => {
-    const providers = buildProviderContext(ctx);
-    const previewCapability = ctx.model?.provider ? providers.capabilities[ctx.model.provider] : undefined;
+    const previewCapability = () => ctx.model?.provider ? buildProviderContext(ctx).capabilities[ctx.model.provider] : undefined;
     // Live snapshot of the current session, fed to the in-app preview so it shows exactly what the
     // footer will look like under the DRAFT settings (cwd, model, context, quota, ticking clock).
     // Reads the draft (not the committed settings) so toggling extras like cost / session-elapsed /
@@ -446,7 +487,7 @@ export default function statusline(
       const needTotals = draft.extras.cost || (mode === "api" && !turnActive);
       const totals = needTotals ? sessionTotals(ctx) : undefined;
       return {
-        capability: previewCapability,
+        capability: previewCapability(),
         runtime: {
           cwd: ctx.cwd,
           model: ctx.model ? { id: ctx.model.id, provider: ctx.model.provider, reasoning: ctx.model.reasoning, baseUrl: ctx.model.baseUrl } : undefined,
@@ -454,7 +495,9 @@ export default function statusline(
           thinkingLevel: pi.getThinkingLevel(),
           contextUsage: ctx.getContextUsage() ?? undefined,
           throughput: { inputRate: snapshot.avgInputRate, outputRate: snapshot.avgOutputRate },
-          sessionWindows: limits,
+          meter: { ...snapshot, activeMs: snapshot.activeMs + meter.liveElapsedMs() },
+          sessionFreshness: freshness(limitsUpdatedAt, limitsCached),
+          sessionWindows: Date.now() - limitsUpdatedAt <= resolveProviderRefreshPolicy(settings, ctx.model?.provider ?? "").maxAgeMs ? limits : [],
           activeMs: snapshot.activeMs + meter.liveElapsedMs(),
           elapsedMs: draft.extras.sessionElapsed ? snapshot.elapsedMs : undefined,
           lastTurnMs: draft.extras.lastTurn ? snapshot.lastTurnMs : undefined,
@@ -493,7 +536,7 @@ export default function statusline(
         dispose() { clearInterval(previewTick); },
         render: (width: number) => {
           const rows = tui.terminal?.rows;
-          return renderSettingsWindow(state, { width, providers, viewportRows: rows ? rows - 2 : undefined, current: currentPreviewContext(state.draft), theme });
+          return renderSettingsWindow(state, { width, providers: buildProviderContext(ctx), viewportRows: rows ? rows - 2 : undefined, current: currentPreviewContext(state.draft), theme });
         },
         handleInput(data: string) {
           const key = translateKey(data);
@@ -511,7 +554,7 @@ export default function statusline(
             });
             return;
           }
-          const result = routeSettingsKey(state, key, providers);
+          const result = routeSettingsKey(state, key, buildProviderContext(ctx));
           state = result.state;
           if (result.effect?.type === "refresh-provider") void providerRefresh?.refresh(result.effect.providerId);
           if (result.action === "close") finish();
@@ -548,10 +591,19 @@ export default function statusline(
     settings = loadRuntimeSettings(settingsPath);
     if (availableProviders(ctx).length) settings = reconcileProviders(settings, ctx.modelRegistry);
     meter = new TurnMeter();
+    lastContextChars = 0;
+    limitsUpdatedAt = 0;
+    limitsCached = false;
     limits = isAnthropicOAuth(ctx) ? restoreAnthropicLimits(ctx) : [];
     if (!limits.length) {
       const provider = ctx.model?.provider ?? "";
-      limits = (provider === "anthropic" ? providerUsageCache.get(provider) : providerUsageCache.getFresh(provider))?.limits ?? [];
+      // Not logged in (no OAuth): the user has no access to subscription usage, so cached
+      // numbers must not be restored onto the session line.
+      const policy = resolveProviderRefreshPolicy(settings, provider);
+      const cached = policy.useCache && (provider !== "anthropic" || anthropicOAuthModel(ctx)) ? providerUsageCache.getFresh(provider, policy.maxAgeMs) : undefined;
+      limits = cached?.limits ?? [];
+      limitsUpdatedAt = cached?.updatedAt ?? 0;
+      limitsCached = Boolean(cached);
     }
     gitStatus = undefined;
     const providers = availableProviders(ctx);
@@ -559,22 +611,32 @@ export default function statusline(
     // snapshot visible while a session that can authenticate them refreshes it.
     const trackedProviders = Array.from(new Set([...providers, ...settings.providers.order]));
     const adapters = new Map<string, ProviderAdapter>();
-    if (providers.includes("anthropic")) adapters.set("anthropic", { refresh: () => refreshProviderUsage("anthropic", () => fetchAnthropicUsage(ctx, findAvailableModel(ctx, "anthropic"))) });
+    if (providers.includes("anthropic")) {
+      // Not logged in (no OAuth): skip the usage cache entirely — it would otherwise keep
+      // re-serving last-known numbers as "fresh" on every poll, and the row shows "log in".
+      adapters.set("anthropic", { refresh: async () => {
+        const model = anthropicOAuthModel(ctx);
+        return model ? refreshProviderUsage("anthropic", () => fetchAnthropicUsage(ctx, model)) : undefined;
+      } });
+    }
     if (providers.includes("openai-codex")) adapters.set("openai-codex", { refresh: () => refreshProviderUsage("openai-codex", () => fetchCodexUsage(ctx, findAvailableModel(ctx, "openai-codex"))) });
     if (providers.includes("zai")) adapters.set("zai", { refresh: () => refreshProviderUsage("zai", () => fetchZaiUsage(ctx, findAvailableModel(ctx, "zai"))) });
+    if (providers.includes("openrouter")) adapters.set("openrouter", { refresh: () => refreshProviderUsage("openrouter", () => getAdapter("openrouter").refresh!({ getToken: () => ctx.modelRegistry.getApiKeyForProvider("openrouter") }, AbortSignal.timeout(3_000))) });
     providerRefresh?.stop();
     providerRefresh = new ProviderRefreshCoordinator(adapters, () => {
       if (!isCurrentSession(epoch)) return;
       const health = providerRefresh?.get(ctx.model?.provider ?? "");
-      if (health?.state === "fresh") {
-        limits = health.usage.limits;
-        syncTick();
-      }
+      limits = health?.state === "fresh" ? health.usage.limits : [];
+      limitsUpdatedAt = health?.state === "fresh" ? health.updatedAt : 0;
+      limitsCached = health?.state === "fresh" && Boolean(health.usage.cached);
+      syncTick();
       requestRender?.();
-    });
+    }, undefined, undefined, (provider) => ({ ...resolveProviderRefreshPolicy(settings, provider), eligible: refreshEligible(ctx, provider) }));
     for (const provider of trackedProviders) {
-      const cached = provider === "anthropic" ? providerUsageCache.get(provider) : providerUsageCache.getFresh(provider);
-      if (cached?.limits.length) providerRefresh.prime(provider, cached, provider === "anthropic" ? Date.now() : cached.updatedAt);
+      if (provider === "anthropic" && !anthropicOAuthModel(ctx)) continue; // no login: no cached usage is ever shown
+      const policy = resolveProviderRefreshPolicy(settings, provider);
+      const cached = policy.useCache ? providerUsageCache.getFresh(provider, policy.maxAgeMs) : undefined;
+      if (cached?.limits.length) providerRefresh.prime(provider, { ...cached, cached: true }, cached.updatedAt);
     }
     if (settings.enabled) installFooter(ctx, epoch);
     providerRefresh.start(trackedProviders);
@@ -629,9 +691,11 @@ export default function statusline(
     turnActive = false;
     if (event.message.role === "assistant") {
       const { usage, content } = event.message;
-      const input = usage.input || estimateTokens(lastContextChars);
-      const output = usage.output || estimateTokens(sumTextLength(content));
-      meter.finishTurn({ input, output });
+      const inputEstimated = !Number.isFinite(usage?.input) || !(usage?.input > 0);
+      const outputEstimated = !Number.isFinite(usage?.output) || !(usage?.output > 0);
+      const input = inputEstimated ? estimateTokens(lastContextChars) : usage.input;
+      const output = outputEstimated ? estimateTokens(sumTextLength(content)) : usage.output;
+      meter.finishTurn({ input, output, inputEstimated, outputEstimated });
     }
     syncTick();
     void refreshCodexLimits(ctx);
@@ -650,12 +714,16 @@ export default function statusline(
     const next = parseRateLimits(event.headers);
     if (!next.length) return;
     limits = next;
+    limitsUpdatedAt = Date.now();
+    limitsCached = false;
     if (isAnthropicOAuth(ctx)) pi.appendEntry(ANTHROPIC_LIMITS_ENTRY, limits);
     syncTick();
     requestRender?.();
   });
 
   pi.on("model_select", (_event, ctx) => {
+    limitsUpdatedAt = 0;
+    limitsCached = false;
     limits = isAnthropicOAuth(ctx) ? restoreAnthropicLimits(ctx) : [];
     meter.resetThroughput();
     syncTick();
@@ -663,6 +731,7 @@ export default function statusline(
     stopAnthropicRetry();
     void refreshAnthropicLimits(ctx).then((next) => { if (!next.length) scheduleAnthropicRetry(ctx); });
     void refreshCodexLimits(ctx);
+    if (ctx.model?.provider) void providerRefresh?.refresh(ctx.model.provider);
   });
 
   pi.on("thinking_level_select", () => requestRender?.());

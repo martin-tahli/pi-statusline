@@ -14,6 +14,11 @@ initTheme();
 const cacheRoot = mkdtempSync(join(tmpdir(), "pi-statusline-test-"));
 let cacheNumber = 0;
 const testCache = () => new ProviderUsageCache(join(cacheRoot, String(cacheNumber++)));
+const testSettings = (settings: object) => {
+  const path = join(cacheRoot, `settings-${cacheNumber++}.json`);
+  writeFileSync(path, JSON.stringify({ version: 1, ...settings }));
+  return path;
+};
 after(() => rmSync(cacheRoot, { recursive: true, force: true }));
 
 test("stops the live timer when settled or the footer is disposed", async () => {
@@ -130,7 +135,7 @@ test("renders emoji segments with themed semantic colors", async () => {
     "x-codex-secondary-reset-at": resetAt,
   } }, ctx);
   const line = footer!.render(1_000)[0]!;
-  for (const icon of ["📁", "🤖", "🧠", "🪟", "⏳"]) assert.ok(line.includes(icon));
+  for (const icon of ["📁", "🤖", "🧠", "🪟"]) assert.ok(line.includes(icon));
   assert.ok(line.includes("1h"));
   assert.ok(line.includes("wk"));
   assert.equal(line.includes("5h"), false);
@@ -308,6 +313,7 @@ test("restores Anthropic limits when a session reloads", async () => {
     "anthropic-ratelimit-unified-7d-utilization": "0.41",
     "anthropic-ratelimit-unified-7d-reset": resetAt,
   } }, ctx);
+  for (const entry of entries as Array<Record<string, unknown>>) entry.timestamp = new Date().toISOString();
   await handlers.get("session_start")!({}, ctx);
 
   const line = footer!.render(500)[0]!;
@@ -360,7 +366,7 @@ test("estimates prefill speed from the outgoing payload on the first prompt", as
   handlers.get("turn_start")!({ timestamp: Date.now() - 1_000 });
 
   const line = footer!.render(500)[0]!;
-  assert.ok(/↑30\.0k/.test(line), `expected payload-based prefill rate, got: ${line}`);
+  assert.ok(/↑~30\.0k/.test(line), `expected payload-based prefill rate, got: ${line}`);
   footer?.dispose?.();
 });
 
@@ -392,7 +398,7 @@ test("estimates throughput from response text when a provider reports no usage",
     },
   } as never;
 
-  statusline(pi, testCache(), join(cacheRoot, "defaults.json"));
+  statusline(pi, testCache(), testSettings({ segments: { throughput: true } }));
   await handlers.get("session_start")!({}, ctx);
   handlers.get("context")!({ messages: [{ role: "user", content: "a".repeat(400) }] });
   const now = Date.now();
@@ -402,8 +408,8 @@ test("estimates throughput from response text when a provider reports no usage",
   }, ctx);
 
   const line = footer!.render(500)[0]!;
-  assert.ok(line.includes("↑100"));
-  assert.ok(line.includes("↓50"));
+  assert.ok(line.includes("↑~100"));
+  assert.ok(line.includes("↓~50"));
   footer?.dispose?.();
 });
 
@@ -443,7 +449,7 @@ test("shows an API token ledger (not a bogus prompt rate) for hosted providers w
     },
   } as never;
 
-  statusline(pi, testCache(), join(cacheRoot, "defaults.json"));
+  statusline(pi, testCache(), testSettings({ segments: { throughput: true } }));
   await handlers.get("session_start")!({}, ctx);
   handlers.get("context")!({ messages: [{ role: "user", content: "a".repeat(30_000) }] });
   const now = Date.now();
@@ -534,10 +540,10 @@ test("shows a tracked provider's last-known cross-session cache at startup", asy
     cwd: process.cwd(),
     model: { id: "glm", provider: "zai" },
     modelRegistry: {
-      isUsingOAuth: () => false,
+      // Logged in: another pi process supplied the cached quota; this one shows it until it refreshes.
+      isUsingOAuth: () => true,
       getApiKeyForProvider: async () => undefined,
-      // Anthropic is intentionally absent: another pi process supplied its cached quota.
-      getAvailable: () => [{ provider: "zai", id: "glm" }],
+      getAvailable: () => [{ provider: "zai", id: "glm" }, { provider: "anthropic", id: "claude" }],
     },
     getContextUsage: () => undefined,
     hasPendingMessages: () => false,
@@ -557,6 +563,53 @@ test("shows a tracked provider's last-known cross-session cache at startup", asy
   statusline(pi, cache, configPath);
   await handlers.get("session_start")!({}, ctx);
   assert.ok(footer!.render(500)[1]!.includes("anthropic 5h"));
+  footer?.dispose?.();
+});
+
+test("shows a humanised 'log in' row for anthropic when not logged in, never stale numbers", async () => {
+  const handlers = new Map<string, (...args: any[]) => unknown>();
+  let footer: { dispose?: () => void; render: (width: number) => string[] } | undefined;
+  const configPath = join(cacheRoot, "not-logged-in.json");
+  writeFileSync(configPath, JSON.stringify({ providerTracking: { selected: { anthropic: true }, order: ["anthropic"] } }));
+  let clock = 1_000_000;
+  const cache = new ProviderUsageCache(join(cacheRoot, String(cacheNumber++)), 10_000, 10_000, () => clock);
+  // Stale usage left behind by a previous login (the exact wrong display this guards against).
+  await cache.refresh("anthropic", async () => ({ limits: [{ label: "5h", used: 0 }, { label: "wk", used: 1 }] }));
+  clock += 6 * 60_000;
+  const pi = {
+    on: (event: string, handler: (...args: any[]) => unknown) => handlers.set(event, handler),
+    registerCommand: () => {},
+    getThinkingLevel: () => "off",
+    exec: async () => ({ code: 0, stdout: "", stderr: "" }),
+  } as never;
+  const ctx = {
+    cwd: process.cwd(),
+    model: { id: "glm", provider: "zai" },
+    modelRegistry: {
+      isUsingOAuth: () => false,
+      getApiKeyForProvider: async () => undefined,
+      getAvailable: () => [{ provider: "zai", id: "glm" }],
+    },
+    getContextUsage: () => undefined,
+    hasPendingMessages: () => false,
+    sessionManager: { getBranch: () => [] },
+    ui: {
+      setFooter: (factory: any) => {
+        footer = factory?.(
+          { requestRender: () => {} },
+          { fg: (_: string, text: string) => text, getColorMode: () => "16" },
+          { getGitBranch: () => null, getAvailableProviderCount: () => 1, onBranchChange: () => () => {} },
+        );
+      },
+      notify: () => {},
+    },
+  } as never;
+
+  statusline(pi, cache, configPath);
+  await handlers.get("session_start")!({}, ctx);
+  const lines = footer!.render(500);
+  assert.ok(lines.some((line) => line.includes("anthropic log in")), `expected a 'log in' row, got: ${JSON.stringify(lines)}`);
+  assert.ok(!lines.some((line) => line.includes("100%")), `stale quota leaked into the footer: ${JSON.stringify(lines)}`);
   footer?.dispose?.();
 });
 
@@ -817,7 +870,7 @@ test("tracks every selected provider's usage simultaneously, not just the active
       },
     } as never;
 
-    statusline(pi, testCache(), join(cacheRoot, "defaults.json"));
+    statusline(pi, testCache(), testSettings({ providers: { scope: "selected" } }));
     await handlers.get("session_start")!({}, ctx);
     await new Promise<void>((resolve) => setImmediate(resolve));
     await new Promise<void>((resolve) => setImmediate(resolve));
@@ -939,4 +992,39 @@ test("Providers screen via command handler lists all discovered providers", asyn
   assert.ok(lines.some((line) => line.includes("openai-codex")), `Providers screen must list openai-codex: ${JSON.stringify(lines)}`);
   // No row should contain the term "catalog-only" or come from outside getAvailable().
   assert.equal(lines.some((line) => line.includes("catalog-only")), false, "catalog-only providers must not appear");
+});
+
+test("disabled polling, extension statuses and Git survive settings close", async () => {
+  const oldSet = globalThis.setInterval, oldClear = globalThis.clearInterval, oldFetch = globalThis.fetch;
+  const timers = new Map<number, () => void>();
+  let timerId = 0, fetches = 0, gitCalls = 0, footer: any, component: any, command: any;
+  (globalThis as any).setInterval = (fn: () => void) => { const id = ++timerId; timers.set(id, fn); return id; };
+  (globalThis as any).clearInterval = (id: number) => timers.delete(id);
+  globalThis.fetch = async () => { fetches++; return new Response(JSON.stringify({ data: { limits: [{ type: "TOKENS_LIMIT", percentage: 42 }] } })); };
+  const handlers = new Map<string, (...args: any[]) => any>();
+  const pi = { on: (e: string, h: (...args: any[]) => any) => handlers.set(e, h), registerCommand: (_: string, def: any) => { command = def; }, getThinkingLevel: () => "off", appendEntry() {}, exec: async () => { gitCalls++; return { code: 0, stdout: "", stderr: "" }; } } as never;
+  const model = { id: "test", provider: "other" };
+  const ctx: any = { mode: "tui", cwd: cacheRoot, model, modelRegistry: { getAvailable: () => [model, { id: "glm", provider: "zai" }], isUsingOAuth: () => false, getApiKeyForProvider: async () => "synthetic-key" }, getContextUsage: () => undefined, hasPendingMessages: () => false, sessionManager: { getBranch: () => [] }, ui: { notify() {}, setFooter(factory: any) { footer?.dispose?.(); footer = factory?.({ requestRender() {} }, { fg: (_: string, t: string) => t }, { getGitBranch: () => "main", onBranchChange: () => () => {}, getExtensionStatuses: () => new Map([["test", "extension ready"]]) }); }, custom(factory: any) { component = factory({ requestRender() {}, terminal: { rows: 40 } }, { fg: (_: string, t: string) => t }, {}, () => {}); return Promise.resolve(); } } };
+  try {
+    statusline(pi, testCache(), testSettings({ providers: { enabled: false, records: { zai: { enabled: false } } }, extras: { extensionStatuses: true, sessionElapsed: true } }));
+    await handlers.get("session_start")!({}, ctx); await new Promise(r => setImmediate(r));
+    assert.equal(fetches, 0, "disabled non-active provider is not fetched");
+    assert.match(footer.render(100).join("\n"), /extension ready/);
+    const timerCount = timers.size;
+    await command.handler("", ctx);
+    component.handleInput(K.escape); component.dispose();
+    assert.equal(timers.size, timerCount, "both Git and elapsed timers resume on close");
+    const before = gitCalls;
+    for (const callback of [...timers.values()]) callback();
+    await new Promise(r => setImmediate(r));
+    assert.ok(gitCalls > before, "Git polling resumes after footer disposal/reinstallation");
+    assert.equal(fetches, 0);
+    ctx.model = { id: "glm", provider: "zai" };
+    await handlers.get("model_select")!({}, ctx); await new Promise(r => setImmediate(r));
+    assert.equal(fetches, 1, "active session quota can refresh with optional tracking off");
+    assert.match(footer.render(200).join("\n"), /42%/);
+  } finally {
+    await handlers.get("session_shutdown")?.({}, ctx); footer?.dispose?.();
+    globalThis.setInterval = oldSet; globalThis.clearInterval = oldClear; globalThis.fetch = oldFetch;
+  }
 });

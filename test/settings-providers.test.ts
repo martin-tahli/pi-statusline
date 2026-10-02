@@ -117,8 +117,8 @@ test("capabilities: api-key hosted -> api billing with token + cost ledger", () 
   assert.equal(cap.tokenLedger, true);
   assert.equal(cap.costLedger, true);
   assert.equal(cap.hostedSpeed, true);
-  assert.equal(cap.quotaSupport, "none");
-  assert.ok(cap.unavailableReason);
+  assert.equal(cap.quotaSupport, "official");
+  assert.equal(cap.unavailableReason, undefined);
 });
 
 test("capabilities: unauthenticated/unknown -> unknown billing", () => {
@@ -139,7 +139,7 @@ test("adapters: known adapters have stable ids and support tiers", () => {
   assert.equal(getAdapter("anthropic").support, "official");
   assert.equal(getAdapter("openai-codex").support, "official");
   assert.equal(getAdapter("zai").support, "best-effort");
-  assert.equal(getAdapter("openrouter").support, "none");
+  assert.equal(getAdapter("openrouter").support, "official");
 });
 
 test("adapters: unknown provider fails closed to none with sanitized reason", () => {
@@ -151,8 +151,8 @@ test("adapters: unknown provider fails closed to none with sanitized reason", ()
   assert.ok(!/sk-secret|Bearer|authorization/i.test(reason));
 });
 
-test("adapters: openrouter sanitized reason is the documented management-key message", () => {
-  assert.match(sanitizedUnavailableReason("openrouter"), /management key/i);
+test("adapters: openrouter failure reason is sanitized", () => {
+  assert.equal(sanitizedUnavailableReason("openrouter"), "usage unavailable");
 });
 
 test("adapters: registry is frozen (stable keys across reorder)", () => {

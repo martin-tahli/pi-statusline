@@ -95,6 +95,8 @@ export interface ProviderConfiguration {
 export interface ProvidersSettings {
   /** Global provider tracking enabled. */
   enabled: boolean;
+  /** Show only the active provider, or all selected providers. */
+  scope: "active" | "selected";
   /** Persisted provider row order. */
   order: string[];
   /** Default provider presentation/refresh/missing-data policy. */
@@ -164,10 +166,11 @@ export interface SeparatorsSettings {
 }
 
 /** Global segment visibility (tri-state via provider/active-model overrides). */
-export type SegmentsSettings = Record<SegmentId, boolean>;
+export type SegmentsSettings = Record<SegmentId, boolean | "auto">;
 
 /** Usage bar configuration. */
 export interface BarsSettings {
+  format: "percent" | "bar" | "detailed";
   /** Bar width in characters. */
   width: number;
   /** Fill character. */
@@ -224,6 +227,8 @@ export interface PreviewSettings {
 
 /** Extra display toggles preserved from the legacy `extras` group (feature parity). */
 export interface ExtrasSettings {
+  /** Preserve other extensions' status messages on an extra line. */
+  extensionStatuses: boolean;
   /** Show the git branch in the project segment. */
   branch: boolean;
   /** Show the running session cost in the model segment. */

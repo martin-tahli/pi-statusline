@@ -100,7 +100,7 @@ function detailRows(
     type: "active", segment, label: `Show ${segment} for this provider: ${detail.activeModel[segment]}`,
   }));
 
-  if (capability.billing === "subscription" && detail.quotaAvailable) {
+  if (detail.quotaAvailable) {
     rows.push({ type: "refresh-now", label: "Refresh usage now" });
     for (const window of detail.quotaWindows) {
       const settings = window.settings;
@@ -153,7 +153,6 @@ function routeProviderDetail(
   }
   if (row.type === "reset" && forwards) {
     resetProvider(draft, providerId);
-    delete draft.icons.providers[providerId];
     const resetDetail = buildProviderDetail(draft, providers, providerId);
     const resetRows = resetDetail ? detailRows({ ...state, draft }, providers, resetDetail) : [];
     return { state: { ...state, draft, selected: Math.max(0, resetRows.length - 1) }, action: "none" };
@@ -410,7 +409,14 @@ export function renderSettingsUi(state: SettingsUiState, options: RenderSettings
     if (state.selectedProviderId) {
       const detail = buildProviderDetail(state.draft, options.providers, state.selectedProviderId);
       if (detail) {
-        lines.push(`Provider: ${detail.row.label}`);
+        const health = options.providers.health?.[state.selectedProviderId];
+        lines.push(`Provider: ${detail.row.label}`,
+          `Source: ${health?.cached ? "shared cache" : "provider API"} (${detail.row.reliability}); ${detail.row.freshness}`,
+          `Last success: ${health?.updatedAt ? new Date(health.updatedAt).toISOString() : "unavailable"}`);
+        if (health?.reason) lines.push(health.reason);
+        for (const window of detail.quotaWindows) {
+          if (window.resetAt) lines.push(`${window.label} resets: ${new Date(window.resetAt).toISOString()}`);
+        }
         for (const [index, row] of detailRows(state, options.providers, detail).entries()) {
           lines.push(`${state.selected === index ? ">" : " "} ${row.label}`);
         }

@@ -75,6 +75,7 @@ const DEFAULT_SEPARATORS = {
 
 /** Default bars. */
 const DEFAULT_BARS = {
+  format: "bar" as const,
   width: 12,
   fill: "█",
   empty: "░",
@@ -113,6 +114,7 @@ const DEFAULT_PREVIEW = {
 
 /** Default extras (legacy feature parity: branch on, others off). */
 const DEFAULT_EXTRAS = {
+  extensionStatuses: false,
   branch: true,
   cost: false,
   sessionElapsed: false,
@@ -131,6 +133,7 @@ const DEFAULT_LAYOUT = {
 
 /** Default providers group. */
 const DEFAULT_PROVIDERS = {
+  scope: "active" as const,
   enabled: true,
   order: [] as string[],
   defaults: DEFAULT_PROVIDER_DEFAULTS,
@@ -138,14 +141,14 @@ const DEFAULT_PROVIDERS = {
 };
 
 /** Default segments (all enabled). */
-const DEFAULT_SEGMENTS: Record<SegmentId, boolean> = {
+const DEFAULT_SEGMENTS: StatuslineSettings["segments"] = {
   project: true,
   model: true,
   effort: true,
   context: true,
   session: true,
-  throughput: true,
-  time: true,
+  throughput: "auto",
+  time: "auto",
 };
 
 /**

@@ -19,7 +19,7 @@ test("defaults: DEFAULT_STATUSLINE_SETTINGS has expected shape and version", () 
 });
 
 test("defaults: extras reproduces legacy feature-parity defaults", () => {
-  assert.deepEqual(DEFAULT_STATUSLINE_SETTINGS.extras, {
+  assert.deepEqual(DEFAULT_STATUSLINE_SETTINGS.extras, { extensionStatuses: false,
     branch: true,
     cost: false,
     sessionElapsed: false,

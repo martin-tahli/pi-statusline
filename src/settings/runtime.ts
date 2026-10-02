@@ -3,7 +3,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import type { StatuslineSettings } from "./schema.ts";
 import { parseStatuslineSettings } from "./validation.ts";
-import { DEFAULT_STATUSLINE_SETTINGS, createProviderConfig, createWindowConfig } from "./defaults.ts";
+import { DEFAULT_STATUSLINE_SETTINGS, createProviderConfig } from "./defaults.ts";
 import { migrateLegacySettings } from "./migrations.ts";
 
 /** Default on-disk settings path (legacy location, preserved for migration continuity). */
@@ -57,7 +57,7 @@ export function loadRuntimeSettings(path: string): StatuslineSettings {
 
 /**
  * Reconcile discovered providers into settings: append newly authenticated providers to the
- * persisted order and seed an enabled record (with a default window) for each, preserving
+ * persisted order and seed an enabled record (inheriting global window display) for each, preserving
  * existing records/order. Mirrors the legacy reconcileProviderTracking guarantee.
  */
 export function reconcileProviders(settings: StatuslineSettings, registry: AvailableModelRegistry): StatuslineSettings {
@@ -68,7 +68,6 @@ export function reconcileProviders(settings: StatuslineSettings, registry: Avail
     if (!order.includes(provider)) order.push(provider);
     if (!records[provider]) {
       const record = createProviderConfig();
-      record.windows["default"] = createWindowConfig();
       records[provider] = record;
     }
   }
@@ -105,11 +104,11 @@ export function applyToggle(settings: StatuslineSettings, rawName: string): Stat
 
 /** One-line summary of toggleable state for command notifications (parity with legacy formatSettings). */
 export function formatStatusSummary(settings: StatuslineSettings): string {
-  const rows: Array<[string, boolean]> = [
+  const rows: Array<[string, boolean | "auto"]> = [
     ["footer", settings.enabled],
-    ...(["project", "model", "effort", "context", "session", "throughput", "time"] as const).map((s) => [s, settings.segments[s]] as [string, boolean]),
+    ...(["project", "model", "effort", "context", "session", "throughput", "time"] as const).map((s) => [s, settings.segments[s]] as [string, boolean | "auto"]),
     ...(["branch", "cost", "sessionElapsed", "lastTurn", "pending"] as const).map((e) => [e, settings.extras[e]] as [string, boolean]),
     ["nerdFont", settings.icons.style === "nerdfont"],
   ];
-  return rows.map(([name, enabled]) => `${name}: ${enabled ? "on" : "off"}`).join("\n");
+  return rows.map(([name, enabled]) => `${name}: ${enabled === "auto" ? "auto" : enabled ? "on" : "off"}`).join("\n");
 }

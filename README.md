@@ -1,19 +1,6 @@
 # @shvax/pi-statusline
 
-A configurable, single-line footer for [pi](https://github.com/earendil-works/pi-mono). It uses the active pi theme for semantic colors, shows only the data available for the active model and provider, and drops lower-priority segments before truncating at narrow widths.
-
-```text
-📁 pi-statusline  main ✓ > 🤖 qwen36-coder > 🧠 medium > 🪟  55.0%/1.0M > ⚡↑1.2k ↓74 t/s > ⏳ 12m34s
-📁 pi-statusline  main ↑2 > 🤖 claude-sonnet-5 > 🧠 high > 🪟  30.2%/200K > 5h ╺━━────────╴ 23% ↻2h14m wk ╺━━━━──────╴ 41% ↻4d6h > ⏳ 8m02s
-📁 pi-statusline  main ✓ > 🤖 gpt-5 > 🧠 high > 🪟  12.0%/400K > 🧾 ↑128K ↓34K $0.512 > ⏳ 3m20s
-anthropic 5h ╺━━━━━━━━━━╸ 100% ↻1h44m >wk ╺──────────╴ 12% ↻6d5h
-openai-codex wk ╺━━━━━━━━──╴ 79% ↻4d17h
-zai 5h ╶──────────╴ 0% >wk ╺──────────╴ 5% ↻2d19h
-```
-
-The first line is a local model (live token rates), the second an Anthropic subscription (quota bars, no throughput at idle), the third an API-key provider (running token totals and session cost). See [Throughput and time](#throughput-and-time). The last three lines are provider-tracking rows: every provider you select in `/statusline` (not just your active model) gets its own row with its own live usage, so you can compare available capacity across providers without switching. See [Provider tracking](#provider-tracking).
-
-Usage is a thin continuous line with rounded half-line ends and a dark-gray track. Its bright truecolor fill gives a restrained glow, moving smoothly from neon green through vivid orange to blood red as usage rises. Each provider-reported window includes a compact live reset countdown.
+A configurable footer for [pi](https://github.com/earendil-works/pi-mono). Start with a compact view, then enable the detail you need. Missing data is omitted or marked unavailable—not invented as zero. Lower-priority segments disappear first on narrow terminals; quota compaction prioritizes the most-used window, including exhausted limits.
 
 ## Install
 
@@ -21,83 +8,92 @@ Usage is a thin continuous line with rounded half-line ends and a dark-gray trac
 pi install npm:@shvax/pi-statusline
 ```
 
-Try a local checkout without installing it:
-
-```bash
-pi -e .
-```
-
-## Segments
-
-At full width, segments render in the order below. When the line no longer fits, the configured narrow-drop priority removes segments one at a time; by default `time` drops first and `context` is retained until last.
-
-| Segment | Default | Contents |
-|---|---:|---|
-| `project` | on | Current directory name and compact Git HUD |
-| `model` | on | Active model id |
-| `effort` | on | Thinking level; hidden for non-reasoning models |
-| `context` | on | Context percent and window; green below 120K tokens, orange from 120K, red from 170K (75%/90% also warn for smaller windows) |
-| `session` | on | Available subscription usage windows and reset countdowns; Codex labels come from the account's current limits |
-| `throughput` | on | Token throughput, adapted to how the model is billed — live `↑/↓` rates, a running `🧾` token/cost ledger, or nothing (see below) |
-| `time` | on | Live-ticking cumulative active turn time |
-
-The Git HUD defaults on inside repositories: `main ✓`. It shows `↓` incoming/behind and `↑` outgoing/ahead counts; `✓` means neither is pending. Local working-tree changes are intentionally ignored. Colors use the active theme's accent, success, warning, and error roles.
-
-Icons default to the **emoji** style. The **Icons** section of `/statusline` switches the whole line to Nerd Font, Unicode, ASCII, minimal, or none (ASCII and none are safe fallbacks for terminals without glyph support), and overrides the symbols the footer actually renders plus provider icons. Optional extras default off: `cost` (appends session `$cost` to the model segment), `sessionElapsed`, `lastTurn`, and `pending` — all toggleable in **Display**.
+Try a local checkout: `pi -e .`
 
 ## Configure
 
-Run `/statusline` to open the keyboard-driven settings app. It needs the interactive terminal UI: in TUI mode it opens the app, and any non-empty argument gets a deterministic "no arguments" notice; in RPC/JSON/print mode it reports that settings require the interactive terminal UI instead of silently doing nothing. The legacy `on`/`off`/`toggle <segment>` argument shortcuts have been removed — every control now lives in the app.
-
-The app has three sections:
+Run `/statusline` in Pi's interactive terminal. The command takes no arguments; RPC/JSON/print mode cannot open this settings UI.
 
 | Section | Controls |
 |---|---|
-| **Statusline & Providers** | Master footer and provider-tracking toggles; enable, reorder, refresh, and configure each provider's active-model segments and available quota windows. |
-| **Display** | Segment visibility and extras (Git HUD, cost, elapsed/last-turn time, pending); segment order and narrow-drop priority; live separators/spacing/padding; bar style, characters, width, truecolor and thresholds; context warning/critical thresholds. |
-| **Icons** | Global icon style (emoji / unicode / ascii / nerd font / minimal / none), rendered symbol overrides, and per-provider icons. |
+| **Statusline & Providers** | Footer/tracking toggles, provider selection/order, manual refresh, active-model overrides, per-window visibility, labels, bars, percentages and resets. Provider detail includes source, freshness, last successful refresh, absolute reset times and sanitized failure reasons. |
+| **Display** | Presets, Off/Auto/Always visibility, provider scope, quota format, extras, ordering, narrow-drop priorities, separators, bar styling and thresholds. |
+| **Icons** | Emoji, Unicode, ASCII, Nerd Font, minimal or none; symbol and provider-icon overrides. |
 
-The app opens a draft cloned from your live settings, renders a live preview through the real footer renderer, and writes only on **Save**. Saving is persist-first: the file is written before the live settings are swapped, so a failed write changes nothing. **Escape** on a dirty draft offers Save / Discard / Cancel; a clean draft closes immediately. Root, section, and provider resets update only the draft until you save.
+Edits affect a draft and its preview; only **Save** writes them. Escape with unsaved edits offers Save / Discard / Cancel. Save writes the file before activating settings, so a write failure leaves live settings unchanged. Settings persist in `~/.pi/agent/statusline.json`. Legacy documents migrate on load and become durable on the next save. Future-version documents render through a safe compatible view but remain read-only and are not overwritten.
 
-Settings persist as a versioned document in `~/.pi/agent/statusline.json`. An unversioned document from an earlier release is migrated once into the new shape on first load and becomes durable only on your next save. A document from a newer schema version than this extension supports opens read-only and is never overwritten. Provider refresh runs no faster than once every 10 seconds per provider (the settings preview itself performs no I/O, but the background coordinator keeps running and an eligible provider can be refreshed on demand); a shared cross-process cache (`~/.pi/agent/statusline/provider-usage/`) retains the last result for up to 5 minutes so a new session renders immediately and only one process fetches each provider.
+### Progressive detail
 
-## Provider tracking
+Apply a preset in **Display**, then customize it:
 
-Configure providers in **Statusline & Providers** under `/statusline`. It lists every provider returned by pi's configured `getAvailable()` models — whatever you're authenticated with, not a fixed list — and selects newly authenticated providers automatically while keeping your saved selection, order, and overrides.
+- **Minimal:** model, context and critical quota warnings.
+- **Balanced:** project/Git, model, effort, context, active-provider percentages; speed and active time appear while working.
+- **Detailed:** selected-provider rows, bars and percentages, available used/remaining amounts, token/cache totals, estimated cost, timing and other extensions' status messages.
 
-For each provider you can toggle it on or off (its configuration is retained when turned back on), reorder it, override active-model segments, and configure each reported usage window's visibility, label, bar, percent, reset format, and width. A provider with no adapter, or one that is unauthorized, stays listed but shows a sanitized reason instead of a row — never a raw error, token, or credential.
+Presets replace presentation choices (including window/active-model overrides), not provider selections or refresh policies. Fresh installs use active-provider scope, quota bars and automatic speed/time visibility. Existing explicit boolean segment choices remain supported.
 
-Fresh selected providers render in that saved order beneath the active-session line, **simultaneously and independently of which model is currently active**—selecting both Anthropic and Codex shows both rows at once even while you're talking to a third provider. Every pi process shares fresh quotas through `~/.pi/agent/statusline/provider-usage/`, so a new session renders the last result immediately and only one process fetches each provider every 10 seconds. A row is hidden when both enabled metrics are unavailable, or when its usage is missing, unauthorized, expired, or stale. The active provider's quota stays on its own row while visible and falls back to the plain session line otherwise, so it's never shown twice.
+**Auto** hides idle speed/time; enabling elapsed or last-turn extras reveals that timing. Auto quota shows only warning/critical usage. **Always** keeps applicable, available information visible; it never manufactures unavailable measurements.
 
-## Provider applicability
+Provider scope is **active** or **selected**. Quota format is **percent**, **bar** (bar + optional percentage), or **detailed** (adds available used/remaining amounts). Percentages are explicitly labeled **used**. Bar, percentage and reset controls remain independent.
 
-| Data | Local models | Anthropic subscription | OpenAI Codex subscription | Other cloud/API key |
-|---|:---:|:---:|:---:|:---:|
-| Project, model, effort, context | ✓ | ✓ | ✓ | ✓ |
-| Available usage bars | — | ✓ | ✓ | — |
-| Live token rates (`↑/↓`) | ✓ | — | — | — |
-| Token totals + session cost | — | — | — | ✓ |
-| Streaming `↓` speed pulse | ✓ | ✓ | ✓ | ✓ |
-| Time | ✓ | ✓ | ✓ | ✓ |
+## Segments
 
-Anthropic OAuth fetches its current `5h` and `wk` limits when the session starts, then updates them from response headers, and again in the background for provider tracking. Codex fetches its current account limits and shows only the windows returned by the account, labeled by duration. Reset countdowns appear for every Claude or Codex window that reports a reset time; absent data is omitted rather than rendered as `—`.
+| Segment | Information |
+|---|---|
+| Project | Current directory and optional Git branch/HUD |
+| Model | Active model, optionally estimated session cost |
+| Effort | Thinking level, when applicable |
+| Context | Context utilization/window, when available |
+| Session | Available provider quota windows or a sanitized availability notice |
+| Throughput | Live generation rate, local prompt rate, or hosted API token ledger |
+| Time | Active turn time, optionally elapsed and last-turn time |
 
-Any other provider you've authenticated (OpenRouter, custom endpoints, …) still appears in the Providers list, but has no adapter yet—pi-statusline only ever uses pi's own stored credentials for that provider. Concretely: OpenRouter's only usage endpoint (`/api/v1/credits`) explicitly rejects the regular inference key pi stores and requires a separate management key pi doesn't manage, so it shows that sanitized reason instead of a row.
+Git shows ahead/behind counts, dirty-file counts and explicit merge conflicts. A clean tick appears only when there are no changes, conflicts or ahead/behind counts. Git polling continues independently of turns and survives opening/closing settings.
 
-GLM (Z.AI) is the one exception to "documented endpoint only": it uses `GET https://api.z.ai/api/monitor/usage/quota/limit`, which Z.AI has not published in its own API docs—only known from a third-party reverse-engineered tool. It works with pi's stored GLM key and reports the same `5h`/`wk` credit windows Z.AI documents for the Coding Plan (docs.z.ai/devpack/teamplan), but which of the two returned windows is which isn't labeled by the API either; pi-statusline infers it from reset-countdown behavior (see `parseZaiUsage` in `src/ratelimit.ts`) and hides the row entirely rather than guess if the response shape changes. Treat the GLM row as best-effort: Z.AI can change or remove this endpoint without notice.
+The footer's context defaults are **80% warning / 95% critical**, based on the model's context-window utilization. Bar thresholds are separately configurable and also govern truecolor rendering.
+
+Extras include cost, elapsed time, last-turn time, pending work and **other extensions' status messages**. They default off; Git branch defaults on. ASCII uses ASCII built-in indicators and bars; custom labels/symbols and model/project names retain their own text. Icons **none** removes built-in segment/provider icons.
+
+## Providers and freshness
+
+The Providers screen lists Pi's available authenticated models, preserving saved selection, order and overrides. New providers are selected automatically, but active-only scope avoids displaying or polling every account. Selected scope enables simultaneous rows for selected providers. A visible active-provider row suppresses duplicate quota on the main line.
+
+| Provider | Quota source |
+|---|---|
+| Anthropic OAuth | Subscription usage endpoint and response headers; available 5-hour/weekly windows |
+| OpenAI Codex | ChatGPT account usage; windows labeled by reported duration |
+| OpenRouter | `GET /api/v1/key` with Pi's regular API key; finite **key budget**, not account-wide credits. Unlimited/missing limits do not become a fake percentage. Detailed mode shows available USD used/remaining amounts. |
+| Z.AI | Best-effort, undocumented `GET https://api.z.ai/api/monitor/usage/quota/limit` |
+| Other providers | Listed with a sanitized unavailable reason when no quota adapter exists |
+
+Z.AI windows have neutral `quota1`, `quota2`, … labels in response order. Reset times cannot reliably distinguish a five-hour window from a weekly window. You can rename them, but the endpoint and its identities remain best-effort and may change without notice.
+
+A cross-process cache lives at `~/.pi/agent/statusline/provider-usage/`. Cached results retain the original successful-fetch timestamp and display `cached Nm`; fallback never renews their age. The default maximum age is five minutes. Expired data is hidden or shown as unavailable according to the missing-data policy. Authorization denials invalidate cached quotas. HTTP 429 applies shared increasing backoff.
+
+Polling honors enabled/scope settings and provider refresh/cache policies. Disabling optional provider tracking does not disable the active session's quota; disable its session segment or active refresh as well if unwanted. No background fetches occur with the footer disabled. The polling cadence is ten seconds; provider intervals may be longer, with an additional one-minute Anthropic endpoint floor. Manual refresh remains subject to shared cache freshness and rate-limit backoff.
+
+Settings JSON supports provider defaults and per-provider `refresh` overrides: `refreshIntervalMs`, `maxCacheAgeMs`, `useCache`, `keepAfterFailure`, `refreshWhileActive`, `refreshDisabledProvider`, and a separate per-provider `missingDataPolicy`. The default missing-data policy permits bounded cached fallback; `hide` suppresses missing rows, while `na`/`warning`/`provider-name` show availability notices without reusing failed-refresh data. Credentials are always obtained from Pi, never stored in statusline settings.
 
 ## Throughput and time
 
-The `⚡` segment adapts to how the active model is billed, because a token rate does not mean the same thing in every case:
+- **Local models:** prompt-processing `↑` and generation `↓` rates, when measured. IPv4/IPv6 loopback and LAN endpoints are recognized.
+- **Hosted API providers:** with throughput set to Always, idle output shows cumulative reported session input/output tokens and available estimated cost. Cache reads/writes are included in input; Detailed additionally breaks them out.
+- **Subscriptions:** idle speed is omitted; quota represents the available budget.
+- **During generation:** live output rates use a character-based estimate and carry **`~`**. Provider-reported counts replace estimates after the turn. Missing reported counts use explicitly marked estimates rather than fake zero rates.
+- **During tools:** the indicator says **tools**; generation timing stops at message end instead of making speed decay throughout tool execution.
 
-- **Local models** (loopback/LAN endpoint) show live `↑`/`↓` token rates. `↓` is output tokens over the generation window (first update → message end, so tool execution time is excluded); `↑` is the prompt-processing rate (input tokens over turn start → first update). Both start at `0 t/s` and stay visible while idle. If the generation window is unavailable, `↓` falls back to output tokens over the whole turn.
-- **API-key providers** show a running ledger while idle — `🧾 ↑<input> ↓<output> $<cost>` — cumulative session input and output tokens (cached and cache-write tokens folded into input) and total session cost. A per-token rate over a network is just request latency plus prompt caching, so it is dropped in favour of what you are actually spending.
-- **Subscription providers** (Anthropic OAuth, OpenAI Codex) show nothing at idle; the `session` usage bars already track the only budget that matters — your quota window.
-- **While a turn streams**, every hosted provider shows a live `↓ t/s` speed pulse so you can see generation is progressing and how fast.
+`~$` cost is a token-price estimate, not a provider invoice. Missing cost is omitted. Rate colors compare to recent same-model measurements; low output rates (15 t/s or below) are red. Model changes reset rates/baselines.
 
-Rate coloring compares each direction to its own recent same-model baseline: green at or above 90%, orange from 60–89%, and red below 60%. Until three samples are available it stays neutral; output at or below 15 t/s is always red. Changing models resets both rates and baselines.
+Active time sums turn durations, including tool work, and stops on settle/interruption. Elapsed time measures wall-clock time since session load. Optional elapsed time continues ticking at idle.
 
-Active time is the sum of turn durations and ticks live while a turn is running. The timer stops when pi settles, including interrupted or failed turns. Optional elapsed time is wall-clock time since the session loaded; optional last-turn time is the most recently completed turn duration.
+## Development
+
+```bash
+npm test
+npm run typecheck
+```
+
+Provider tests use synthetic responses. Passing tests do not establish live authenticated endpoint accuracy; Z.AI is especially subject to upstream changes.
 
 ## License
 

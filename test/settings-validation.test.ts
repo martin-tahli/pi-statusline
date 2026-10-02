@@ -344,11 +344,11 @@ test("validation: hostile provider key yields a single sanitized record", () => 
 
 test("validation: extras parses booleans and falls back to parity defaults", () => {
   const valid = parseStatuslineSettings({ extras: { branch: false, cost: true, sessionElapsed: true, lastTurn: true, pending: true } });
-  assert.deepEqual(valid.settings.extras, { branch: false, cost: true, sessionElapsed: true, lastTurn: true, pending: true });
+  assert.deepEqual(valid.settings.extras, { extensionStatuses: false, branch: false, cost: true, sessionElapsed: true, lastTurn: true, pending: true });
 
   // Bad types fall back to the parity defaults (branch true, rest false).
   const bad = parseStatuslineSettings({ extras: { branch: "yes", cost: 1, sessionElapsed: null, lastTurn: undefined, pending: "true" } });
-  assert.deepEqual(bad.settings.extras, { branch: true, cost: false, sessionElapsed: false, lastTurn: false, pending: false });
+  assert.deepEqual(bad.settings.extras, { extensionStatuses: false, branch: true, cost: false, sessionElapsed: false, lastTurn: false, pending: false });
 
   // Missing extras group yields the same parity defaults.
   assert.deepEqual(parseStatuslineSettings({}).settings.extras, DEFAULT_STATUSLINE_SETTINGS.extras);

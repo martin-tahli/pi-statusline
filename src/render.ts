@@ -1,5 +1,5 @@
 import { renderBar, DEFAULT_STOPS, type BarStyle, type ColorStops } from "./bar.ts";
-import { visibleWidth } from "@earendil-works/pi-tui";
+import { visibleWidth, truncateToWidth } from "@earendil-works/pi-tui";
 import { composeSegments, createSegments, SEGMENT_ORDER, type SegmentId } from "./segments.ts";
 import {
   billingMode,
@@ -31,6 +31,9 @@ export interface RenderTheme {
 }
 
 export interface MeterSnapshot {
+  inputEstimated?: boolean;
+  outputEstimated?: boolean;
+  tools?: boolean;
   avgInputRate?: number;
   avgOutputRate?: number;
   outputRate?: number;
@@ -58,13 +61,14 @@ export interface FooterSnapshot {
   /** Last context char count, used to estimate the local prompt-processing rate. */
   lastContextChars?: number;
   /** Session token/cost totals, used for the cost extra and the API ledger. */
-  totals?: { input: number; output: number; cost: number };
+  totals?: { input: number; output: number; cost?: number; cacheRead?: number; cacheWrite?: number };
   /** Active provider's subscription quota windows (shown on the main line when no provider row does). */
   sessionWindows?: RateLimitWindow[];
   /** True when the active provider already shows its quota on a provider-tracking row. */
   activeProviderHasRow?: boolean;
   /** Placeholder shown for an eligible subscription provider before its windows load (e.g. "5h — wk —"). */
   sessionPlaceholder?: string;
+  sessionFreshness?: string;
   now?: number;
 }
 
@@ -77,7 +81,7 @@ const GIT_ROLES: Record<GitTokenKind, "accent" | "success" | "warning" | "error"
 };
 
 const ICON_PRESETS: Record<StatuslineSettings["icons"]["style"], Record<string, string>> = {
-  emoji: { project: "📁", model: "🤖", thinking: "🧠", context: "🪟", throughput: "⚡", time: "⏳" },
+  emoji: { project: "📁", model: "🤖", thinking: "🧠", context: "🪟", throughput: "⚡", time: "⏳", ledger: "🧾" },
   unicode: { project: "◆", model: "◇", thinking: "◌", context: "▣", throughput: "↕", time: "◷" },
   ascii: { project: "P", model: "M", thinking: "T", context: "C", throughput: "R", time: "@" },
   nerdfont: { project: "󰉋", model: "󰧑", thinking: "󰔟", context: "󰍛", throughput: "󰓅", time: "󰥔" },
@@ -87,6 +91,7 @@ const ICON_PRESETS: Record<StatuslineSettings["icons"]["style"], Record<string, 
 };
 
 function icon(settings: StatuslineSettings, name: string): string {
+  if (settings.icons.style === "none") return "";
   const override = settings.icons.symbols[name];
   if (override !== undefined) return override;
   return ICON_PRESETS[settings.icons.style][name] ?? "";
@@ -94,7 +99,7 @@ function icon(settings: StatuslineSettings, name: string): string {
 
 /** Provider icon: only when explicitly configured (no default glyph), matching the live footer. */
 function providerIcon(settings: StatuslineSettings, providerId?: string): string {
-  if (!providerId) return "";
+  if (!providerId || settings.icons.style === "none") return "";
   const configured = settings.icons.providers[providerId];
   if (configured?.mode === "hidden") return "";
   if (configured?.mode === "custom") return configured.value;
@@ -110,7 +115,10 @@ function barRole(settings: StatuslineSettings, used: number): ThemeColor {
 function barStyleFactory(settings: StatuslineSettings, used: number, theme: RenderTheme | undefined, stops: ColorStops): BarStyle {
   if (settings.bars.truecolor && theme?.getColorMode?.() === "truecolor") {
     return {
-      fill: (text, rgb) => `\x1b[38;2;${rgb[0]};${rgb[1]};${rgb[2]}m${text}\x1b[39m`,
+      fill: (text) => {
+        const rgb = stops[used * 100 >= settings.bars.critAt ? 2 : used * 100 >= settings.bars.warnAt ? 1 : 0];
+        return `\x1b[38;2;${rgb[0]};${rgb[1]};${rgb[2]}m${text}\x1b[39m`;
+      },
       track: (text) => `\x1b[38;2;58;63;70m${text}\x1b[39m`,
     };
   }
@@ -150,12 +158,13 @@ export function resolveWindowDisplay(
   provider: string | undefined,
   window: RateLimitWindow,
 ): ResolvedWindowDisplay {
-  const cfg = provider ? settings.providers.records[provider]?.windows[window.key ?? ""] : undefined;
+  const windows = provider ? settings.providers.records[provider]?.windows : undefined;
+  const cfg = { ...windows?.default, ...windows?.[window.key ?? ""] };
   const width = cfg?.width && cfg.width > 0 ? cfg.width : settings.bars.width;
   return {
     visible: cfg?.visible ?? true,
     label: cfg?.label ? cfg.label : window.label,
-    showBar: cfg?.showBar ?? true,
+    showBar: cfg?.showBar ?? settings.bars.format !== "percent",
     showPercent: cfg?.showPercent ?? settings.bars.showPercent,
     showReset: cfg?.showReset ?? true,
     resetFormat: cfg?.resetFormat ?? "countdown",
@@ -178,12 +187,17 @@ function renderSessionBar(settings: StatuslineSettings, provider: string | undef
   const paint = (r: ThemeColor, text: string) => (theme?.fg ? theme.fg(r, text) : text);
   const display = resolveWindowDisplay(settings, provider, window);
   const used = Math.max(0, Math.min(1, window.used));
-  const bar = !display.showBar ? ""
+  const bar = !display.showBar ? (display.showPercent ? `${Math.round(used * 100)}%` : "")
+    : settings.icons.style === "ascii"
+      ? `${"#".repeat(Math.round(used * display.width))}${"-".repeat(display.width - Math.round(used * display.width))}${display.showPercent ? ` ${Math.round(used * 100)}%` : ""}`
     : isLineBarStyle(settings.bars.style)
       ? renderBar(used, display.width, barStyleFactory(settings, used, theme, DEFAULT_STOPS), DEFAULT_STOPS, display.showPercent)
       : blockBar(used, settings, theme, display.width, display.showPercent);
-  const reset = display.showReset && window.resetAt !== undefined ? paint("dim", ` ↻ ${formatReset(window.resetAt, display.resetFormat, now)}`) : "";
-  return `${paint("muted", `${display.label} `)}${bar}${reset}`;
+  const reset = display.showReset && window.resetAt !== undefined ? paint("dim", ` ${settings.icons.style === "ascii" ? "reset" : "↻"} ${formatReset(window.resetAt, display.resetFormat, now)}`) : "";
+  const detail = settings.bars.format === "detailed" && window.unit === "USD"
+    ? ` $${window.usedAmount?.toFixed(2) ?? "?"} used / $${window.remainingAmount?.toFixed(2) ?? "?"} left` : "";
+  if (!bar && !reset && !detail) return "";
+  return `${paint("muted", `${display.label} `)}${bar}${display.showPercent ? " used" : ""}${reset}${detail}`.trim();
 }
 
 /** Compact no-bar form of one window: the numbers the reader actually needs (label, %, ↻ reset). */
@@ -191,8 +205,8 @@ function compactSessionBar(settings: StatuslineSettings, provider: string | unde
   const paint = (r: ThemeColor, text: string) => (theme?.fg ? theme.fg(r, text) : text);
   const display = resolveWindowDisplay(settings, provider, window);
   const used = Math.max(0, Math.min(1, window.used));
-  const pct = display.showPercent ? `${Math.round(used * 100)}%` : "";
-  const reset = display.showReset && window.resetAt !== undefined ? paint("dim", ` ↻ ${formatReset(window.resetAt, display.resetFormat, now)}`) : "";
+  const pct = display.showPercent ? `${Math.round(used * 100)}% used` : "";
+  const reset = display.showReset && window.resetAt !== undefined ? paint("dim", ` ${settings.icons.style === "ascii" ? "reset" : "↻"} ${formatReset(window.resetAt, display.resetFormat, now)}`) : "";
   const body = `${pct}${reset}`.replace(/^\s+/, "");
   return body ? `${paint("muted", `${display.label} `)}${body}` : "";
 }
@@ -201,8 +215,8 @@ const WINDOW_SEPARATOR = " >";
 
 /**
  * Render a provider's quota windows to fit `budget` visible columns. Full bars when they fit;
- * under pressure drop bars before numbers, then drop the soonest-resetting window first — so the
- * weekly window (the one that actually gates usage) keeps its % and reset on narrow screens.
+ * under pressure drop bars before numbers, then keep the most-used window (including exhausted
+ * limits) rather than guessing that the longest-duration window is always the limiting one.
  * Shared by the main-line session segment, the provider rows, and the settings preview.
  */
 export function renderSessionWindows(
@@ -214,9 +228,10 @@ export function renderSessionWindows(
   budget?: number,
 ): string {
   const sep = theme?.fg ? theme.fg("dim", WINDOW_SEPARATOR) : WINDOW_SEPARATOR;
-  const full = windows.map((window) => renderSessionBar(settings, provider, window, theme, now)).join(sep);
+  windows = windows.filter((window) => resolveWindowDisplay(settings, provider, window).visible);
+  const full = windows.map((window) => renderSessionBar(settings, provider, window, theme, now)).filter(Boolean).join(sep);
   if (budget === undefined || visibleWidth(full) <= budget) return full;
-  const ordered = [...windows].sort((a, b) => (a.resetAt ?? -Infinity) - (b.resetAt ?? -Infinity));
+  const ordered = [...windows].sort((a, b) => a.used - b.used || (b.resetAt ?? Infinity) - (a.resetAt ?? Infinity));
   const compact = () => ordered
     .map((window) => compactSessionBar(settings, provider, window, theme, now))
     .filter((bar) => bar.trim().length > 0)
@@ -235,11 +250,12 @@ export interface ProviderRowSource {
   windows: readonly RateLimitWindow[];
   /** Static affordance shown before a subscription provider's windows load (e.g. "5h — wk —"). */
   placeholder?: string;
+  freshness?: string;
 }
 
 /** True when a source would produce a row: at least one visible window, or a placeholder. */
 export function sourceRenders(settings: StatuslineSettings, source: ProviderRowSource): boolean {
-  if (source.windows.some((window) => resolveWindowDisplay(settings, source.provider, window).visible)) return true;
+  if (renderSessionWindows(settings, source.provider, source.windows, undefined, Date.now()).trim()) return true;
   return Boolean(source.placeholder);
 }
 
@@ -270,7 +286,7 @@ export function renderProviderRows(
   const lines: string[] = [];
   for (const source of sources) {
     if (settings.providers.records[source.provider]?.enabled === false) continue;
-    const prefix = paint("muted", `${source.provider} `);
+    const prefix = paint("muted", `${source.provider}${source.freshness ? ` (${source.freshness})` : ""} `);
     const visible = source.windows.filter((window) => resolveWindowDisplay(settings, source.provider, window).visible);
     if (visible.length) {
       // Width-aware: degrade in place (bars, then extra windows) instead of being chopped mid-bar.
@@ -281,7 +297,7 @@ export function renderProviderRows(
       lines.push(paint("muted", `${source.provider} ${source.placeholder}`));
     }
   }
-  return lines;
+  return width === undefined ? lines : lines.map((line) => truncateToWidth(line, width, ""));
 }
 
 /** Render the single main statusline line. Pure: no I/O, no mutation. */
@@ -297,17 +313,17 @@ export function renderMainLine(
 
   const context = deriveContext(snap.contextUsage);
   const contextRole = (ctx: { percent: number; tokens: number | null }): ThemeColor => {
-    const tokens = ctx.tokens ?? 0;
-    if (ctx.percent >= settings.thresholds.contextCrit || tokens >= 170_000) return "error";
-    if (ctx.percent >= settings.thresholds.contextWarn || tokens >= 120_000) return "warning";
+    if (ctx.percent >= settings.thresholds.contextCrit) return "error";
+    if (ctx.percent >= settings.thresholds.contextWarn) return "warning";
     return "success";
   };
   const branch = extras.branch ? snap.gitBranch : undefined;
   const branchSymbol = gitBranchSymbol(settings.icons.style === "nerdfont");
+  const gitToken = (text: string) => settings.icons.style === "ascii" ? text.replace("✓", "clean").replace("●", "dirty").replace("↑", "ahead ").replace("↓", "behind ") : text;
   const git = branch
     ? [
       paint("accent", `${branchSymbol ? `${branchSymbol} ` : ""}${branch}`),
-      ...(snap.gitStatus ? gitStatusTokens(snap.gitStatus).map((token) => paint(GIT_ROLES[token.kind], token.text)) : []),
+      ...(snap.gitStatus ? gitStatusTokens(snap.gitStatus).map((token) => paint(GIT_ROLES[token.kind], gitToken(token.text))) : []),
     ].join(" ")
     : "";
   const pending = extras.pending && snap.pending;
@@ -321,25 +337,31 @@ export function renderMainLine(
 
   const m = snap.meter ?? {};
   const liveOutputRate = snap.turnActive && m.outputRate !== undefined ? m.outputRate : undefined;
-  const outputRateLabel = () => paint(m.outputLevel ?? "muted", `↓${formatRate(liveOutputRate ?? m.avgOutputRate ?? 0)}`);
+  const down = settings.icons.style === "ascii" ? "out " : "↓";
+  const up = settings.icons.style === "ascii" ? "in " : "↑";
+  const outputRate = liveOutputRate ?? m.avgOutputRate;
+  const outputRateLabel = () => outputRate === undefined ? "" : paint(m.outputLevel ?? "muted", `${down}${m.outputEstimated ? "~" : ""}${formatRate(outputRate)}`);
   const throughputIcon = icon(settings, "throughput");
   // The ⚡ segment adapts to the billing model (see README "Throughput and time").
   const throughput = (() => {
     if (mode === "local") {
-      const promptRate = m.waitingMs ? estimateTokens(snap.lastContextChars ?? 0) / (m.waitingMs / 1_000) : undefined;
-      const inputRate = promptRate ?? m.avgInputRate ?? 0;
-      const input = paint(m.inputLevel ?? "muted", `↑${formatRate(inputRate)}`);
-      return `${paint("muted", throughputIcon)}${input} ${outputRateLabel()}${paint("muted", " t/s")}`;
+      const promptRate = m.waitingMs && snap.lastContextChars ? estimateTokens(snap.lastContextChars) / (m.waitingMs / 1_000) : undefined;
+      const inputRate = promptRate ?? m.avgInputRate;
+      const input = inputRate === undefined ? "" : paint(m.inputLevel ?? "muted", `${up}${promptRate !== undefined || m.inputEstimated ? "~" : ""}${formatRate(inputRate)}`);
+      if (m.tools) return "tools";
+      const rates = [input, outputRateLabel()].filter(Boolean).join(" ");
+      return rates ? `${paint("muted", throughputIcon)}${rates}${paint("muted", " t/s")}` : "";
     }
-    if (snap.turnActive) return `${paint("muted", throughputIcon)}${outputRateLabel()}${paint("muted", " t/s")}`;
+    if (snap.turnActive) return m.tools ? "tools" : outputRateLabel() ? `${paint("muted", throughputIcon)}${outputRateLabel()}${paint("muted", " t/s")}` : "";
     if (mode === "subscription") return "";
     if (!totals || (!totals.input && !totals.output)) return "";
-    return paint("muted", `🧾 ↑${formatWindow(totals.input)} ↓${formatWindow(totals.output)} $${totals.cost.toFixed(3)}`);
+    const cache = settings.bars.format === "detailed" ? ` cache r${formatWindow(totals.cacheRead ?? 0)} w${formatWindow(totals.cacheWrite ?? 0)}` : "";
+    return paint("muted", `${icon(settings, "ledger")} ${up}${formatWindow(totals.input)} ${down}${formatWindow(totals.output)}${totals.cost === undefined ? "" : ` ~$${totals.cost.toFixed(3)}`}${cache}`.trim());
   })();
 
   const activeMs = m.activeMs ?? 0;
-  const time = activeMs > 0 || m.lastTurnMs !== undefined
-    ? formatTime(activeMs, extras.sessionElapsed ? m.elapsedMs : undefined, extras.lastTurn ? m.lastTurnMs : undefined)
+  const time = activeMs > 0 || m.lastTurnMs !== undefined || (extras.sessionElapsed && m.elapsedMs !== undefined)
+    ? formatTime(activeMs, extras.sessionElapsed ? m.elapsedMs : undefined, extras.lastTurn ? m.lastTurnMs : undefined, icon(settings, "time"))
     : "";
 
   const sessionWindows = snap.activeProviderHasRow ? [] : (snap.sessionWindows ?? []);
@@ -348,7 +370,7 @@ export function renderMainLine(
   // Width-aware: composeSegments offers this renderer the leftover columns under width pressure,
   // so the quota degrades (bars, then extra windows) instead of being dropped or chopped mid-bar.
   const session = (budget?: number) => visibleSessionWindows.length
-    ? renderSessionWindows(settings, sessionProvider, visibleSessionWindows, theme, now, budget)
+    ? `${snap.sessionFreshness ? `${snap.sessionFreshness} ` : ""}${renderSessionWindows(settings, sessionProvider, visibleSessionWindows, theme, now, budget === undefined ? undefined : Math.max(0, budget - (snap.sessionFreshness?.length ?? -1) - 1))}`
     : (snap.sessionPlaceholder ?? "");
 
   const withSpace = (name: string, value: string) => {
@@ -364,8 +386,13 @@ export function renderMainLine(
       else if (activeModel[id] === "off") visibility[id] = false;
     }
   }
+  const resolved = Object.fromEntries(SEGMENT_ORDER.map((id) => [id, visibility[id] === "auto"
+    ? id === "time" ? Boolean(snap.turnActive || extras.sessionElapsed || (extras.lastTurn && m.lastTurnMs !== undefined))
+      : id === "throughput" ? Boolean(snap.turnActive)
+      : id === "session" ? visibleSessionWindows.some((window) => window.used * 100 >= settings.bars.warnAt) : true
+    : visibility[id]])) as Record<SegmentId, boolean>;
   const orderRank = new Map(settings.layout.segmentOrder.map((id, index) => [id, index] as const));
-  const segments = createSegments(visibility, {
+  const segments = createSegments(resolved, {
     project: () => {
       const head = paint("muted", withSpace("project", deriveProject(snap.cwd)));
       const tail = `${git ? `${paint("dim", settings.separators.projectGit)}${git}` : ""}${pending ? ` ${paint("muted", "queued")}` : ""}`;
@@ -375,7 +402,7 @@ export function renderMainLine(
       if (!model) return "";
       const provider = providerIcon(settings, snap.model?.provider);
       const label = provider ? `${provider}${model}` : model;
-      return paint("muted", `${withSpace("model", label)}${cost === undefined ? "" : ` $${cost.toFixed(3)}`}`);
+      return paint("muted", `${withSpace("model", label)}${cost === undefined ? "" : ` ~$${cost.toFixed(3)}`}`);
     },
     effort: () => effort ? paint("muted", withSpace("thinking", effort)) : "",
     context: () => {

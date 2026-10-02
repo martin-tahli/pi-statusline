@@ -3,7 +3,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { lockSync } from "proper-lockfile";
 import { parseStoredRateLimits } from "./ratelimit.ts";
-import { PROVIDER_MAX_AGE_MS, PROVIDER_REFRESH_MS, RateLimitedError, type ProviderUsage } from "./providers.ts";
+import { PROVIDER_MAX_AGE_MS, PROVIDER_REFRESH_MS, RateLimitedError, UsageUnavailableError, type ProviderUsage } from "./providers.ts";
 
 export const PROVIDER_CACHE_DIR = join(homedir(), ".pi", "agent", "statusline", "provider-usage");
 const LOCK_MS = 10_000;
@@ -52,11 +52,12 @@ export class ProviderUsageCache {
     } catch {
       return undefined;
     }
+    if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
     const limits = parseStoredRateLimits(value.limits);
     const updatedAt = value.updatedAt;
     const retryAt = typeof value.retryAt === "number" && Number.isFinite(value.retryAt) ? value.retryAt : undefined;
     const backoffStep = typeof value.backoffStep === "number" && Number.isInteger(value.backoffStep) && value.backoffStep >= 0 ? value.backoffStep : undefined;
-    const usageValid = limits.length && typeof updatedAt === "number" && Number.isFinite(updatedAt) && updatedAt <= this.now();
+    const usageValid = limits.length && typeof updatedAt === "number" && Number.isFinite(updatedAt) && updatedAt >= 0 && updatedAt <= this.now();
     // Keep an entry while it has usable usage, or while a 429 backoff is still cooling down.
     if (!usageValid && retryAt === undefined) return undefined;
     const extras = { ...(retryAt === undefined ? {} : { retryAt }), ...(backoffStep === undefined ? {} : { backoffStep }) };
@@ -70,47 +71,60 @@ export class ProviderUsageCache {
     return cached && cached.limits.length && this.now() - cached.updatedAt <= maxAge ? cached : undefined;
   }
 
-  async refresh(provider: string, fetchUsage: () => Promise<ProviderUsage | undefined>): Promise<ProviderUsage | undefined> {
-    const refreshMs = this.refreshMsFor(provider);
+  async refresh(provider: string, fetchUsage: () => Promise<ProviderUsage | undefined>, policy?: { intervalMs: number; maxAgeMs: number; useCache: boolean; keepAfterFailure: boolean }): Promise<ProviderUsage | undefined> {
+    const refreshMs = Math.max(this.refreshMsFor(provider), policy?.intervalMs ?? 0);
+    const fallback = (entry: CachedUsage | undefined): ProviderUsage | undefined =>
+      policy?.useCache !== false && policy?.keepAfterFailure !== false && entry?.limits.length
+        && this.now() - entry.updatedAt <= (policy?.maxAgeMs ?? PROVIDER_MAX_AGE_MS)
+        ? { limits: entry.limits, updatedAt: entry.updatedAt, cached: true } : undefined;
+    const fetchFresh = async () => {
+      const usage = await fetchUsage();
+      return usage?.limits.length ? { ...usage, updatedAt: this.now(), cached: false } : undefined;
+    };
     const before = this.get(provider);
     // Honor an active 429 backoff: don't hit the endpoint again until it expires.
     if (before?.retryAt !== undefined && this.now() < before.retryAt) {
-      return before.limits.length ? { limits: before.limits } : undefined;
+      return fallback(before);
     }
-    if (before?.limits.length && this.now() - before.updatedAt < refreshMs) {
-      return { limits: before.limits };
+    if (policy?.useCache !== false && before?.limits.length && this.now() - before.updatedAt < Math.min(refreshMs, policy?.maxAgeMs ?? PROVIDER_MAX_AGE_MS)) {
+      return { limits: before.limits, updatedAt: before.updatedAt, cached: true };
     }
-    mkdirSync(this.dir, { recursive: true });
+    try { mkdirSync(this.dir, { recursive: true }); } catch { return fetchFresh(); }
     let release: () => void;
     try {
       release = lockSync(this.file(provider), { realpath: false, stale: Math.max(this.lockMs, 5_000), retries: 0 });
     } catch {
-      return before?.limits.length ? { limits: before.limits } : undefined;
+      return fallback(before);
     }
     try {
       const current = this.get(provider);
       if (current?.retryAt !== undefined && this.now() < current.retryAt) {
-        return current.limits.length ? { limits: current.limits } : undefined;
+        return fallback(current);
       }
-      if (current?.limits.length && this.now() - current.updatedAt < refreshMs) {
-        return { limits: current.limits };
+      if (policy?.useCache !== false && current?.limits.length && this.now() - current.updatedAt < Math.min(refreshMs, policy?.maxAgeMs ?? PROVIDER_MAX_AGE_MS)) {
+        return { limits: current.limits, updatedAt: current.updatedAt, cached: true };
       }
       try {
-        const usage = await fetchUsage();
+        const usage = await fetchFresh();
         if (usage?.limits.length) {
           // Success: store fresh usage and clear any backoff.
           this.save(provider, { limits: usage.limits, updatedAt: this.now() });
           return usage;
         }
-        return current?.limits.length ? { limits: current.limits } : undefined;
+        return fallback(current);
       } catch (error) {
-        if (error instanceof RateLimitedError) {
+        if (UsageUnavailableError.is(error)) {
+          // A denied account must not keep re-serving last-known quota across sessions.
+          this.save(provider, { limits: [], updatedAt: this.now() });
+          throw error;
+        }
+        if (RateLimitedError.is(error)) {
           // 429: persist a growing backoff so every session and every caller backs off.
           this.applyBackoff(provider, current);
         } else if (!current?.limits.length) {
           throw error;
         }
-        return current?.limits.length ? { limits: current.limits } : undefined;
+        return fallback(current);
       }
     } finally {
       try { release(); } catch { /* The lock may already have been recovered after a crash. */ }
@@ -139,6 +153,7 @@ export class ProviderUsageCache {
     try {
       writeFileSync(temporary, `${JSON.stringify(record)}\n`, "utf8");
       renameSync(temporary, file);
+    } catch { /* Read-only/full cache storage must not hide successfully fetched usage. */
     } finally {
       try { unlinkSync(temporary); } catch { /* The atomic rename already won. */ }
     }

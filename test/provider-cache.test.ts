@@ -15,7 +15,10 @@ test("shares one fresh provider usage result between sessions", async () => {
     let fetches = 0;
     const first = new ProviderUsageCache(dir, 10_000);
     const second = new ProviderUsageCache(dir, 10_000);
-    assert.deepEqual(await first.refresh("anthropic", async () => { fetches++; return usage; }), usage);
+    const result = await first.refresh("anthropic", async () => { fetches++; return usage; });
+    assert.deepEqual(result?.limits, usage.limits);
+    assert.equal(result?.cached, false);
+    assert.ok(result?.updatedAt);
     assert.deepEqual((await second.refresh("anthropic", async () => { fetches++; return undefined; }))?.limits, usage.limits);
     assert.equal(fetches, 1);
   } finally {
@@ -33,7 +36,7 @@ test("allows only one simultaneous refresh per provider", async () => {
     await new Promise<void>((done) => setImmediate(done));
     assert.equal(await second.refresh("anthropic", async () => usage), undefined);
     resolve(usage);
-    assert.deepEqual(await pending, usage);
+    assert.deepEqual((await pending)?.limits, usage.limits);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -94,7 +97,7 @@ test("keeps serving the last known usage when a refresh returns no data", async 
   try {
     await cache.refresh("anthropic", async () => usage);
     clock += 20_000;
-    assert.deepEqual(await cache.refresh("anthropic", async () => undefined), usage);
+    assert.deepEqual(await cache.refresh("anthropic", async () => undefined), { ...usage, updatedAt: 1_000_000, cached: true });
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

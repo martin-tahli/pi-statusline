@@ -1,5 +1,6 @@
 import type { RateLimits } from "../../ratelimit.ts";
-import { parseAnthropicUsage, parseCodexUsage, parseZaiUsage } from "../../ratelimit.ts";
+import { parseAnthropicUsage, parseCodexUsage, parseZaiUsage, parseOpenRouterUsage } from "../../ratelimit.ts";
+import { RateLimitedError, UsageUnavailableError } from "../../providers.ts";
 
 /**
  * Adapter support tiers (R14). Only this module maps provider ids to quota
@@ -24,7 +25,7 @@ export interface QuotaAdapter {
   support: AdapterSupport;
   /** Sanitized, UI-safe reason shown when quota is unavailable (no secrets). */
   reason?: string;
-  /** Best-effort quota refresh; returns [] when unavailable. Never throws raw data. */
+  /** Best-effort quota refresh; may throw a sanitized denial/backoff signal, never raw data. */
   refresh?: (ctx: AdapterContext, signal: AbortSignal) => Promise<RateLimits>;
 }
 
@@ -47,9 +48,12 @@ const anthropicAdapter: QuotaAdapter = {
         },
         signal,
       });
+      if (response.status === 401 || response.status === 403) throw new UsageUnavailableError();
+      if (response.status === 429) throw new RateLimitedError();
       if (!response.ok) return [];
       return parseAnthropicUsage(await response.json());
-    } catch {
+    } catch (error) {
+      if (UsageUnavailableError.is(error) || RateLimitedError.is(error)) throw error;
       return [];
     }
   },
@@ -73,9 +77,12 @@ const codexAdapter: QuotaAdapter = {
         },
         signal,
       });
+      if (response.status === 401 || response.status === 403) throw new UsageUnavailableError();
+      if (response.status === 429) throw new RateLimitedError();
       if (!response.ok) return [];
       return parseCodexUsage(await response.json());
-    } catch {
+    } catch (error) {
+      if (UsageUnavailableError.is(error) || RateLimitedError.is(error)) throw error;
       return [];
     }
   },
@@ -94,9 +101,15 @@ const zaiAdapter: QuotaAdapter = {
         headers: { authorization: `Bearer ${token}`, accept: "application/json", "user-agent": "pi-statusline" },
         signal,
       });
+      if (response.status === 401 || response.status === 403) throw new UsageUnavailableError();
+      if (response.status === 429) throw new RateLimitedError();
       if (!response.ok) return [];
-      return parseZaiUsage(await response.json());
-    } catch {
+      const payload = await response.json();
+      // Z.AI reports missing/expired Coding Plans in an HTTP 200 error envelope.
+      if (payload?.success === false) throw new UsageUnavailableError();
+      return parseZaiUsage(payload);
+    } catch (error) {
+      if (UsageUnavailableError.is(error) || RateLimitedError.is(error)) throw error;
       return [];
     }
   },
@@ -104,10 +117,26 @@ const zaiAdapter: QuotaAdapter = {
 
 const openrouterAdapter: QuotaAdapter = {
   id: "openrouter",
-  support: "none",
-  // OpenRouter's only usage endpoint requires a separate management key pi doesn't manage
-  // (the inference key pi stores is explicitly rejected by that endpoint).
-  reason: "usage requires an OpenRouter management key pi doesn't manage",
+  support: "official",
+  reason: "key budget unavailable (no finite key limit)",
+  refresh: async (ctx, signal) => {
+    const token = await ctx.getToken?.().catch(() => undefined);
+    if (!token) return [];
+    try {
+      const response = await fetch("https://openrouter.ai/api/v1/key", {
+        headers: { authorization: `Bearer ${token}`, accept: "application/json" }, signal,
+      });
+      if (response.status === 401 || response.status === 403) throw new UsageUnavailableError();
+      if (response.status === 429) throw new RateLimitedError();
+      if (!response.ok) return [];
+      const limits = parseOpenRouterUsage(await response.json());
+      if (!limits.length) throw new UsageUnavailableError(); // Never retain a former key cap as current.
+      return limits;
+    } catch (error) {
+      if (UsageUnavailableError.is(error) || RateLimitedError.is(error)) throw error;
+      return [];
+    }
+  },
 };
 
 /**

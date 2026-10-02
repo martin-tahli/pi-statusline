@@ -1,3 +1,4 @@
+import { resolveWindowDisplay } from "../render.ts";
 import { createProviderConfig, createWindowConfig } from "./defaults.ts";
 import {
   resolveProviderMissingDataPolicy,
@@ -27,7 +28,7 @@ export interface ProviderRowView {
   authentication: "Authenticated" | "Not authenticated";
   billing: string;
   reliability: string;
-  freshness: "Fresh" | "Stale" | "Unknown";
+  freshness: "Fresh" | "Cached" | "Stale" | "Unknown";
   quota: string;
   active: boolean;
 }
@@ -101,7 +102,7 @@ export function buildProviderScreen(draft: StatuslineSettings, context: Provider
         authentication: capability?.authenticated ? "Authenticated" : "Not authenticated",
         billing: capability?.billing ?? "unknown",
         reliability: capability?.quotaReliability ?? "none",
-        freshness: state === "fresh" ? "Fresh" : state === "stale" ? "Stale" : "Unknown",
+        freshness: state === "fresh" ? context.health?.[descriptor.id]?.cached ? "Cached" : "Fresh" : state === "stale" ? "Stale" : "Unknown",
         quota: capability?.quotaSupport === "none"
           ? `Not available: ${safeText(unavailable, "usage unavailable")}`
           : capability ? "Available" : "Not available: usage unavailable",
@@ -124,7 +125,7 @@ export function buildProviderDetail(
   const keys = adapterWindows.map((window) => window.key?.trim() ?? "");
   const validWindows = keys.every(Boolean) && new Set(keys).size === keys.length;
   const quotaWindows = capability.quotaSupport === "none" || !validWindows ? [] : adapterWindows.map((window) => {
-    const settings = record?.windows[window.key!] ?? createWindowConfig();
+    const settings = { ...createWindowConfig(), ...record?.windows.default, ...record?.windows[window.key!], ...resolveWindowDisplay(draft, providerId, window) };
     return { ...window, settings: structuredClone(settings) };
   });
   const effectiveRecord = record ?? createProviderConfig();
