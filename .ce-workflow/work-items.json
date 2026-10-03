@@ -1437,6 +1437,10 @@
       "dependencies": [],
       "dependencyEdges": [],
       "description": "Deliver the first end-to-end terminal-settings behavior after the closed U5 composition-root refactor. Add src/settings/ui.ts as the cohesive Pi TUI shell (root screen, screen stack, keyboard routing, contextual help/selection rendering, preview pane, text edit state, and confirmation dialogs) and add test/settings-ui.test.ts with a fake TUI. Reuse src/settings/state.ts for cloned drafts/resets, src/settings/preview.ts for production-path previews, and the existing settings types/defaults; do not duplicate parsing, rendering, or persistence logic. This slice is component-level: extension command wiring and removal of legacy command arguments remain for U9.",
+      "displayMetadata": {
+        "schemaVersion": 1,
+        "title": "Build settings UI shell with safe draft controls"
+      },
       "evidence": [
         {
           "closeEvidence": "Completed by coded inline work path"
@@ -1653,6 +1657,10 @@
       "dependencies": [],
       "dependencyEdges": [],
       "description": "Close plan unit U11 (requirements R3, R19-R29): prove every existing and newly configurable presentation remains correct across data modes and terminal widths. This is primarily a COVERAGE-AUDIT + GAP-FILL unit — the repo already has test/settings-render.test.ts (15 tests) plus test/{bar,segments,throughput,statusline,format,derive}.test.ts. Do NOT rewrite or duplicate existing tests.\n\nApproach:\n- Read docs/plans/2026-07-31-001-feat-new-statusline-settings-ui-plan.md section U11, requirements R19-R29 (separators, layout, bars, thresholds, timing, icons), and the Rendering/preview-parity matrix + AC contracts (AC1 footer layout/behavior) to enumerate the rendering matrix.\n- Cross-check each bullet against existing tests. Add a focused test ONLY for uncovered scenarios, in the appropriate existing test file (settings-render for preview/resolution parity; bar/segments/throughput/format/derive for the leaf renderers; statusline for runtime fixtures).\n- Use deterministic snapshots with semantic theme wrappers and Unicode width fixtures. Keep current runtime fixture assertions (local/subscription/API/Git/time/pending) as capability-loss guardrails.\n- Do NOT change production code unless a gap test exposes a genuine defect; if it does, fix + add a regression test and note it.\n\nMatrices (gap-fill only): local/hosted/API/subscription rendering; dynamic windows/order/overrides; custom separators/icons/no-icons/ASCII/Nerd-Font; narrow-width truncation and Unicode width; quota dedupe; missing/loading-data hiding policy; zero-hiding; context color escalation by threshold; preview == composeFooterLine parity for each fixture; every styled line is width-bounded (visibleWidth <= width) and never invokes I/O.",
+      "displayMetadata": {
+        "schemaVersion": 1,
+        "title": "Audit and fill rendering and preview regression coverage"
+      },
       "evidence": [
         {
           "closeEvidence": "Completed by coded inline work path"
@@ -1738,6 +1746,10 @@
       "dependencies": [],
       "dependencyEdges": [],
       "description": "Final cleanup deferred by work-2.11 (U5): remove the legacy src/config.ts settings hierarchy so the roadmap Definition of Done (\"no abandoned legacy runtime/menu/config code remains\") holds. src/config.ts is now the ONLY legacy settings artifact; its sole consumer is src/settings/migrations.ts importing `mergeSettings` (everything else — configuredProviders, applyToggle, formatStatusSummary, reconcileProviders, AvailableModelRegistry — already lives in src/settings/runtime.ts).\n\nConcrete steps:\n- Create src/settings/legacy.ts and move into it ONLY what migration needs: `mergeSettings` plus the legacy types/consts it references (the legacy `Settings` shape, `DEFAULT_SETTINGS`, and any of EXTRA_NAMES/PROVIDER_METRICS/ProviderMetrics/ProviderTrackingSettings mergeSettings actually uses). Trim unused exports (loadSettings, saveSettings, toggleSetting, formatSettings, configuredProviders, reconcileProviderTracking, DEFAULT_CONFIG_PATH) — do not carry dead code over.\n- Repoint src/settings/migrations.ts: `import { mergeSettings } from \"./legacy.ts\";` (was `../config.ts`). Migration behavior must be unchanged.\n- Delete src/config.ts.\n- Migrate test/config.test.ts: move the `mergeSettings` normalization coverage into a new test/settings-legacy.test.ts (or extend test/settings-migrations.test.ts) and delete test/config.test.ts. Do not lose normalization coverage (valid/partial/invalid legacy input, defaults fallback).",
+      "displayMetadata": {
+        "schemaVersion": 1,
+        "title": "Remove legacy config module and preserve migration support"
+      },
       "evidence": [
         {
           "closeEvidence": "Completed by coded inline work path"
@@ -1957,7 +1969,7 @@
       "recordCount": 11,
       "sourceFingerprint": "716c6815dbadf79dc70c6d01af6a643e7bcf36809c4af4405175a0d2a56789f1"
     },
-    "updatedAt": "2026-08-01T08:15:27.796Z"
+    "updatedAt": "2026-09-16T19:54:57.870Z"
   },
   "schemaVersion": 1
 }
