@@ -1,5 +1,7 @@
+import type { AccountSnapshot } from "../accounts.ts";
 import { resolveWindowDisplay } from "../render.ts";
 import { createProviderConfig, createWindowConfig } from "./defaults.ts";
+import { sanitizeDisplayString } from "./validation.ts";
 import {
   resolveProviderMissingDataPolicy,
   resolveProviderRefreshPolicy,
@@ -61,6 +63,7 @@ export interface ProviderUiContext {
   health?: Readonly<Record<string, RefreshHealth>>;
   windows?: Readonly<Record<string, readonly RateLimitWindow[]>>;
   activeProvider?: string;
+  accounts?: Readonly<Record<string, AccountSnapshot>>;
 }
 
 export type ProviderUiEffect = { type: "refresh-provider"; providerId: string };
@@ -121,11 +124,18 @@ export function buildProviderDetail(
   const capability = context.capabilities[providerId];
   if (!row || !capability) return undefined;
   const record = draft.providers.records[providerId];
-  const adapterWindows = context.windows?.[providerId] ?? [];
+  const liveWindows = context.windows?.[providerId] ?? [];
+  const adapterWindows: readonly RateLimitWindow[] = [
+    { key: "default", label: "All windows (defaults)", used: 0 },
+    ...liveWindows.filter((window) => window.key !== "default"),
+    ...Object.keys(record?.windows ?? {}).filter((key) => key !== "default" && !liveWindows.some((window) => window.key === key))
+      .map((key) => ({ key, label: key, used: 0 })),
+  ];
   const keys = adapterWindows.map((window) => window.key?.trim() ?? "");
   const validWindows = keys.every(Boolean) && new Set(keys).size === keys.length;
   const quotaWindows = capability.quotaSupport === "none" || !validWindows ? [] : adapterWindows.map((window) => {
     const settings = { ...createWindowConfig(), ...record?.windows.default, ...record?.windows[window.key!], ...resolveWindowDisplay(draft, providerId, window) };
+    if (window.key === "default") settings.label = record?.windows.default?.label ?? "";
     return { ...window, settings: structuredClone(settings) };
   });
   const effectiveRecord = record ?? createProviderConfig();
@@ -266,12 +276,13 @@ export function updateProviderWindow(
   key: string,
   changes: Partial<WindowConfiguration>,
 ): boolean {
-  const cleanKey = key.trim();
-  if (!cleanKey) return false;
+  const cleanKey = sanitizeDisplayString(key).trim();
+  if (!cleanKey || ["__proto__", "constructor", "prototype"].includes(cleanKey)) return false;
   const record = ensureRecord(draft, providerId);
-  const current = record.windows[cleanKey] ?? createWindowConfig();
+  const current = record.windows[cleanKey] ?? { ...createWindowConfig(), ...record.windows.default,
+    ...resolveWindowDisplay(draft, providerId, { key: cleanKey, label: "", used: 1 }) };
   const width = changes.width === undefined ? current.width : Math.max(1, Math.min(200, Math.floor(changes.width) || 1));
-  record.windows[cleanKey] = { ...current, ...changes, width };
+  record.windows[cleanKey] = { ...current, ...changes, label: sanitizeDisplayString(changes.label ?? current.label), width };
   return true;
 }
 

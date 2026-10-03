@@ -6,6 +6,7 @@ import test, { after } from "node:test";
 import { initTheme } from "@earendil-works/pi-coding-agent";
 import statusline from "../extensions/statusline.ts";
 import { ProviderUsageCache } from "../src/provider-cache.ts";
+import { credentialFingerprint } from "../src/accounts.ts";
 
 // The interactive settings menu resolves colors from pi's global theme singleton
 // (getSettingsListTheme() throws "Theme not initialized" otherwise). Real pi sessions
@@ -211,7 +212,7 @@ test("loads Anthropic limits at session start", async () => {
     const line = footer!.render(500)[0]!;
     assert.ok(line.includes("5h ╺"));
     assert.ok(line.includes("wk ╺"));
-    assert.equal(entries.length, 1);
+    assert.equal(entries.length, 0, "unscoped quota is not persisted in session history");
   } finally {
     footer?.dispose?.();
     globalThis.fetch = originalFetch;
@@ -274,7 +275,7 @@ test("ignores provider refreshes from a replaced session", async () => {
   }
 });
 
-test("restores Anthropic limits when a session reloads", async () => {
+test("never restores unscoped Anthropic quotas from session history", async () => {
   const handlers = new Map<string, (...args: any[]) => unknown>();
   const entries: unknown[] = [];
   let footer: { dispose?: () => void; render: (width: number) => string[] } | undefined;
@@ -317,10 +318,10 @@ test("restores Anthropic limits when a session reloads", async () => {
   await handlers.get("session_start")!({}, ctx);
 
   const line = footer!.render(500)[0]!;
-  assert.equal(entries.length, 1);
-  assert.ok(line.includes("5h ╺"));
-  assert.ok(line.includes("wk ╺"));
-  assert.equal(line.split("↻").length - 1, 2);
+  assert.equal(entries.length, 0);
+  assert.equal(line.includes("5h ╺"), false);
+  assert.equal(line.includes("wk ╺"), false);
+  assert.equal(line.split("↻").length - 1, 0);
   assert.equal(line.includes("—"), false);
   assert.equal(line.includes(""), false);
   assert.equal(line.includes("⎇"), false);
@@ -507,7 +508,7 @@ test("renders a fresh active provider beneath the session line without duplicate
 
     statusline(pi, testCache(), join(cacheRoot, "defaults.json"));
     await handlers.get("session_start")!({}, ctx);
-    assert.ok(footer!.render(500)[1]?.includes("anthropic 5h — wk —"), "provider should render before its usage fetch completes");
+    assert.ok(footer!.render(500)[1]?.includes("anthropic usage unavailable"), "provider should render before its usage fetch completes");
     await new Promise<void>((resolve) => setImmediate(resolve));
     const lines = footer!.render(500);
     assert.equal(lines.length, 2);
@@ -526,10 +527,9 @@ test("shows a tracked provider's last-known cross-session cache at startup", asy
   let footer: { dispose?: () => void; render: (width: number) => string[] } | undefined;
   const configPath = join(cacheRoot, "tracked-cache.json");
   writeFileSync(configPath, JSON.stringify({ providerTracking: { selected: { anthropic: true }, order: ["anthropic"] } }));
-  let clock = 1_000_000;
+  const clock = Date.now() - 60_000;
   const cache = new ProviderUsageCache(join(cacheRoot, String(cacheNumber++)), 10_000, 10_000, () => clock);
-  await cache.refresh("anthropic", async () => ({ limits: [{ label: "5h", used: 0.25 }] }));
-  clock += 6 * 60_000; // older than the normal 5-minute freshness window
+  await cache.refresh(`anthropic:${credentialFingerprint("anthropic", "scoped-token")}`, async () => ({ limits: [{ label: "5h", used: 0.25 }] }));
   const pi = {
     on: (event: string, handler: (...args: any[]) => unknown) => handlers.set(event, handler),
     registerCommand: () => {},
@@ -540,9 +540,9 @@ test("shows a tracked provider's last-known cross-session cache at startup", asy
     cwd: process.cwd(),
     model: { id: "glm", provider: "zai" },
     modelRegistry: {
-      // Logged in: another pi process supplied the cached quota; this one shows it until it refreshes.
+      // Another process using this same credential supplied the account-scoped cache.
       isUsingOAuth: () => true,
-      getApiKeyForProvider: async () => undefined,
+      getApiKeyForProvider: async (provider: string) => provider === "anthropic" ? "scoped-token" : undefined,
       getAvailable: () => [{ provider: "zai", id: "glm" }, { provider: "anthropic", id: "claude" }],
     },
     getContextUsage: () => undefined,
@@ -562,7 +562,10 @@ test("shows a tracked provider's last-known cross-session cache at startup", asy
 
   statusline(pi, cache, configPath);
   await handlers.get("session_start")!({}, ctx);
-  assert.ok(footer!.render(500)[1]!.includes("anthropic 5h"));
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  const providerRow = footer!.render(500)[1]!;
+  assert.match(providerRow, /anthropic \(\d+m\) 5h/);
+  assert.equal(providerRow.includes("cached"), false);
   footer?.dispose?.();
 });
 
@@ -951,7 +954,7 @@ test("navigates into Display and Icons via the command handler; clean Escape clo
   const sepLines = h.component.render(100);
   assert.ok(sepLines.some((line) => line.includes("Display")), `expected Display header, got: ${JSON.stringify(sepLines)}`);
   // Rows are prefixed with ">" (selected) or " " — text-based, no ANSI color dependency.
-  assert.ok(sepLines.some((line) => line.includes("> Project / Git visibility")), "selected-row indicator must be plain text");
+  assert.ok(sepLines.some((line) => line.includes("> Quick presets")), "selected-row indicator must be plain text");
 
   // Escape back to root.
   input(K.escape);

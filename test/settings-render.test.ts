@@ -124,7 +124,7 @@ test("resolution: resolveBarConfig passes through and bounds bar settings", () =
   const tiny = settingsWith({ bars: { ...DEFAULT_STATUSLINE_SETTINGS.bars, width: 0, fill: "" } });
   const resolved = resolveBarConfig(tiny);
   assert.equal(resolved.width, 2, "width clamped to min 2");
-  assert.equal(resolved.fill, "█", "empty fill falls back to default");
+  assert.equal(resolved.fill, " ", "empty fill intentionally renders blank cells");
 });
 
 test("resolution: composeFooterLine never exceeds the requested width", () => {

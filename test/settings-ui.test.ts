@@ -29,8 +29,21 @@ import {
   type ProviderUiContext,
 } from "../src/settings/provider-ui.ts";
 import type { ProviderCapability } from "../src/settings/providers/capabilities.ts";
-import { buildSeparatorsScreen } from "../src/settings/separators-screen.ts";
+import { buildSeparatorsScreen, displayGroup } from "../src/settings/separators-screen.ts";
 import { buildEmojisScreen, ICON_SYMBOLS } from "../src/settings/emojis-screen.ts";
+
+function selectDisplay(state: ReturnType<typeof createSettingsUi>, id: string) {
+  state.section = displayGroup(id);
+  state.selected = buildSeparatorsScreen(state.draft).filter((row) => displayGroup(row.id) === state.section).findIndex((row) => row.id === id);
+  return state;
+}
+function selectIcon(state: ReturnType<typeof createSettingsUi>, id: string) {
+  state.section = id.startsWith("icons.providers.") ? id.split(".")[2] : "symbols";
+  state.selected = buildEmojisScreen(state.draft, providerContext.descriptors.map((p) => p.id))
+    .filter((row) => state.section === "symbols" ? !row.id.startsWith("icons.providers.") : row.id.startsWith(`icons.providers.${state.section}.`))
+    .findIndex((row) => row.id === id);
+  return state.selected;
+}
 
 test("root rows and keyboard routing are exact and deterministic", () => {
   assert.deepEqual(ROOT_ROWS.map(({ label }) => label), ["Statusline & Providers", "Display", "Icons", "Reset all settings to default"]);
@@ -197,19 +210,20 @@ test("provider screen is truthful, capability-gated, and integrated without I/O"
   assert.equal(detail.hostedThroughput, true);
   assert.equal(detail.localThroughput, false);
   assert.equal(detail.tokenLedger, false);
-  assert.deepEqual(detail.quotaWindows[0].settings, {
+  assert.deepEqual(detail.quotaWindows.find((w) => w.key === "short")!.settings, {
     visible: false, label: "Mine", showBar: false, showPercent: false, showReset: true,
     resetFormat: "exact-date", showUsed: false, showRemaining: false, showZero: true, width: 18,
   });
   state.selectedProviderId = "dynamic-a";
   state.selected = 0;
+  const menu = renderSettingsUi(state, { width: 79, providers: providerContext });
+  assert.ok(menu.some((line) => line.includes("Visible information")));
+  assert.equal(menu.some((line) => line.includes("Width:")), false);
+  state.section = "window:short";
   const lines = renderSettingsUi(state, { width: 79, providers: providerContext });
-  assert.ok(lines.some((line) => line === "Provider: Dynamic A"));
-  assert.ok(lines.some((line) => line === "> Show project for this provider: on"));
-  assert.ok(lines.some((line) => line === "  Refresh usage now"));
-  assert.ok(lines.some((line) => line === "  Mine Reset format: exact-date"));
-  assert.ok(lines.some((line) => line === "  Mine Width: 18"));
-  assert.equal(lines.some((line) => /Display mode|Provider icon|Missing data|Use cache|Show zero/.test(line)), false);
+  assert.ok(lines.includes("Provider: Dynamic A"));
+  assert.ok(lines.includes("  Mine Reset format: exact-date"));
+  assert.ok(lines.includes("  Mine Width: 18"));
 });
 
 test("provider draft actions retain configuration, stable order, overrides, and icon path", () => {
@@ -276,7 +290,7 @@ test("refresh/cache draft edits are bounded and reject non-finite ages", () => {
 
 test("refresh-now is only an explicit effect for eligible providers", () => {
   const draft = structuredClone(DEFAULT_STATUSLINE_SETTINGS);
-  assert.deepEqual(requestProviderRefresh(draft, "dynamic-a", supportedCapability), { type: "refresh-provider", providerId: "dynamic-a" });
+  assert.deepEqual(requestProviderRefresh(draft, "dynamic-a", supportedCapability, true), { type: "refresh-provider", providerId: "dynamic-a" });
   assert.equal(requestProviderRefresh(draft, "stored-x", unavailableCapability), undefined);
 });
 
@@ -289,10 +303,11 @@ test("provider detail navigation routes every editable control through the share
   assert.equal(state.selectedProviderId, "dynamic-a");
 
   const select = (text: string) => {
+    state.section = text.startsWith("Show ") ? "active" : text.startsWith("Refresh ") ? "refresh" : "window:short";
     const lines = renderSettingsUi(state, { width: 79, providers: providerContext });
     const line = lines.findIndex((value) => value.includes(text));
     assert.ok(line >= 2, `missing detail row: ${text}`);
-    const firstControl = lines.findIndex((value) => /^[ >] (Show |Refresh usage now|.* Visible:)/.test(value));
+    const firstControl = lines.findIndex((value) => /^[ >] /.test(value));
     state = { ...state, selected: line - firstControl };
   };
   const edit = (text: string, key = "Enter") => {
@@ -311,6 +326,8 @@ test("provider detail navigation routes every editable control through the share
   assert.equal(state.draft.providers.records["dynamic-a"].windows.short.width, 13);
 
   state = routeSettingsKey(state, "Escape", providerContext).state;
+  assert.equal(state.section, undefined);
+  state = routeSettingsKey(state, "Escape", providerContext).state;
   assert.equal(state.selectedProviderId, undefined);
   assert.equal(state.selected, 2);
 });
@@ -323,8 +340,8 @@ test("provider detail shows only editable, working controls", () => {
     return renderSettingsUi(state, { width: 79, providers: context });
   };
   const subscription = renderDetail(providerContext);
-  assert.ok(subscription.some((line) => line.includes("Refresh usage now")));
-  assert.ok(subscription.some((line) => line.includes("Renamed Visible:")));
+  assert.ok(subscription.some((line) => line.includes("Refresh & missing data")));
+  assert.ok(subscription.some((line) => line.includes("Quota: Renamed")));
 
   const contextFor = (id: string, capability: ProviderCapability): ProviderUiContext => ({
     descriptors: [{ id, displayName: id, provenance: ["available"], available: true, authenticated: true, models: [{ provider: id }] }],
@@ -356,12 +373,11 @@ test("display screen exposes working controls and omits inert settings", () => {
     ...Object.keys(DEFAULT_STATUSLINE_SETTINGS.thresholds).map((key) => `thresholds.${key}`),
   ]) assert.ok(ids.includes(id), `missing working settings row ${id}`);
   for (const id of [
-    "layout.providerRows", "layout.placement", "layout.maxWidth", "separators.window",
-    "separators.provider", "separators.iconLabel", "separators.labelValue", "separators.preset",
+    "separators.preset",
     "timing.refreshIntervalMs", "timing.maxCacheAgeMs", "reset.all",
   ]) assert.equal(ids.includes(id), false, `inert or duplicate row must stay hidden: ${id}`);
 
-  const select = (id: string) => ({ ...state, selected: buildSeparatorsScreen(state.draft).findIndex((row) => row.id === id) });
+  const select = (id: string) => selectDisplay(state, id);
   state = routeSettingsKey(select("segments.project"), "Space", providerContext).state;
   assert.equal(state.draft.segments.project, false);
   state = routeSettingsKey(select("layout.segmentOrder.model"), "Ctrl+ArrowUp", providerContext).state;
@@ -380,7 +396,7 @@ test("display screen exposes working controls and omits inert settings", () => {
 test("text rows accept printable navigation letters and space before key actions", () => {
   let separators = createSettingsUi(DEFAULT_STATUSLINE_SETTINGS);
   separators.openRow = "separators";
-  separators.selected = buildSeparatorsScreen(separators.draft).findIndex(({ id }) => id === "separators.main");
+  selectDisplay(separators, "separators.main");
   const separatorRow = separators.selected;
   for (const key of ["h", "j", "k", "l", " "]) {
     separators = routeSettingsKey(separators, key, providerContext).state;
@@ -390,7 +406,7 @@ test("text rows accept printable navigation letters and space before key actions
 
   let emojis = createSettingsUi(DEFAULT_STATUSLINE_SETTINGS);
   emojis.openRow = "emojis";
-  const select = (id: string) => buildEmojisScreen(emojis.draft, providerContext.descriptors.map(({ id }) => id)).findIndex((row) => row.id === id);
+  const select = (id: string) => selectIcon(emojis, id);
   emojis.selected = select("icons.symbols.project");
   const symbolRow = emojis.selected;
   for (const key of ["h", "j", "k", "l", " "]) {
@@ -411,7 +427,7 @@ test("text rows accept printable navigation letters and space before key actions
 test("text rows normalize the Space key and reject named command keys", () => {
   let separators = createSettingsUi(DEFAULT_STATUSLINE_SETTINGS);
   separators.openRow = "separators";
-  separators.selected = buildSeparatorsScreen(separators.draft).findIndex(({ id }) => id === "separators.main");
+  selectDisplay(separators, "separators.main");
   const sepRow = separators.selected;
   const sepBefore = separators.draft.separators.main;
   for (const key of ["Tab", "F1", "Ctrl+ArrowUp", "Ctrl+Down"]) {
@@ -426,7 +442,7 @@ test("text rows normalize the Space key and reject named command keys", () => {
   let emojis = createSettingsUi(DEFAULT_STATUSLINE_SETTINGS);
   emojis.openRow = "emojis";
   const ids = providerContext.descriptors.map(({ id }) => id);
-  const pick = (id: string) => buildEmojisScreen(emojis.draft, ids).findIndex((row) => row.id === id);
+  const pick = (id: string) => selectIcon(emojis, id);
   emojis.selected = pick("icons.symbols.project");
   for (const key of ["Tab", "F1", "Ctrl+ArrowUp"]) {
     emojis = routeSettingsKey(emojis, key, providerContext).state;
@@ -463,10 +479,7 @@ test("R26 emojis routes styles, named symbols, and dynamic provider icons throug
     assert.ok(ids.includes(`icons.providers.${providerId}.value`));
   }
 
-  const select = (id: string) => ({
-    ...state,
-    selected: buildEmojisScreen(state.draft, providerContext.descriptors.map(({ id }) => id)).findIndex((row) => row.id === id),
-  });
+  const select = (id: string) => { selectIcon(state, id); return state; };
   state = routeSettingsKey(select("icons.style"), "ArrowLeft", providerContext).state;
   assert.equal(state.draft.icons.style, "custom");
   state = routeSettingsKey(select("icons.symbols.project"), "P", providerContext).state;
@@ -536,7 +549,8 @@ test("provider detail reset restores only the currently open provider", () => {
   const lines = renderSettingsUi(state, { width: 79, providers: providerContext });
   const resetLine = lines.findIndex((line) => line.includes("Reset provider to default"));
   assert.ok(resetLine >= 2, "provider detail must show a reset row");
-  state.selected = resetLine - lines.findIndex((value) => /^[ >] (Show |Refresh usage now|.* Visible:)/.test(value));
+  state.section = "reset";
+  state.selected = 0;
   state = routeSettingsKey(state, "Enter", providerContext).state;
 
   // dynamic-a is back to defaults (record and icon).
@@ -588,7 +602,7 @@ test("default to custom snapshots every effective provider and window value", ()
   assert.equal(draft.icons.providers["dynamic-a"], undefined);
   assert.deepEqual(record.windows.short, {
     visible: true, label: "Effective", showBar: true, showPercent: false, showReset: true,
-    resetFormat: "countdown", showUsed: true, showRemaining: true, showZero: false, width: 21,
+    resetFormat: "countdown", showUsed: true, showRemaining: true, showZero: true, width: 21,
   });
 });
 
@@ -612,7 +626,8 @@ test("long-list navigation: End jumps to last row, Home returns to first; select
   state = routeSettingsKey(state, "Enter").state;
   assert.equal(state.openRow, "separators");
 
-  const totalRows = buildSeparatorsScreen(state.draft).length;
+  state.section = "layout";
+  const totalRows = buildSeparatorsScreen(state.draft).filter((row) => displayGroup(row.id) === "layout").length;
   assert.ok(totalRows > 10, "separators screen must be a long list");
 
   // End key jumps to the last row.
@@ -662,6 +677,7 @@ test("renderSettingsWindow legend adapts per active screen", () => {
   state = routeSettingsKey(state, "Escape", providers).state; // back to root
   state = routeSettingsKey(state, "ArrowDown").state;
   state = routeSettingsKey(state, "Enter", providers).state; // open Separators
+  state.section = "layout";
   const separatorsLegend = renderSettingsWindow(state, { width: 80, providers }).filter((line) => line.includes("│↑↓"));
   assert.ok(separatorsLegend.some((line) => line.includes("←→/Enter Change") && line.includes("Ctrl↑↓ Reorder")), `separators legend missing: ${JSON.stringify(separatorsLegend)}`);
 });

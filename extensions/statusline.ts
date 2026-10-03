@@ -1,13 +1,15 @@
+import { dirname } from "node:path";
+import { accountSources, accountWindows, credentialFingerprint, parseAccountSnapshot, readClaudePool, type AccountSnapshot } from "../src/accounts.ts";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { parseKey, truncateToWidth } from "@earendil-works/pi-tui";
 import { billingMode, isLocalEndpoint } from "../src/derive.ts";
 import { formatResetCountdown, formatTime } from "../src/format.ts";
 import { parseGitStatus, type GitStatusState } from "../src/git.ts";
-import { parseAnthropicUsage, parseCodexUsage, parseRateLimits, parseStoredRateLimits, type RateLimits, type RateLimitWindow } from "../src/ratelimit.ts";
+import { parseAnthropicUsage, parseCodexUsage, parseRateLimits, type RateLimits, type RateLimitWindow } from "../src/ratelimit.ts";
 import { ProviderUsageCache } from "../src/provider-cache.ts";
 import { ProviderRefreshCoordinator, RateLimitedError, UsageUnavailableError, type ProviderAdapter } from "../src/providers.ts";
-import { renderMainLine, renderProviderRows, providerHasRow, type ProviderRowSource } from "../src/render.ts";
+import { renderMainLine, renderProviderRows, providerHasRow, arrangeFooterLines, missingUsageLabel, usageFreshness, type ProviderRowSource } from "../src/render.ts";
 import { estimateTokens, sumTextLength, TurnMeter } from "../src/throughput.ts";
 import {
   DEFAULT_STATUSLINE_CONFIG_PATH,
@@ -21,13 +23,16 @@ import { createSettingsUi, renderSettingsWindow, resolveDirtyChoice, routeSettin
 import type { ProviderUiContext } from "../src/settings/provider-ui.ts";
 import { discoverProviders, type ModelRegistryLike } from "../src/settings/providers/discovery.ts";
 import { deriveCapability, type ProviderCapability } from "../src/settings/providers/capabilities.ts";
-import { resolveProviderRefreshPolicy, resolveProviderMissingDataPolicy, type RefreshHealth } from "../src/settings/refresh.ts";
+import { resolveProviderRefreshPolicy, resolveProviderMissingDataPolicy, providerRefreshEnabled, type RefreshHealth } from "../src/settings/refresh.ts";
 import type { StatuslineSettings } from "../src/settings/schema.ts";
 import { getAdapter } from "../src/settings/providers/adapters.ts";
+import { parseStatuslineSettings } from "../src/settings/validation.ts";
+import { isTextInput } from "../src/settings/text.ts";
+import { createProviderConfig } from "../src/settings/defaults.ts";
 
 // Anthropic's OAuth usage endpoint (api.anthropic.com/api/oauth/usage) throttles hard and hands
 // out sticky 429s, so poll it less often than the 10s cadence the other providers share.
-const ANTHROPIC_REFRESH_MS = 30_000;
+const ANTHROPIC_REFRESH_MS = 180_000;
 
 export default function statusline(
   pi: ExtensionAPI,
@@ -38,7 +43,11 @@ export default function statusline(
   let meter = new TurnMeter();
   let limits: RateLimits = [];
   let gitStatus: GitStatusState | undefined;
-  const ANTHROPIC_LIMITS_ENTRY = "pi-statusline:anthropic-limits";
+  const accountSnapshots = new Map<string, AccountSnapshot>();
+  const credentialKeys = new Map<string, string>();
+  let accountTick: ReturnType<typeof setInterval> | undefined;
+  let readingAccounts = false;
+  const eventAccountProviders = new Set<string>();
   let requestRender: (() => void) | undefined;
   let tick: ReturnType<typeof setInterval> | undefined;
   let gitTick: ReturnType<typeof setInterval> | undefined;
@@ -83,7 +92,7 @@ export default function statusline(
     lastRenderedTime = tickLabel();
     tick = setInterval(() => {
       const next = tickLabel();
-      if (next !== lastRenderedTime) {
+      if (next !== lastRenderedTime || settings.providers.enabled) {
         lastRenderedTime = next;
         requestRender?.();
       }
@@ -95,14 +104,14 @@ export default function statusline(
     const shouldTick = sessionActive && settings.enabled
       && ((turnActive && (settings.segments.time || settings.segments.throughput))
         || (settings.segments.time && settings.extras.sessionElapsed)
-        || (settings.segments.session && hasUpcomingReset()));
+        || (settings.segments.session && hasUpcomingReset()) || (settings.providers.enabled && settings.providers.order.length > 0));
     if (shouldTick && !tick) startTick();
     else if (!shouldTick && tick) stopTick();
   };
 
   const refreshGit = async (ctx: ExtensionContext, epoch = sessionEpoch) => {
     if (!isCurrentSession(epoch)) return;
-    if (!settings.extras.branch) {
+    if (!settings.enabled || !settings.extras.branch) {
       gitStatus = undefined;
       return;
     }
@@ -164,37 +173,52 @@ export default function statusline(
 
   const codexAccountId = (token: string): string | undefined => {
     try {
-      const payload = JSON.parse(atob(token.split(".")[1] ?? ""));
-      return payload?.["https://api.openai.com/auth"]?.chatgpt_account_id;
+      const payload = JSON.parse(Buffer.from(token.split(".")[1] ?? "", "base64url").toString("utf8"));
+      const id = payload?.["https://api.openai.com/auth"]?.chatgpt_account_id;
+      return typeof id === "string" && id ? id : undefined;
     } catch {
       return undefined;
     }
   };
 
-  const restoreAnthropicLimits = (ctx: ExtensionContext): RateLimits => {
-    const branch = ctx.sessionManager.getBranch();
-    for (let index = branch.length - 1; index >= 0; index--) {
-      const entry = branch[index];
-      if (entry?.type === "custom" && entry.customType === ANTHROPIC_LIMITS_ENTRY) {
-        const updatedAt = Date.parse(entry.timestamp);
-        if (!Number.isFinite(updatedAt) || updatedAt > Date.now() || Date.now() - updatedAt > resolveProviderRefreshPolicy(settings, "anthropic").maxAgeMs) return [];
-        limitsUpdatedAt = updatedAt;
-        limitsCached = true;
-        return parseStoredRateLimits(entry.data);
-      }
-    }
-    return [];
+  const acceptAccounts = (snapshot: AccountSnapshot) => {
+    accountSnapshots.set(snapshot.provider, snapshot);
+    settings.providers.records[snapshot.provider] ??= createProviderConfig();
+    if (!settings.providers.order.includes(snapshot.provider)) settings.providers.order.push(snapshot.provider);
   };
 
-  // Pure provider-scoped fetch: no side effects on the active session's `limits`/tick/persisted
-  // entry, so it's safe to call for a provider that isn't the currently active model. The
+  const syncAccounts = async (ctx: ExtensionContext, epoch = sessionEpoch) => {
+    if (!isCurrentSession(epoch) || !settings.enabled || readingAccounts || eventAccountProviders.has("anthropic")) return;
+    readingAccounts = true;
+    try {
+      const pool = readClaudePool(dirname(settingsPath));
+      if (!pool) { accountSnapshots.delete("anthropic"); return; }
+      const visible = ctx.model?.provider === "anthropic" || (settings.providers.enabled && settings.providers.scope === "selected" && settings.providers.records.anthropic?.enabled !== false);
+      const token = visible ? await ctx.modelRegistry.getApiKeyForProvider("anthropic").catch(() => undefined) : undefined;
+      if (!isCurrentSession(epoch)) return;
+      const snapshot = readClaudePool(dirname(settingsPath), token);
+      if (snapshot) acceptAccounts(snapshot);
+      else accountSnapshots.delete("anthropic");
+      requestRender?.();
+    } finally { readingAccounts = false; }
+  };
+
+  // Optional, credential-free interoperability. Addons own login, rotation and network polling.
+  pi.events?.on("statusline:accounts", (value: unknown) => {
+    const snapshot = parseAccountSnapshot(value);
+    if (!snapshot) return;
+    eventAccountProviders.add(snapshot.provider);
+    acceptAccounts(snapshot);
+    requestRender?.();
+  });
+
+  // Pure provider-scoped fetch: no side effects on the active session's `limits`/tick
+  // state, so it's safe to call for a provider that isn't the currently active model. The
   // provider-tracking rows need every *selected* provider's usage simultaneously, not just
   // whichever one you happen to be talking to right now.
-  const fetchAnthropicUsage = async (ctx: ExtensionContext, model: ReturnType<typeof findAvailableModel>): Promise<RateLimits> => {
+  const fetchAnthropicUsage = async (ctx: ExtensionContext, model: ReturnType<typeof findAvailableModel>, access: string): Promise<RateLimits> => {
     if (!model || !ctx.modelRegistry.isUsingOAuth(model)) return [];
     try {
-      const access = await ctx.modelRegistry.getApiKeyForProvider("anthropic");
-      if (!access) return [];
       const response = await fetch("https://api.anthropic.com/api/oauth/usage", {
         headers: {
           authorization: `Bearer ${access}`,
@@ -219,17 +243,16 @@ export default function statusline(
     }
   };
 
-  const fetchZaiUsage = async (ctx: ExtensionContext, model: ReturnType<typeof findAvailableModel>): Promise<RateLimits> => {
+  const fetchZaiUsage = async (ctx: ExtensionContext, model: ReturnType<typeof findAvailableModel>, access: string): Promise<RateLimits> => {
     if (!model) return [];
     return getAdapter("zai").refresh?.({
-      getToken: () => ctx.modelRegistry.getApiKeyForProvider("zai"),
+      getToken: async () => access,
     }, AbortSignal.timeout(3_000)) ?? [];
   };
 
-  const fetchCodexUsage = async (ctx: ExtensionContext, model: ReturnType<typeof findAvailableModel>): Promise<RateLimits> => {
+  const fetchCodexUsage = async (ctx: ExtensionContext, model: ReturnType<typeof findAvailableModel>, access: string): Promise<RateLimits> => {
     if (!model?.baseUrl) return [];
     try {
-      const access = await ctx.modelRegistry.getApiKeyForProvider("openai-codex");
       const accountId = access ? codexAccountId(access) : undefined;
       if (!access || !accountId) return [];
       const origin = "https://chatgpt.com";
@@ -251,37 +274,46 @@ export default function statusline(
     }
   };
 
-  const refreshProviderUsage = (provider: string, fetchLimits: () => Promise<RateLimits>) =>
-    providerUsageCache.refresh(provider, async () => {
-      const next = await fetchLimits();
-      return next.length ? { limits: next } : undefined;
-    }, resolveProviderRefreshPolicy(settings, provider));
-
-  const refreshEligible = (ctx: ExtensionContext, provider: string) => {
-    if (!settings.enabled) return false;
+  const refreshProviderUsage = async (provider: string, ctx: ExtensionContext, fetchLimits: (access: string) => Promise<RateLimits>) => {
+    if (accountSnapshots.has(provider)) return undefined;
+    const epoch = sessionEpoch;
+    const access = await ctx.modelRegistry.getApiKeyForProvider(provider);
+    if (!isCurrentSession(epoch)) return undefined;
+    if (!access) { credentialKeys.delete(provider); throw new UsageUnavailableError(); }
+    const key = `${provider}:${credentialFingerprint(provider, access)}`;
+    if (credentialKeys.get(provider) !== key) {
+      credentialKeys.set(provider, key);
+      providerRefresh?.clear(provider);
+      if (ctx.model?.provider === provider) { limits = []; limitsUpdatedAt = 0; }
+      requestRender?.();
+    }
     const policy = resolveProviderRefreshPolicy(settings, provider);
-    const active = ctx.model?.provider === provider;
-    if (active) return policy.refreshWhileActive && Boolean(settings.segments.session || settings.providers.enabled);
-    return settings.providers.enabled && settings.providers.scope === "selected"
-      && (settings.providers.records[provider]?.enabled !== false || policy.refreshDisabledProvider);
-  };
-  const freshness = (updatedAt: number, cached: boolean) => {
-    if (!updatedAt) return undefined;
-    return cached ? `cached ${Math.max(0, Math.floor((Date.now() - updatedAt) / 60_000))}m` : undefined;
+    const usage = await providerUsageCache.refresh(key, async () => {
+      const next = await fetchLimits(access);
+      return next.length ? { limits: next } : undefined;
+    }, { ...policy, intervalMs: Math.max(policy.intervalMs, provider === "anthropic" ? ANTHROPIC_REFRESH_MS : 0) });
+    if (!isCurrentSession(epoch)) return undefined;
+    if (credentialKeys.get(provider) !== key) throw new UsageUnavailableError();
+    return usage;
   };
 
-  // Active-session wrappers: only apply fetched usage to the shared `limits`/tick/persisted entry
+  const refreshEligible = (ctx: ExtensionContext, provider: string) => !accountSnapshots.has(provider) && providerRefreshEnabled(settings, provider, ctx.model?.provider === provider);
+  const freshness = usageFreshness;
+
+  // Active-session wrappers: only apply fetched usage to the shared `limits`/tick state
   // when the fetched provider is actually the active model, so a background provider-tracking
   // fetch for a different provider never clobbers what the session line shows.
   const refreshAnthropicLimits = async (ctx: ExtensionContext, epoch = sessionEpoch): Promise<RateLimits> => {
     if (!isCurrentSession(epoch) || !isAnthropicOAuth(ctx) || !refreshEligible(ctx, "anthropic")) return [];
-    const usage = await refreshProviderUsage("anthropic", () => fetchAnthropicUsage(ctx, ctx.model)).catch(() => undefined);
+    const model = ctx.model;
+    let denied = false;
+    const usage = await refreshProviderUsage("anthropic", ctx, (access) => fetchAnthropicUsage(ctx, model, access)).catch((error) => { denied = UsageUnavailableError.is(error); return undefined; });
     const next = usage?.limits ?? [];
-    if (!next.length || !isCurrentSession(epoch) || !isAnthropicOAuth(ctx)) return [];
+    if (!isCurrentSession(epoch) || ctx.model !== model) return [];
+    if (!denied && (!next.length || (usage?.updatedAt ?? 0) < limitsUpdatedAt)) return [];
     limits = next;
     limitsUpdatedAt = usage?.updatedAt ?? Date.now();
     limitsCached = usage?.cached ?? false;
-    if (!limitsCached) pi.appendEntry(ANTHROPIC_LIMITS_ENTRY, limits);
     syncTick();
     requestRender?.();
     return next;
@@ -289,9 +321,12 @@ export default function statusline(
 
   const refreshCodexLimits = async (ctx: ExtensionContext, epoch = sessionEpoch): Promise<RateLimits> => {
     if (!isCurrentSession(epoch) || ctx.model?.provider !== "openai-codex" || !refreshEligible(ctx, "openai-codex")) return [];
-    const usage = await refreshProviderUsage("openai-codex", () => fetchCodexUsage(ctx, ctx.model)).catch(() => undefined);
+    const model = ctx.model;
+    let denied = false;
+    const usage = await refreshProviderUsage("openai-codex", ctx, (access) => fetchCodexUsage(ctx, model, access)).catch((error) => { denied = UsageUnavailableError.is(error); return undefined; });
     const next = usage?.limits ?? [];
-    if (!next.length || !isCurrentSession(epoch) || ctx.model?.provider !== "openai-codex") return [];
+    if (!isCurrentSession(epoch) || ctx.model !== model) return [];
+    if (!denied && (!next.length || (usage?.updatedAt ?? 0) < limitsUpdatedAt)) return [];
     limits = next;
     limitsUpdatedAt = usage?.updatedAt ?? Date.now();
     limitsCached = usage?.cached ?? false;
@@ -303,18 +338,18 @@ export default function statusline(
   // Sum token usage across the session's assistant messages. "input" folds cached and
   // cache-write tokens into the prompt total; cost.total already reflects the cache discount.
   const sessionTotals = (ctx: ExtensionContext) => {
-    let input = 0, output = 0, cost = 0, cacheRead = 0, cacheWrite = 0, available = false, costAvailable = false;
+    let input = 0, output = 0, cost = 0, cacheRead = 0, cacheWrite = 0, available = false, costAvailable = true;
     const finite = (value: unknown) => typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : 0;
     for (const entry of ctx.sessionManager.getBranch()) {
       if (entry.type !== "message" || entry.message.role !== "assistant") continue;
       const usage = (entry.message as AssistantMessage).usage;
-      if (!usage) continue;
+      if (!usage) { costAvailable = false; continue; }
       available = true;
       cacheRead += finite(usage.cacheRead);
       cacheWrite += finite(usage.cacheWrite);
       input += finite(usage.input) + finite(usage.cacheRead) + finite(usage.cacheWrite);
       output += finite(usage.output);
-      costAvailable ||= Number.isFinite(usage.cost?.total);
+      costAvailable &&= Number.isFinite(usage.cost?.total) && usage.cost.total >= 0;
       cost += finite(usage.cost?.total);
     }
     return available ? { input, output, cost: costAvailable ? cost : undefined, cacheRead, cacheWrite } : undefined;
@@ -347,7 +382,7 @@ export default function statusline(
           const mode = billingMode(isLocalEndpoint(ctx.model?.baseUrl), subscription);
           // Walk the branch for totals only when something actually shows them (opt-in cost, or the
           // API token ledger while idle), not on every render tick.
-          const needTotals = settings.extras.cost || (mode === "api" && !turnActive);
+          const needTotals = settings.extras.cost || mode === "api";
           const totals = needTotals ? sessionTotals(ctx) : undefined;
           const snapshot = meter.snapshot();
           // Provider-tracking rows share the settings-preview renderer (renderProviderRows) so the
@@ -357,6 +392,8 @@ export default function statusline(
           const sources: ProviderRowSource[] = settings.providers.enabled ? settings.providers.order.flatMap<ProviderRowSource>((p) => {
             const record = settings.providers.records[p];
             if (!record?.enabled || (settings.providers.scope === "active" && p !== provider)) return [];
+            const accounts = accountSnapshots.get(p);
+            if (accounts) return accountSources(settings, accounts);
             const health = providerRefresh?.get(p);
             if (health?.state === "fresh") return [{ provider: p, windows: health.usage.limits, freshness: freshness(health.updatedAt, health.usage.cached ?? false) }];
             if (resolveProviderMissingDataPolicy(settings, p) === "hide") return [];
@@ -366,15 +403,17 @@ export default function statusline(
             if (p === "anthropic") {
               const registry = ctx.modelRegistry as unknown as { getAvailable?: () => Array<{ provider: string }> };
               if (registry.getAvailable) {
-                return [{ provider: p, windows: [], placeholder: anthropicOAuthModel(ctx) ? "5h — wk —" : "log in" }];
+                return [{ provider: p, windows: [], placeholder: missingUsageLabel(settings, p, anthropicOAuthModel(ctx) ? "usage unavailable" : "log in") }];
               }
             }
-            return [{ provider: p, windows: [], placeholder: health?.reason ?? "usage unavailable" }];
+            return [{ provider: p, windows: [], placeholder: missingUsageLabel(settings, p, health?.reason) }];
           }) : [];
+          const accounts = provider ? accountSnapshots.get(provider) : undefined;
+          const activeAccount = accounts?.accounts.find((account) => account.active);
           const activeProviderHasRow = providerHasRow(settings, sources, provider);
-          const sessionPlaceholder = !activeProviderHasRow && provider && getAdapter(provider).support !== "none"
+          const sessionPlaceholder = !activeProviderHasRow && provider && (accounts || getAdapter(provider).support !== "none")
             && resolveProviderMissingDataPolicy(settings, provider) !== "hide"
-            ? theme.fg("muted", "usage unavailable") : "";
+            ? theme.fg("muted", missingUsageLabel(settings, provider)) : "";
           lastRenderedTime = tickLabel();
           const line = renderMainLine(settings, {
             cwd: ctx.cwd,
@@ -389,14 +428,14 @@ export default function statusline(
             meter: { ...snapshot, activeMs: snapshot.activeMs + meter.liveElapsedMs() },
             lastContextChars,
             totals,
-            sessionWindows: Date.now() - limitsUpdatedAt <= resolveProviderRefreshPolicy(settings, provider ?? "").maxAgeMs ? limits : [],
-            sessionFreshness: freshness(limitsUpdatedAt, limitsCached),
+            sessionWindows: accounts ? accountWindows(settings, provider!, activeAccount) : Date.now() - limitsUpdatedAt <= resolveProviderRefreshPolicy(settings, provider ?? "").maxAgeMs ? limits : [],
+            sessionFreshness: accounts ? freshness(activeAccount?.updatedAt ?? 0, true) : freshness(limitsUpdatedAt, limitsCached),
             activeProviderHasRow,
             sessionPlaceholder,
           }, width, theme);
           const providerRowLines = renderProviderRows(settings, sources, theme, Date.now(), width);
           const statuses = settings.extras.extensionStatuses ? [...(footerData.getExtensionStatuses?.().values() ?? [])].join(" · ") : "";
-          return [line, ...providerRowLines.map((rowLine) => truncateToWidth(rowLine, width, "")), ...(statuses ? [truncateToWidth(statuses, width, "")] : [])];
+          return [...arrangeFooterLines(settings, line, providerRowLines), ...(statuses ? [truncateToWidth(statuses, width, "")] : [])];
         },
       };
     });
@@ -417,7 +456,7 @@ export default function statusline(
         activeProvider: ctx.model?.provider,
         storedProviders: settings.providers.order,
         storedRecords: settings.providers.records,
-        registeredProviders: typeof registry.getRegisteredProviderIds === "function" ? registry.getRegisteredProviderIds() : undefined,
+        registeredProviders: [...accountSnapshots.keys(), ...(typeof registry.getRegisteredProviderIds === "function" ? registry.getRegisteredProviderIds() : [])],
       })
       : [];
     const capabilities: Record<string, ProviderCapability> = {};
@@ -428,6 +467,14 @@ export default function statusline(
       let oauth = false;
       try { oauth = Boolean(model && ctx.modelRegistry.isUsingOAuth(model)); } catch { oauth = false; }
       capabilities[descriptor.id] = deriveCapability(descriptor, { oauth });
+      const accounts = accountSnapshots.get(descriptor.id);
+      if (accounts) {
+        capabilities[descriptor.id] = { ...capabilities[descriptor.id], quotaSupport: "best-effort", quotaReliability: "medium" };
+        const active = accounts.accounts.find((account) => account.active);
+        windows[descriptor.id] = [...new Map(accounts.accounts.flatMap((account) => accountWindows(settings, descriptor.id, account)).map((window) => [window.key, window])).values()];
+        health[descriptor.id] = { state: active && accountWindows(settings, descriptor.id, active).length ? "fresh" : "unknown", updatedAt: active?.updatedAt, cached: true };
+        continue;
+      }
       const snapshot = providerRefresh?.get(descriptor.id);
       if (snapshot?.state === "fresh") {
         health[descriptor.id] = { state: "fresh", updatedAt: snapshot.updatedAt, cached: snapshot.usage.cached };
@@ -436,28 +483,30 @@ export default function statusline(
         health[descriptor.id] = { state: snapshot.updatedAt ? "stale" : "unknown", reason: snapshot.reason, updatedAt: snapshot.updatedAt };
       }
     }
-    return { descriptors, capabilities, health, windows, activeProvider: ctx.model?.provider };
+    return { descriptors, capabilities, health, windows, activeProvider: ctx.model?.provider, accounts: Object.fromEntries(accountSnapshots) };
   };
 
   // Raw terminal input -> the semantic key names routeSettingsKey understands.
   const ROUTE_KEYS: Record<string, string> = {
     up: "ArrowUp", down: "ArrowDown", left: "ArrowLeft", right: "ArrowRight",
     enter: "Enter", escape: "Escape", home: "Home", end: "End", space: " ", backspace: "Backspace",
-    "ctrl+up": "Ctrl+Up", "ctrl+down": "Ctrl+Down",
+    "ctrl+up": "Ctrl+Up", "ctrl+down": "Ctrl+Down", "ctrl+s": "Ctrl+S",
+    pageup: "PageUp", pagedown: "PageDown",
   };
   const translateKey = (data: string): string | undefined => {
     const parsed = parseKey(data);
-    if (!parsed) return undefined;
-    if (parsed in ROUTE_KEYS) return ROUTE_KEYS[parsed];
-    return parsed.length === 1 ? parsed : undefined; // printable char, else ignore
+    if (parsed && parsed in ROUTE_KEYS) return ROUTE_KEYS[parsed];
+    if (isTextInput(data)) return data; // Preserve case and Unicode graphemes.
+    return parsed && [...parsed].length === 1 ? parsed : undefined;
   };
 
   // Persist the draft first (throws => nothing applied), then swap in-memory settings atomically and
   // reconfigure the live runtime once. Reconcile pulls in providers authenticated since load.
   const commitSettings = (draft: StatuslineSettings, ctx: ExtensionContext) => {
-    const next = availableProviders(ctx).length ? reconcileProviders(draft, ctx.modelRegistry) : draft;
+    const next = parseStatuslineSettings(availableProviders(ctx).length ? reconcileProviders(draft, ctx.modelRegistry) : draft).settings;
     saveStatuslineSettings(next, settingsPath);
     settings = next;
+    providerRefresh?.start([...new Set([...availableProviders(ctx), ...settings.providers.order])]);
     // While the settings overlay is open the live footer is intentionally hidden (the in-app
     // preview stands in); skip re-installing it here so it doesn't flash behind the overlay.
     // The close handler restores it based on the final `settings.enabled`.
@@ -472,6 +521,7 @@ export default function statusline(
   };
 
   const openSettingsApp = (ctx: ExtensionContext) => {
+    const epoch = sessionEpoch;
     const previewCapability = () => ctx.model?.provider ? buildProviderContext(ctx).capabilities[ctx.model.provider] : undefined;
     // Live snapshot of the current session, fed to the in-app preview so it shows exactly what the
     // footer will look like under the DRAFT settings (cwd, model, context, quota, ticking clock).
@@ -479,12 +529,14 @@ export default function statusline(
     // last-turn is visible before saving — the preview is a live reflection of the draft.
     const currentPreviewContext = (draft: StatuslineSettings): ResolutionContext => {
       const snapshot = meter.snapshot();
+      const accounts = accountSnapshots.get(ctx.model?.provider ?? "");
+      const activeAccount = accounts?.accounts.find((account) => account.active);
       const subscription = ctx.model !== undefined
         && (ctx.model.provider === "openai-codex" || ctx.modelRegistry.isUsingOAuth(ctx.model));
       const mode = billingMode(isLocalEndpoint(ctx.model?.baseUrl), subscription);
       // Mirror the footer's own render inputs so the "current" preview is byte-identical to the
       // live main line under the draft settings (git HUD, ledger, quota, ticking clock, theme).
-      const needTotals = draft.extras.cost || (mode === "api" && !turnActive);
+      const needTotals = draft.extras.cost || mode === "api";
       const totals = needTotals ? sessionTotals(ctx) : undefined;
       return {
         capability: previewCapability(),
@@ -496,8 +548,8 @@ export default function statusline(
           contextUsage: ctx.getContextUsage() ?? undefined,
           throughput: { inputRate: snapshot.avgInputRate, outputRate: snapshot.avgOutputRate },
           meter: { ...snapshot, activeMs: snapshot.activeMs + meter.liveElapsedMs() },
-          sessionFreshness: freshness(limitsUpdatedAt, limitsCached),
-          sessionWindows: Date.now() - limitsUpdatedAt <= resolveProviderRefreshPolicy(settings, ctx.model?.provider ?? "").maxAgeMs ? limits : [],
+          sessionFreshness: accounts ? freshness(activeAccount?.updatedAt ?? 0, true) : freshness(limitsUpdatedAt, limitsCached),
+          sessionWindows: accounts ? accountWindows(draft, ctx.model?.provider ?? "", activeAccount) : Date.now() - limitsUpdatedAt <= resolveProviderRefreshPolicy(draft, ctx.model?.provider ?? "").maxAgeMs ? limits : [],
           activeMs: snapshot.activeMs + meter.liveElapsedMs(),
           elapsedMs: draft.extras.sessionElapsed ? snapshot.elapsedMs : undefined,
           lastTurnMs: draft.extras.lastTurn ? snapshot.lastTurnMs : undefined,
@@ -515,10 +567,11 @@ export default function statusline(
     // is exactly one statusline on screen — the interactive preview. Restored on close.
     const footerWasEnabled = settings.enabled;
     settingsOverlayOpen = true;
-    if (footerWasEnabled) ctx.ui.setFooter(undefined);
+    if (footerWasEnabled) ctx.ui.setFooter(() => ({ render: () => [], invalidate() {} }));
     return ctx.ui.custom<void>((tui, theme, _keybindings, done) => {
       let state = createSettingsUi(settings);
       let finished = false;
+      let saving = false;
       // Re-render every second so the preview's clock ticks live (the footer's own tick is gone).
       const previewTick = setInterval(() => tui.requestRender(), 1_000);
       previewTick.unref?.();
@@ -540,14 +593,16 @@ export default function statusline(
         },
         handleInput(data: string) {
           const key = translateKey(data);
-          if (!key) return;
-          if (state.confirmClose) {
-            const choice = key === "s" || key === "S" ? "save"
+          if (!key || saving) return;
+          if (state.confirmClose || key === "Ctrl+S") {
+            const choice = key === "Ctrl+S" ? "save" : key === "s" || key === "S" ? "save"
               : key === "d" || key === "D" ? "discard"
               : key === "c" || key === "C" || key === "Escape" ? "cancel"
               : undefined;
             if (!choice) return;
+            saving = true;
             void resolveDirtyChoice(state, choice, (draft) => commitSettings(draft, ctx)).then((result) => {
+              saving = false;
               state = result.state;
               if (result.action === "close") finish();
               tui.requestRender();
@@ -556,7 +611,12 @@ export default function statusline(
           }
           const result = routeSettingsKey(state, key, buildProviderContext(ctx));
           state = result.state;
-          if (result.effect?.type === "refresh-provider") void providerRefresh?.refresh(result.effect.providerId);
+          if (result.effect?.type === "refresh-provider") {
+            if (accountSnapshots.has(result.effect.providerId)) {
+              pi.events?.emit("statusline:accounts:request", { provider: result.effect.providerId });
+              void syncAccounts(ctx);
+            } else void providerRefresh?.refresh(result.effect.providerId);
+          }
           if (result.action === "close") finish();
           tui.requestRender();
         },
@@ -564,6 +624,13 @@ export default function statusline(
     }, {
       overlay: true,
       overlayOptions: { width: "80%", anchor: "center", margin: 1 },
+    }).finally(() => {
+      if (!settingsOverlayOpen) return;
+      settingsOverlayOpen = false;
+      if (isCurrentSession(epoch)) {
+        if (settings.enabled) installFooter(ctx);
+        else ctx.ui.setFooter(undefined);
+      }
     });
   };
 
@@ -587,44 +654,49 @@ export default function statusline(
     sessionActive = true;
     turnActive = false;
     stopTick();
+    stopGitTick();
     stopAnthropicRetry();
+    providerRefresh?.stop();
+    if (accountTick) clearInterval(accountTick);
+    accountTick = undefined;
+    if (ctx.mode && ctx.mode !== "tui") { sessionActive = false; return; }
     settings = loadRuntimeSettings(settingsPath);
     if (availableProviders(ctx).length) settings = reconcileProviders(settings, ctx.modelRegistry);
     meter = new TurnMeter();
     lastContextChars = 0;
     limitsUpdatedAt = 0;
     limitsCached = false;
-    limits = isAnthropicOAuth(ctx) ? restoreAnthropicLimits(ctx) : [];
-    if (!limits.length) {
-      const provider = ctx.model?.provider ?? "";
-      // Not logged in (no OAuth): the user has no access to subscription usage, so cached
-      // numbers must not be restored onto the session line.
-      const policy = resolveProviderRefreshPolicy(settings, provider);
-      const cached = policy.useCache && (provider !== "anthropic" || anthropicOAuthModel(ctx)) ? providerUsageCache.getFresh(provider, policy.maxAgeMs) : undefined;
-      limits = cached?.limits ?? [];
-      limitsUpdatedAt = cached?.updatedAt ?? 0;
-      limitsCached = Boolean(cached);
-    }
+    limits = [];
+    credentialKeys.clear();
+    await syncAccounts(ctx, epoch);
+    if (!isCurrentSession(epoch)) return;
+    for (const snapshot of accountSnapshots.values()) acceptAccounts(snapshot);
+    if (accountTick) clearInterval(accountTick);
+    accountTick = setInterval(() => void syncAccounts(ctx, epoch), 2_000);
+    accountTick.unref?.();
+    pi.events?.emit("statusline:accounts:request", {});
     gitStatus = undefined;
     const providers = availableProviders(ctx);
     // Saved providers may not be available in this process yet. Keep their last fresh cross-session
     // snapshot visible while a session that can authenticate them refreshes it.
     const trackedProviders = Array.from(new Set([...providers, ...settings.providers.order]));
     const adapters = new Map<string, ProviderAdapter>();
-    if (providers.includes("anthropic")) {
+    {
       // Not logged in (no OAuth): skip the usage cache entirely — it would otherwise keep
       // re-serving last-known numbers as "fresh" on every poll, and the row shows "log in".
       adapters.set("anthropic", { refresh: async () => {
         const model = anthropicOAuthModel(ctx);
-        return model ? refreshProviderUsage("anthropic", () => fetchAnthropicUsage(ctx, model)) : undefined;
+        if (!model) throw new UsageUnavailableError();
+        return refreshProviderUsage("anthropic", ctx, (access) => fetchAnthropicUsage(ctx, model, access));
       } });
     }
-    if (providers.includes("openai-codex")) adapters.set("openai-codex", { refresh: () => refreshProviderUsage("openai-codex", () => fetchCodexUsage(ctx, findAvailableModel(ctx, "openai-codex"))) });
-    if (providers.includes("zai")) adapters.set("zai", { refresh: () => refreshProviderUsage("zai", () => fetchZaiUsage(ctx, findAvailableModel(ctx, "zai"))) });
-    if (providers.includes("openrouter")) adapters.set("openrouter", { refresh: () => refreshProviderUsage("openrouter", () => getAdapter("openrouter").refresh!({ getToken: () => ctx.modelRegistry.getApiKeyForProvider("openrouter") }, AbortSignal.timeout(3_000))) });
+    adapters.set("openai-codex", { refresh: () => refreshProviderUsage("openai-codex", ctx, (access) => fetchCodexUsage(ctx, findAvailableModel(ctx, "openai-codex"), access)) });
+    adapters.set("zai", { refresh: () => refreshProviderUsage("zai", ctx, (access) => fetchZaiUsage(ctx, findAvailableModel(ctx, "zai"), access)) });
+    adapters.set("openrouter", { refresh: () => refreshProviderUsage("openrouter", ctx, (access) => getAdapter("openrouter").refresh!({ getToken: async () => access }, AbortSignal.timeout(3_000))) });
     providerRefresh?.stop();
-    providerRefresh = new ProviderRefreshCoordinator(adapters, () => {
+    providerRefresh = new ProviderRefreshCoordinator(adapters, (updatedProvider) => {
       if (!isCurrentSession(epoch)) return;
+      if (updatedProvider !== ctx.model?.provider) { requestRender?.(); return; }
       const health = providerRefresh?.get(ctx.model?.provider ?? "");
       limits = health?.state === "fresh" ? health.usage.limits : [];
       limitsUpdatedAt = health?.state === "fresh" ? health.updatedAt : 0;
@@ -632,13 +704,8 @@ export default function statusline(
       syncTick();
       requestRender?.();
     }, undefined, undefined, (provider) => ({ ...resolveProviderRefreshPolicy(settings, provider), eligible: refreshEligible(ctx, provider) }));
-    for (const provider of trackedProviders) {
-      if (provider === "anthropic" && !anthropicOAuthModel(ctx)) continue; // no login: no cached usage is ever shown
-      const policy = resolveProviderRefreshPolicy(settings, provider);
-      const cached = policy.useCache ? providerUsageCache.getFresh(provider, policy.maxAgeMs) : undefined;
-      if (cached?.limits.length) providerRefresh.prime(provider, { ...cached, cached: true }, cached.updatedAt);
-    }
     if (settings.enabled) installFooter(ctx, epoch);
+    else ctx.ui.setFooter(undefined);
     providerRefresh.start(trackedProviders);
     if (!providers.includes(ctx.model?.provider ?? "")) {
       void refreshAnthropicLimits(ctx, epoch).then((next) => { if (!next.length) scheduleAnthropicRetry(ctx, 0, epoch); });
@@ -651,6 +718,8 @@ export default function statusline(
   pi.on("session_shutdown", () => {
     sessionActive = false;
     sessionEpoch++;
+    if (accountTick) clearInterval(accountTick);
+    accountTick = undefined;
     turnActive = false;
     stopTick();
     stopGitTick();
@@ -667,8 +736,9 @@ export default function statusline(
 
   pi.on("message_update", (event) => {
     if (event.message.role !== "assistant") return;
-    meter.markFirstUpdate();
-    meter.updateOutputChars(sumTextLength(event.message.content));
+    const chars = sumTextLength(event.message.content);
+    if (chars > 0) meter.markFirstUpdate();
+    meter.updateOutputChars(chars);
     requestRender?.();
   });
 
@@ -711,20 +781,24 @@ export default function statusline(
   });
 
   pi.on("after_provider_response", (event, ctx) => {
+    if (accountSnapshots.has(ctx.model?.provider ?? "")) return;
     const next = parseRateLimits(event.headers);
     if (!next.length) return;
     limits = next;
     limitsUpdatedAt = Date.now();
     limitsCached = false;
-    if (isAnthropicOAuth(ctx)) pi.appendEntry(ANTHROPIC_LIMITS_ENTRY, limits);
+    if (ctx.model?.provider) providerRefresh?.prime(ctx.model.provider, { limits, updatedAt: limitsUpdatedAt }, limitsUpdatedAt);
     syncTick();
     requestRender?.();
   });
 
   pi.on("model_select", (_event, ctx) => {
+    if (availableProviders(ctx).length) settings = reconcileProviders(settings, ctx.modelRegistry);
+    providerRefresh?.start([...new Set([...availableProviders(ctx), ...settings.providers.order])]);
     limitsUpdatedAt = 0;
     limitsCached = false;
-    limits = isAnthropicOAuth(ctx) ? restoreAnthropicLimits(ctx) : [];
+    limits = [];
+    void syncAccounts(ctx);
     meter.resetThroughput();
     syncTick();
     requestRender?.();

@@ -6,7 +6,7 @@ import { SEGMENT_ORDER } from "../segments.ts";
 const VALID_SEGMENT_IDS = new Set<string>(SEGMENT_ORDER);
 
 /** Control characters to strip (C0/C1 except tab and newline). */
-const CONTROL_CHAR_REGEX = /[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\x9F]/g;
+const CONTROL_CHAR_REGEX = /[\x00-\x1F\x7F-\x9F]/g;
 
 /** ANSI escape sequence regex (CSI, OSC+BEL/ESC, DCS/SOS/PM/APC+ST, charset, single-byte, ST). */
 const ANSI_ESCAPE_REGEX = /\x1b\[[0-9;]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*[\x07\x1b]|\x1b[PX^_][^\x1b]*\x1b\\|\x1b[#%]\([0-9A-Z]|\x1b[()][AB012]|\x1b[@-Z\\-_]/g;
@@ -38,6 +38,7 @@ const KNOWN_PROVIDER_FIELDS = new Set([
   "enabled",
   "displayMode",
   "windows",
+  "accounts",
   "activeModel",
   "thresholds",
   "icon",
@@ -72,23 +73,19 @@ const KNOWN_WINDOW_FIELDS = new Set([
 ]);
 
 /** Sanitize a display string (labels, separators, symbols). */
-function sanitizeDisplayString(value: unknown): string {
+export function sanitizeDisplayString(value: unknown): string {
   if (typeof value !== "string") return "";
   return value
     .replace(ANSI_ESCAPE_REGEX, "")
     .replace(CONTROL_CHAR_REGEX, "")
     .replace(BIDI_OVERRIDE_REGEX, "")
-    .replace(BARE_NEWLINE_REGEX, "");
+    .replace(BARE_NEWLINE_REGEX, "").slice(0, 256);
 }
 
 /** Sanitize a generic string (provider IDs, keys). */
 function sanitizeString(value: unknown): string {
-  if (typeof value !== "string" || ["__proto__", "constructor", "prototype"].includes(value)) return "";
-  return value
-    .replace(ANSI_ESCAPE_REGEX, "")
-    .replace(CONTROL_CHAR_REGEX, "")
-    .replace(BIDI_OVERRIDE_REGEX, "")
-    .replace(BARE_NEWLINE_REGEX, "");
+  const clean = sanitizeDisplayString(value);
+  return ["__proto__", "constructor", "prototype"].includes(clean) ? "" : clean;
 }
 
 /** Clamp a number to bounds. */
@@ -123,7 +120,7 @@ function parseProviders(value: unknown): StatuslineSettings["providers"] {
     }
   }
 
-  return { enabled, scope: input.scope === "selected" ? "selected" : "active", order: [...new Set(order)], defaults, records };
+  return { enabled, scope: input.scope === "selected" ? "selected" : "active", accountScope: input.accountScope === "selected" ? "selected" : "active", order: [...new Set(order)], defaults, records };
 }
 
 /** Parse provider defaults. */
@@ -171,10 +168,10 @@ function parseProviderConfig(value: unknown): StatuslineSettings["providers"]["r
     }
   }
 
-  const activeModel: Record<string, "default" | "on" | "off"> = {};
+  const activeModel: Record<string, "default" | "on" | "off"> = Object.fromEntries(SEGMENT_ORDER.map((id) => [id, "default"]));
   if (input.activeModel && typeof input.activeModel === "object") {
     for (const [segment, mode] of Object.entries(input.activeModel as Record<string, unknown>)) {
-      if (["default", "on", "off"].includes(mode as string)) {
+      if (VALID_SEGMENT_IDS.has(segment) && ["default", "on", "off"].includes(mode as string)) {
         activeModel[segment] = mode as "default" | "on" | "off";
       }
     }
@@ -229,6 +226,13 @@ function parseProviderConfig(value: unknown): StatuslineSettings["providers"]["r
     if (!Object.keys(refresh).length) refresh = undefined;
   }
 
+  const accounts: NonNullable<StatuslineSettings["providers"]["records"][string]["accounts"]> = {};
+  if (input.accounts && typeof input.accounts === "object") for (const [id, value] of Object.entries(input.accounts)) {
+    const clean = sanitizeString(id);
+    if (!clean || !value || typeof value !== "object") continue;
+    const account = value as Record<string, unknown>;
+    accounts[clean] = { enabled: account.enabled !== false, label: sanitizeDisplayString(account.label) };
+  }
   const supportedOverrides: SegmentId[] = [];
   if (Array.isArray(input.supportedOverrides)) {
     for (const s of input.supportedOverrides) {
@@ -241,6 +245,7 @@ function parseProviderConfig(value: unknown): StatuslineSettings["providers"]["r
     enabled,
     displayMode,
     windows,
+    ...(Object.keys(accounts).length ? { accounts } : {}),
     activeModel,
     thresholds,
     icon,
@@ -264,7 +269,7 @@ function parseWindowConfig(value: unknown): StatuslineSettings["providers"]["rec
       : "countdown",
     showUsed: typeof input.showUsed === "boolean" ? input.showUsed : true,
     showRemaining: typeof input.showRemaining === "boolean" ? input.showRemaining : true,
-    showZero: typeof input.showZero === "boolean" ? input.showZero : false,
+    showZero: typeof input.showZero === "boolean" ? input.showZero : true,
     width: clamp(typeof input.width === "number" ? input.width : 12, 1, 200),
   };
 }
@@ -291,8 +296,8 @@ function parseLayout(value: unknown): StatuslineSettings["layout"] {
     placement,
     maxWidth,
     // Absent or fully-invalid order falls back to cloned defaults (never an empty order).
-    segmentOrder: segmentOrder.length ? segmentOrder : [...DEFAULT_STATUSLINE_SETTINGS.layout.segmentOrder],
-    narrowPriority: narrowPriority.length ? narrowPriority : [...DEFAULT_STATUSLINE_SETTINGS.layout.narrowPriority],
+    segmentOrder: [...new Set([...segmentOrder, ...DEFAULT_STATUSLINE_SETTINGS.layout.segmentOrder])],
+    narrowPriority: narrowPriority.length ? [...new Set(narrowPriority)] : [...DEFAULT_STATUSLINE_SETTINGS.layout.narrowPriority],
   };
 }
 
@@ -339,10 +344,10 @@ function parseBars(value: unknown): StatuslineSettings["bars"] {
   return {
     format: input.format === "percent" || input.format === "detailed" ? input.format : "bar",
     width: clamp(typeof input.width === "number" ? input.width : 12, 1, 200),
-    fill: sanitizeDisplayString(input.fill) || "█",
-    empty: sanitizeDisplayString(input.empty) || "░",
-    capLeft: sanitizeDisplayString(input.capLeft) || "╟",
-    capRight: sanitizeDisplayString(input.capRight) || "╢",
+    fill: input.fill === undefined ? "█" : sanitizeDisplayString(input.fill),
+    empty: input.empty === undefined ? "░" : sanitizeDisplayString(input.empty),
+    capLeft: input.capLeft === undefined ? "╟" : sanitizeDisplayString(input.capLeft),
+    capRight: input.capRight === undefined ? "╢" : sanitizeDisplayString(input.capRight),
     showPercent: typeof input.showPercent === "boolean" ? input.showPercent : true,
     style: styles.includes(input.style as typeof styles[number]) ? (input.style as typeof styles[number]) : "rounded",
     truecolor: typeof input.truecolor === "boolean" ? input.truecolor : true,
@@ -375,7 +380,8 @@ function parseIcons(value: unknown): StatuslineSettings["icons"] {
   const symbols: Record<string, string> = {};
   if (input.symbols && typeof input.symbols === "object") {
     for (const [key, val] of Object.entries(input.symbols as Record<string, unknown>)) {
-      symbols[key] = sanitizeDisplayString(val);
+      const clean = sanitizeString(key);
+      if (clean) symbols[clean] = sanitizeDisplayString(val);
     }
   }
   const providers: Record<string, { mode: "default" | "global" | "custom" | "hidden"; value: string }> = {};
@@ -386,7 +392,8 @@ function parseIcons(value: unknown): StatuslineSettings["icons"] {
         ? (c.mode as "default" | "global" | "custom" | "hidden")
         : "default";
       const value = sanitizeDisplayString(c.value);
-      providers[provider] = { mode, value };
+      const clean = sanitizeString(provider);
+      if (clean) providers[clean] = { mode, value };
     }
   }
   return {

@@ -7,7 +7,7 @@ import { DEFAULT_STATUSLINE_SETTINGS, createProviderConfig } from "./defaults.ts
 import { migrateLegacySettings } from "./migrations.ts";
 
 /** Default on-disk settings path (legacy location, preserved for migration continuity). */
-export const DEFAULT_STATUSLINE_CONFIG_PATH = join(homedir(), ".pi", "agent", "statusline.json");
+export const DEFAULT_STATUSLINE_CONFIG_PATH = join(process.env.PI_CODING_AGENT_DIR || join(homedir(), ".pi", "agent"), "statusline.json");
 
 /** Registry that can enumerate configured models (used to discover available providers). */
 export interface AvailableModelRegistry {

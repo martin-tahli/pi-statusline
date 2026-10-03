@@ -1,3 +1,5 @@
+import { sanitizeDisplayString } from "./settings/validation.ts";
+
 export interface RateLimitWindow {
   /** Stable adapter identity; labels may be renamed without losing settings. */
   key?: string;
@@ -40,7 +42,7 @@ export function parseAnthropicUsage(payload: unknown): RateLimits {
   if (!payload || typeof payload !== "object") return [];
   const usage = payload as Record<string, unknown>;
 
-  return ([["five-hour", "5h", usage.five_hour], ["seven-day", "wk", usage.seven_day]] as const).flatMap(([key, label, value]) => {
+  const windows: RateLimits = ([["five-hour", "5h", usage.five_hour], ["seven-day", "wk", usage.seven_day]] as const).flatMap(([key, label, value]) => {
     if (!value || typeof value !== "object") return [];
     const window = value as Record<string, unknown>;
     const utilization = window.utilization;
@@ -48,6 +50,17 @@ export function parseAnthropicUsage(payload: unknown): RateLimits {
     const resetAt = reset(typeof window.resets_at === "string" || typeof window.resets_at === "number" ? window.resets_at : undefined);
     return [{ key, label, used: utilization / 100, ...(resetAt === undefined ? {} : { resetAt }) }];
   });
+  if (Array.isArray(usage.limits)) for (const value of usage.limits) {
+    const name = value?.scope?.model?.display_name;
+    const percent = value?.percent;
+    if (typeof name !== "string" || !name || typeof percent !== "number" || !Number.isFinite(percent) || percent < 0 || percent > 100) continue;
+    const label = sanitizeDisplayString(name);
+    const key = `model:${label}`;
+    if (windows.some((window) => window.key === key)) continue;
+    const resetAt = reset(typeof value.resets_at === "string" ? value.resets_at : undefined);
+    windows.push({ key, label: `${label} wk`, used: percent / 100, ...(resetAt ? { resetAt } : {}) });
+  }
+  return windows;
 }
 
 export function parseCodexUsage(payload: unknown): RateLimits {
@@ -116,10 +129,11 @@ export function parseStoredRateLimits(value: unknown): RateLimits {
     const { key, label, used, resetAt, usedAmount, remainingAmount, unit } = window as Record<string, unknown>;
     if (key !== undefined && (typeof key !== "string" || !key.trim())) return [];
     if (typeof label !== "string" || !label || typeof used !== "number" || !Number.isFinite(used) || used < 0 || used > 1) return [];
-    const parsedResetAt = reset(typeof resetAt === "number" ? resetAt : undefined);
+    // Stored timestamps are already milliseconds, never reinterpret them as seconds.
+    const parsedResetAt = typeof resetAt === "number" && Number.isFinite(resetAt) && resetAt > 0 && resetAt <= 8.64e15 ? resetAt : undefined;
     return [{
-      ...(typeof key === "string" ? { key } : {}),
-      label,
+      ...(typeof key === "string" ? { key: sanitizeDisplayString(key) } : {}),
+      label: sanitizeDisplayString(label),
       used,
       ...(parsedResetAt === undefined ? {} : { resetAt: parsedResetAt }),
       ...(unit === "USD" && typeof usedAmount === "number" && Number.isFinite(usedAmount) && usedAmount >= 0 ? { usedAmount, unit } : {}),
@@ -147,7 +161,7 @@ export function parseRateLimits(headers: Record<string, string>): RateLimits {
     if (percent === 0 && minutes === undefined && resetAt === undefined) continue;
     limits.push({
       key: name,
-      label: minutes === undefined ? name : durationLabel(minutes),
+      label: minutes === undefined || minutes <= 0 ? name : durationLabel(minutes),
       used: percent / 100,
       ...(resetAt === undefined ? {} : { resetAt }),
     });

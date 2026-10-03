@@ -1,7 +1,7 @@
 {
   "name": "@shvax/pi-statusline",
-  "version": "0.10.0",
-  "description": "Configurable single-line status footer for pi",
+  "version": "0.11.0",
+  "description": "Configurable status footer with provider and account usage for pi",
   "type": "module",
   "license": "MIT",
   "author": "Martin Tahli",
@@ -19,6 +19,7 @@
     "extensions/",
     "src/",
     "README.md",
+    "CHANGELOG.md",
     "LICENSE"
   ],
   "pi": {

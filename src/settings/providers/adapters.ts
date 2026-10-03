@@ -68,7 +68,8 @@ const codexAdapter: QuotaAdapter = {
     const token = ctx.getToken ? await ctx.getToken().catch(() => undefined) : undefined;
     if (!token) return [];
     try {
-      const origin = new URL(ctx.baseUrl).origin;
+      // Never forward the account token to a model-configured origin.
+      const origin = "https://chatgpt.com";
       const response = await fetch(`${origin}/backend-api/wham/usage`, {
         headers: {
           authorization: `Bearer ${token}`,

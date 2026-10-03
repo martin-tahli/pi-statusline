@@ -75,6 +75,8 @@ export interface ProviderConfiguration {
   enabled: boolean;
   /** Display mode: default uses capability-appropriate defaults, custom uses explicit values. */
   displayMode: ProviderDisplayMode;
+  /** Display-only account preferences. Authentication belongs to the account addon. */
+  accounts?: Record<string, { enabled: boolean; label: string }>;
   /** Quota windows keyed by stable adapter-provided key. */
   windows: Record<string, WindowConfiguration>;
   /** Active-model segment overrides (three-state). */
@@ -97,6 +99,8 @@ export interface ProvidersSettings {
   enabled: boolean;
   /** Show only the active provider, or all selected providers. */
   scope: "active" | "selected";
+  /** Within each visible provider, show its active account or all selected accounts. */
+  accountScope: "active" | "selected";
   /** Persisted provider row order. */
   order: string[];
   /** Default provider presentation/refresh/missing-data policy. */

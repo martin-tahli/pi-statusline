@@ -62,7 +62,7 @@ export class ProviderRefreshCoordinator {
 
   constructor(
     adapters: ReadonlyMap<string, ProviderAdapter>,
-    onUpdate: () => void,
+    onUpdate: (provider: string) => void,
     cadenceMs = PROVIDER_REFRESH_MS,
     maxAgeMs = PROVIDER_MAX_AGE_MS,
     policy?: ProviderRefreshCoordinator["policy"],
@@ -75,7 +75,7 @@ export class ProviderRefreshCoordinator {
   }
 
   private readonly adapters: ReadonlyMap<string, ProviderAdapter>;
-  private readonly onUpdate: () => void;
+  private readonly onUpdate: (provider: string) => void;
   private readonly cadenceMs: number;
   private readonly maxAgeMs: number;
 
@@ -99,6 +99,8 @@ export class ProviderRefreshCoordinator {
     return value?.state === "hidden" ? value : { state: "hidden", reason: value ? "usage data is stale" : "usage unavailable", updatedAt: value?.updatedAt };
   }
 
+  clear(provider: string): void { this.health.delete(provider); }
+
   prime(provider: string, usage: ProviderUsage, updatedAt: number): void {
     if (usage.limits.length && Number.isFinite(updatedAt) && updatedAt <= Date.now()) this.health.set(provider, { state: "fresh", usage, updatedAt });
   }
@@ -115,23 +117,26 @@ export class ProviderRefreshCoordinator {
     if (!adapter) {
       if (previous?.state !== "fresh") this.health.set(provider, { state: "hidden", reason: sanitizedReason(provider) });
       this.running.delete(provider);
-      this.onUpdate();
+      this.onUpdate(provider);
       return;
     }
     try {
       const usage = await adapter.refresh(AbortSignal.timeout(Math.min(this.cadenceMs, 3_000)));
       if (generation !== this.generation) return;
+      const current = this.health.get(provider);
+      if (current?.state === "fresh" && current !== previous && (!usage?.updatedAt || current.updatedAt > usage.updatedAt)) return;
       if (usage?.limits.length) this.health.set(provider, { state: "fresh", usage, updatedAt: usage.updatedAt ?? Date.now() });
-      else if (policy?.keepAfterFailure === false || previous?.state !== "fresh") this.health.set(provider, { state: "hidden", reason: "usage unavailable" });
-      else this.health.set(provider, { ...previous, usage: { ...previous.usage, cached: true } });
+      else if (policy?.keepAfterFailure === false || current?.state !== "fresh") this.health.set(provider, { state: "hidden", reason: "usage unavailable" });
+      else this.health.set(provider, { ...current, usage: { ...current.usage, cached: true } });
     } catch (error) {
       if (generation !== this.generation) return;
-      if (UsageUnavailableError.is(error) || policy?.keepAfterFailure === false || previous?.state !== "fresh") {
+      const current = this.health.get(provider);
+      if (UsageUnavailableError.is(error) || policy?.keepAfterFailure === false || current?.state !== "fresh") {
         this.health.set(provider, { state: "hidden", reason: sanitizedReason(provider, error) });
-      } else this.health.set(provider, { ...previous, usage: { ...previous.usage, cached: true } });
+      } else this.health.set(provider, { ...current, usage: { ...current.usage, cached: true } });
     } finally {
       this.running.delete(provider);
-      this.onUpdate();
+      if (generation === this.generation) this.onUpdate(provider);
     }
   }
 }

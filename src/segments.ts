@@ -54,7 +54,7 @@ export function composeSegments(
   const shrink = (ps: typeof parts, id: SegmentId) => {
     const part = ps.find((p) => p.id === id);
     if (!part) return;
-    const rest = visibleWidth(ps.filter((p) => p.id !== id).map((p) => p.value).join(separator))
+    const rest = ps.filter((p) => p.id !== id).reduce((sum, p) => sum + visibleWidth(p.value), 0)
       + visibleWidth(separator) * Math.max(0, ps.length - 1);
     const shrunk = part.render(width - rest);
     if (shrunk) part.value = shrunk;

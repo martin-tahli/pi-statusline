@@ -1,10 +1,12 @@
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
-import { DEFAULT_STATUSLINE_SETTINGS } from "./defaults.ts";
+import { DEFAULT_STATUSLINE_SETTINGS, createProviderConfig } from "./defaults.ts";
 import { buildEmojisScreen, routeEmojisKey } from "./emojis-screen.ts";
 import { renderPreview } from "./preview.ts";
 import type { ResolutionContext } from "./resolve.ts";
 import type { RenderTheme } from "../render.ts";
-import { buildSeparatorsScreen, routeSeparatorsKey } from "./separators-screen.ts";
+import { buildSeparatorsScreen, routeSeparatorsKey, DISPLAY_GROUPS, displayGroup } from "./separators-screen.ts";
+import { isTextInput, editText } from "./text.ts";
+import { sanitizeDisplayString } from "./validation.ts";
 import { resetProvider } from "./state.ts";
 import {
   buildProviderDetail,
@@ -16,6 +18,8 @@ import {
   toggleProviderTracking,
   toggleStatusline,
   updateProviderWindow,
+  setProviderRefreshOverrides,
+  setProviderMissingDataPolicy,
   type ProviderDetailView,
   type ProviderUiContext,
   type ProviderUiEffect,
@@ -44,6 +48,7 @@ export interface SettingsUiState {
   selected: number;
   openRow?: RootRowId;
   selectedProviderId?: string;
+  section?: string;
   confirmClose: boolean;
   error?: string;
 }
@@ -82,6 +87,8 @@ type DetailField = keyof WindowConfiguration;
 type DetailRow =
   | { type: "active"; segment: SegmentId; label: string }
   | { type: "refresh-now"; label: string }
+  | { type: "policy"; field: string; label: string }
+  | { type: "account"; id: string; field: "enabled" | "label"; label: string }
   | { type: "window"; key: string; field: DetailField; label: string }
   | { type: "reset"; label: string };
 
@@ -91,7 +98,6 @@ function detailRows(
   detail: ProviderDetailView,
 ): DetailRow[] {
   const providerId = state.selectedProviderId!;
-  const capability = providers.capabilities[providerId];
   const configuredOverrides = state.draft.providers.records[providerId]?.supportedOverrides;
   const supported = configuredOverrides?.length
     ? configuredOverrides
@@ -101,7 +107,12 @@ function detailRows(
   }));
 
   if (detail.quotaAvailable) {
-    rows.push({ type: "refresh-now", label: "Refresh usage now" });
+    rows.push({ type: "policy", field: "missingDataPolicy", label: `Missing data: ${detail.missingDataPolicy}` });
+    for (const [field, label] of Object.entries({ intervalMs: "Refresh interval (ms)", maxAgeMs: "Maximum cache age (ms)", useCache: "Use cache", keepAfterFailure: "Keep cache after failure", refreshWhileActive: "Refresh active provider", refreshDisabledProvider: "Refresh disabled provider" })) {
+      if (providers.accounts?.[providerId] && field !== "maxAgeMs") continue; // The addon owns polling and authentication.
+      rows.push({ type: "policy", field, label: `${label}: ${detail.refresh[field as keyof typeof detail.refresh]}` });
+    }
+    rows.push({ type: "refresh-now", label: providers.accounts?.[providerId] ? "Reload account snapshots (refresh usage in your addon)" : "Refresh usage now" });
     for (const window of detail.quotaWindows) {
       const settings = window.settings;
       const prefix = settings.label || window.label;
@@ -113,12 +124,46 @@ function detailRows(
         ["showReset", `Reset: ${settings.showReset ? "On" : "Off"}`],
         ["resetFormat", `Reset format: ${settings.resetFormat}`],
         ["width", `Width: ${settings.width}`],
+        ["showZero", `Show at zero: ${settings.showZero ? "On" : "Off"}`],
+        ...(window.unit === "USD" ? [
+          ["showUsed", `Used amount: ${settings.showUsed ? "On" : "Off"}`],
+          ["showRemaining", `Remaining amount: ${settings.showRemaining ? "On" : "Off"}`],
+        ] as Array<[DetailField, string]> : []),
       ];
       rows.push(...fields.map(([field, label]) => ({ type: "window" as const, key: window.key!, field, label: `${prefix} ${label}` })));
     }
   }
+  for (const account of providers.accounts?.[providerId]?.accounts ?? []) {
+    const config = state.draft.providers.records[providerId]?.accounts?.[account.id];
+    rows.push({ type: "account", id: account.id, field: "enabled", label: `${account.label}${account.active ? " (active)" : ""}: ${config?.enabled === false ? "Hidden" : "Selected"}` },
+      { type: "account", id: account.id, field: "label", label: `Display label: ${config?.label || account.label}` });
+  }
   rows.push({ type: "reset", label: "Reset provider to default" });
-  return rows;
+  return rows.filter((row) => !state.section || (row.type === "active" ? state.section === "active"
+    : row.type === "account" ? state.section === "accounts"
+    : row.type === "window" ? state.section === `window:${row.key}`
+    : row.type === "reset" ? state.section === "reset" : state.section === "refresh"));
+}
+
+/** Small menus reveal controls only after a category is opened. */
+function sections(state: SettingsUiState, providers?: ProviderUiContext): Array<{ id: string; label: string }> {
+  if (state.openRow === "separators") return [...DISPLAY_GROUPS];
+  if (state.openRow === "emojis") return [
+    { id: "symbols", label: "Style & segment symbols" },
+    ...[...new Set([...(providers?.descriptors.map((p) => p.id) ?? []), ...Object.keys(state.draft.icons.providers)])]
+      .map((id) => ({ id, label: `${id} icon` })),
+  ];
+  if (state.selectedProviderId && providers) {
+    const detail = buildProviderDetail(state.draft, providers, state.selectedProviderId);
+    if (!detail) return [];
+    return [
+      { id: "active", label: "Visible information for this provider" },
+      ...(providers.accounts?.[state.selectedProviderId] ? [{ id: "accounts", label: "Accounts (display only)" }] : []),
+      ...(detail.quotaAvailable ? [{ id: "refresh", label: "Refresh & missing data" }, ...detail.quotaWindows.map((w) => ({ id: `window:${w.key}`, label: `Quota: ${w.label}` }))] : []),
+      { id: "reset", label: "Reset provider to default" },
+    ];
+  }
+  return [];
 }
 
 const RESET_FORMATS = ["countdown", "exact-time", "exact-date"] as const;
@@ -137,8 +182,9 @@ function routeProviderDetail(
   const detail = buildProviderDetail(state.draft, providers, providerId);
   if (!detail) return { state: { ...state, selectedProviderId: undefined, selected: 0 }, action: "none" };
   const rows = detailRows(state, providers, detail);
-  if (key === "ArrowUp" || key === "k") return { state: { ...state, selected: Math.max(0, state.selected - 1) }, action: "none" };
-  if (key === "ArrowDown" || key === "j") return { state: { ...state, selected: Math.min(rows.length - 1, state.selected + 1) }, action: "none" };
+  const editingLabel = (rows[state.selected]?.type === "window" || rows[state.selected]?.type === "account") && (rows[state.selected] as { field?: string }).field === "label" && isTextInput(key);
+  if (!editingLabel && (key === "ArrowUp" || key === "k")) return { state: { ...state, selected: Math.max(0, state.selected - 1) }, action: "none" };
+  if (!editingLabel && (key === "ArrowDown" || key === "j")) return { state: { ...state, selected: Math.min(rows.length - 1, state.selected + 1) }, action: "none" };
   if (key === "Home") return { state: { ...state, selected: 0 }, action: "none" };
   if (key === "End") return { state: { ...state, selected: Math.max(0, rows.length - 1) }, action: "none" };
 
@@ -148,8 +194,26 @@ function routeProviderDetail(
   const forwards = key === "ArrowRight" || key === "l" || key === "Enter" || key === " " || key === "Space";
   const draft = structuredClone(state.draft);
 
+  if (row.type === "account") {
+    const record = draft.providers.records[providerId] ??= createProviderConfig();
+    const accounts = record.accounts ??= {};
+    const current = accounts[row.id] ?? { enabled: true, label: "" };
+    if (row.field === "enabled" && (forwards || backwards)) accounts[row.id] = { ...current, enabled: !current.enabled };
+    else if (row.field === "label" && isTextInput(key)) accounts[row.id] = { ...current, label: sanitizeDisplayString(editText(current.label, key)) };
+    else return { state, action: "none" };
+    return { state: { ...state, draft }, action: "none" };
+  }
+  if (row.type === "policy" && (forwards || backwards)) {
+    if (row.field === "missingDataPolicy") setProviderMissingDataPolicy(draft, providerId, cycle(["cached", "hide", "na", "warning", "provider-name"] as const, detail.missingDataPolicy, backwards));
+    else {
+      const value = detail.refresh[row.field as keyof typeof detail.refresh];
+      const field = row.field === "intervalMs" ? "refreshIntervalMs" : row.field === "maxAgeMs" ? "maxCacheAgeMs" : row.field;
+      setProviderRefreshOverrides(draft, providerId, { ...draft.providers.records[providerId]?.refresh, [field]: typeof value === "boolean" ? !value : value + (backwards ? -10_000 : 10_000) });
+    }
+    return { state: { ...state, draft }, action: "none" };
+  }
   if (row.type === "refresh-now" && forwards) {
-    return { state, action: "none", effect: requestProviderRefresh(draft, providerId, providers.capabilities[providerId], providers.activeProvider === providerId) };
+    return { state, action: "none", effect: providers.accounts?.[providerId] ? { type: "refresh-provider", providerId } : requestProviderRefresh(draft, providerId, providers.capabilities[providerId], providers.activeProvider === providerId) };
   }
   if (row.type === "reset" && forwards) {
     resetProvider(draft, providerId);
@@ -163,14 +227,14 @@ function routeProviderDetail(
   } else if (row.type === "window") {
     const settings = detail.quotaWindows.find((window) => window.key === row.key)?.settings;
     if (!settings) return { state, action: "none" };
-    if (row.field === "label" && (key === "Backspace" || key.length === 1)) {
-      updateProviderWindow(draft, providerId, row.key, { label: key === "Backspace" ? settings.label.slice(0, -1) : settings.label + key });
+    if (row.field === "label" && isTextInput(key)) {
+      updateProviderWindow(draft, providerId, row.key, { ...settings, label: editText(settings.label, key) });
     } else if (row.field === "width" && (forwards || backwards)) {
-      updateProviderWindow(draft, providerId, row.key, { width: settings.width + (backwards ? -1 : 1) });
+      updateProviderWindow(draft, providerId, row.key, { ...settings, width: settings.width + (backwards ? -1 : 1) });
     } else if (row.field === "resetFormat" && (forwards || backwards)) {
-      updateProviderWindow(draft, providerId, row.key, { resetFormat: cycle(RESET_FORMATS, settings.resetFormat, backwards) });
+      updateProviderWindow(draft, providerId, row.key, { ...settings, resetFormat: cycle(RESET_FORMATS, settings.resetFormat, backwards) });
     } else if (typeof settings[row.field] === "boolean" && (forwards || backwards)) {
-      updateProviderWindow(draft, providerId, row.key, { [row.field]: !settings[row.field] });
+      updateProviderWindow(draft, providerId, row.key, { ...settings, [row.field]: !settings[row.field] });
     } else {
       return { state, action: "none" };
     }
@@ -187,8 +251,18 @@ export function routeSettingsKey(
   providers?: ProviderUiContext,
 ): NavigationResult {
   if (state.confirmClose) return { state, action: "confirm-close" };
+  if (key === "Ctrl+S") return { state: { ...state, confirmClose: true }, action: "confirm-close" };
+  if (key === "PageUp" || key === "PageDown") {
+    let result: NavigationResult = { state, action: "none" };
+    for (let i = 0; i < 8; i++) result = routeSettingsKey(result.state, key === "PageUp" ? "ArrowUp" : "ArrowDown", providers);
+    return result;
+  }
 
   if (key === "Escape") {
+    if (state.section) {
+      const index = sections(state, providers).findIndex((section) => section.id === state.section);
+      return { state: { ...state, section: undefined, selected: Math.max(0, index) }, action: "none" };
+    }
     if (state.selectedProviderId && providers) {
       const index = buildProviderScreen(state.draft, providers).rows.findIndex((row) => row.id === state.selectedProviderId);
       return { state: { ...state, selectedProviderId: undefined, selected: Math.max(0, index + 2) }, action: "none" };
@@ -199,14 +273,25 @@ export function routeSettingsKey(
       : { state, action: "close" };
   }
 
+  const menu = sections(state, providers);
+  if (menu.length && !state.section) {
+    let selected = Math.min(state.selected, menu.length - 1);
+    if (key === "ArrowUp" || key === "k") selected = Math.max(0, selected - 1);
+    if (key === "ArrowDown" || key === "j") selected = Math.min(menu.length - 1, selected + 1);
+    if (key === "Home") selected = 0;
+    if (key === "End") selected = menu.length - 1;
+    if (key === "Enter" || key === "ArrowRight") return { state: { ...state, section: menu[selected].id, selected: 0 }, action: "open" };
+    return { state: { ...state, selected }, action: "none" };
+  }
+
   if (state.openRow === "separators") {
-    const routed = routeSeparatorsKey(state.draft, state.selected, key);
+    const routed = routeSeparatorsKey(state.draft, state.selected, key, state.section);
     return { state: { ...state, ...routed }, action: "none" };
   }
 
   if (state.openRow === "emojis") {
     const providerIds = providers?.descriptors.map(({ id }) => id) ?? [];
-    const routed = routeEmojisKey(state.draft, state.selected, key, providerIds);
+    const routed = routeEmojisKey(state.draft, state.selected, key, providerIds, state.section);
     return { state: { ...state, ...routed }, action: "none" };
   }
 
@@ -310,11 +395,12 @@ export interface RenderSettingsUiOptions {
 /** Key bindings in effect for the active screen, shown as a legend inside the window. */
 function keyLegend(state: SettingsUiState): string {
   if (state.confirmClose) return "S Save  ·  D Discard  ·  Esc Cancel";
+  if ((sections(state).length || state.selectedProviderId) && !state.section) return "↑↓ Move  ·  Enter Open  ·  Ctrl+S Save  ·  Esc Back";
   if (state.selectedProviderId) return "↑↓ Move  ·  ←→/Enter Change  ·  Type chars  ·  ⌫ Delete  ·  Esc Back";
   if (state.openRow === "providers") return "↑↓ Move  ·  Space Toggle  ·  Enter Details  ·  Ctrl↑↓ Reorder  ·  Esc Back";
   if (state.openRow === "separators") return "↑↓ Move  ·  ←→/Enter Change  ·  Type chars  ·  ⌫ Delete  ·  Ctrl↑↓ Reorder  ·  Esc Back";
   if (state.openRow === "emojis") return "↑↓ Move  ·  ←→/Enter Change  ·  Type chars  ·  ⌫ Delete  ·  Esc Back";
-  return "↑↓ Move  ·  Enter Open / Reset  ·  Esc Quit";
+  return "↑↓ Move  ·  Enter Open / Reset  ·  Ctrl+S Save  ·  Esc Quit";
 }
 
 /** Greedy word wrap on the "·" separator so long legends never break the box. */
@@ -382,7 +468,7 @@ export function renderSettingsWindow(state: SettingsUiState, options: RenderSett
   const titleFill = Math.max(0, inner - 1 - visibleWidth(title));
   const out: string[] = [
     "┌─" + title + "─".repeat(titleFill) + "┐",
-    ...view.map((line) => `│${fitLine(line, inner)}│`),
+    ...view.map((line) => `│${fitLine(line.startsWith("> ") && options.theme?.fg ? options.theme.fg("accent", line) : line, inner)}│`),
   ];
   if (scrollNote) out.push(`│${fitLine(scrollNote, inner)}│`);
   if (preview.length) out.push("├" + "─".repeat(inner) + "┤", ...preview.map((line) => `│${fitLine(line, inner)}│`));
@@ -392,16 +478,21 @@ export function renderSettingsWindow(state: SettingsUiState, options: RenderSett
 
 /** Pure component rendering; previews use the production footer renderer. */
 export function renderSettingsUi(state: SettingsUiState, options: RenderSettingsUiOptions): string[] {
-  const lines = ["Statusline settings"];
-  if (state.openRow === "separators") {
-    lines.push("Display");
-    for (const [index, row] of buildSeparatorsScreen(state.draft).entries()) {
+  const lines = [`Statusline settings${isDirty(state) ? " — unsaved" : ""}`];
+  if (state.confirmClose) return ["Save changes? S Save / D Discard / Esc Cancel", ...(state.error ? [`Save failed: ${state.error}`] : [])];
+  const menu = sections(state, options.providers);
+  if (menu.length && !state.section) {
+    lines.push(state.selectedProviderId ? `Provider: ${state.selectedProviderId}` : state.openRow === "emojis" ? "Icons" : "Display");
+    for (const [index, row] of menu.entries()) lines.push(`${state.selected === index ? ">" : " "} ${row.label} >`);
+  } else if (state.openRow === "separators") {
+    lines.push(`Display > ${DISPLAY_GROUPS.find((group) => group.id === state.section)?.label ?? "Controls"}`);
+    for (const [index, row] of buildSeparatorsScreen(state.draft).filter((row) => !state.section || displayGroup(row.id) === state.section).entries()) {
       lines.push(`${state.selected === index ? ">" : " "} ${row.label}`);
     }
   } else if (state.openRow === "emojis") {
-    lines.push("Icons");
+    lines.push(`Icons > ${state.section === "symbols" ? "Style & symbols" : state.section}`);
     const providerIds = options.providers?.descriptors.map(({ id }) => id) ?? [];
-    for (const [index, row] of buildEmojisScreen(state.draft, providerIds).entries()) {
+    for (const [index, row] of buildEmojisScreen(state.draft, providerIds).filter((row) => !state.section || (state.section === "symbols" ? !row.id.startsWith("icons.providers.") : row.id.startsWith(`icons.providers.${state.section}.`))).entries()) {
       lines.push(`${state.selected === index ? ">" : " "} ${row.label}`);
     }
   } else if (state.openRow === "providers" && options.providers) {
@@ -410,8 +501,10 @@ export function renderSettingsUi(state: SettingsUiState, options: RenderSettings
       const detail = buildProviderDetail(state.draft, options.providers, state.selectedProviderId);
       if (detail) {
         const health = options.providers.health?.[state.selectedProviderId];
+        const accounts = options.providers.accounts?.[state.selectedProviderId];
+        if (state.section === "accounts") lines.push("Add / sign in / switch accounts in your provider addon.", "Display > Order & provider rows > Accounts: selected shows all selected accounts.");
         lines.push(`Provider: ${detail.row.label}`,
-          `Source: ${health?.cached ? "shared cache" : "provider API"} (${detail.row.reliability}); ${detail.row.freshness}`,
+          `Source: ${accounts ? accounts.source : health?.updatedAt ? health.cached ? "cached usage" : "provider usage" : "unavailable"}; ${detail.row.freshness}`,
           `Last success: ${health?.updatedAt ? new Date(health.updatedAt).toISOString() : "unavailable"}`);
         if (health?.reason) lines.push(health.reason);
         for (const window of detail.quotaWindows) {
@@ -428,7 +521,7 @@ export function renderSettingsUi(state: SettingsUiState, options: RenderSettings
       );
       for (let index = 0; index < screen.rows.length; index++) {
         const row = screen.rows[index];
-        lines.push(`${state.selected === index + 2 ? ">" : " "} ${row.enabled ? "[x]" : "[ ]"} ${row.label} — ${row.availability}; ${row.authentication}; ${row.billing}; ${row.reliability}; ${row.freshness}; quota ${row.quota}`);
+        lines.push(`${state.selected === index + 2 ? ">" : " "} ${row.enabled ? "[x]" : "[ ]"} ${row.label}${row.active ? " (active)" : ""} — ${row.quota === "Available" ? row.freshness : "quota unavailable"}`);
       }
     }
   } else {
@@ -448,7 +541,5 @@ export function renderSettingsUi(state: SettingsUiState, options: RenderSettings
       theme: options.theme,
     }));
   }
-  if (state.confirmClose) lines.push("", "Unsaved changes: Save / Discard / Cancel");
-  if (state.error) lines.push(`Save failed: ${state.error}`);
   return lines;
 }

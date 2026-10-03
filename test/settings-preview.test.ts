@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { renderPreview } from "../src/settings/preview.ts";
+import { reconcileProviders } from "../src/settings/runtime.ts";
 import { DEFAULT_STATUSLINE_SETTINGS } from "../src/settings/defaults.ts";
 import { updateProviderWindow } from "../src/settings/provider-ui.ts";
 import type { ProviderUiContext } from "../src/settings/provider-ui.ts";
@@ -49,7 +50,7 @@ function liveContext(): ResolutionContext {
 }
 
 function previewLines(settings: StatuslineSettings, selectedProviderId?: string): string[] {
-  return renderPreview({ settings, mode: "current", width: 200, current: liveContext(), providers, selectedProviderId });
+  return renderPreview({ settings: reconcileProviders(settings, { getAvailable: () => providers.descriptors.map((d) => ({ provider: d.id })) }), mode: "current", width: 200, current: liveContext(), providers, selectedProviderId });
 }
 
 test("preview reflects the live session, including the provider-tracking rows", () => {

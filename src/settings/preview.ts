@@ -1,6 +1,7 @@
+import { accountSources, accountWindows } from "../accounts.ts";
 import type { StatuslineSettings, PreviewMode } from "./schema.ts";
 import { composeFooterLine, type RuntimeSnapshot, type ResolutionContext } from "./resolve.ts";
-import { renderProviderRows, providerHasRow, type ProviderRowSource, type RenderTheme } from "../render.ts";
+import { renderProviderRows, providerHasRow, arrangeFooterLines, missingUsageLabel, usageFreshness, type ProviderRowSource, type RenderTheme } from "../render.ts";
 import type { ProviderCapability } from "./providers/capabilities.ts";
 import type { ProviderUiContext } from "./provider-ui.ts";
 
@@ -59,7 +60,7 @@ const subscriptionFixture: PreviewFixture = Object.freeze({
     quotaSupport: "official",
     quotaReliability: "high",
     localSpeed: false,
-    hostedSpeed: true,
+    hostedSpeed: false,
     tokenLedger: false,
     costLedger: false,
   } as ProviderCapability),
@@ -85,7 +86,7 @@ const apiFixture: PreviewFixture = Object.freeze({
     quotaSupport: "none",
     quotaReliability: "none",
     localSpeed: false,
-    hostedSpeed: true,
+    hostedSpeed: false,
     tokenLedger: true,
     costLedger: true,
     unavailableReason: "no key budget in this example",
@@ -129,22 +130,17 @@ function liveSources(
   live: ResolutionContext,
 ): ProviderRowSource[] {
   if (!settings.providers.enabled || !providers) return [];
-  const order = settings.providers.order.length ? settings.providers.order : providers.descriptors.map((d) => d.id);
+  const order = settings.providers.order;
   const activeProvider = live.runtime.activeProvider;
-  return order.flatMap((provider) => {
+  return order.flatMap<ProviderRowSource>((provider) => {
     if (settings.providers.records[provider]?.enabled === false || (settings.providers.scope === "active" && provider !== activeProvider)) return [];
+    if (providers.accounts?.[provider]) return accountSources(settings, providers.accounts[provider], live.runtime.now);
     const windows = providers.windows?.[provider] ?? (provider === activeProvider ? (live.runtime.sessionWindows ?? []) : []);
-    if (windows.length) return [{ provider, windows }];
     const health = providers.health?.[provider];
-    if (provider === "zai" && health?.reason === "usage unavailable") {
-      return [{ provider, windows: [], placeholder: health.reason }];
-    }
-    // Match the footer: an OAuth login earns the loading placeholder; anything else says "log in".
-    const cap = provider === "anthropic" ? providers.capabilities[provider] : undefined;
-    if (cap?.quotaSupport === "official") {
-      return [{ provider, windows: [], placeholder: cap.billing === "subscription" ? "5h — wk —" : "log in" }];
-    }
-    return [];
+    if (windows.length && (!health || health.state === "fresh")) return [{ provider, windows, freshness: usageFreshness(health?.updatedAt ?? 0, health?.cached ?? false, live.runtime.now) }];
+    const reason = provider === "anthropic" && providers.capabilities[provider]?.billing !== "subscription" ? "log in" : health?.reason;
+    const placeholder = missingUsageLabel(settings, provider, reason);
+    return placeholder ? [{ provider, windows: [], placeholder }] : [];
   });
 }
 
@@ -161,7 +157,9 @@ function resolveCurrentPreview(input: PreviewInput): { label: string; ctx: Resol
     const activeProviderHasRow = providerHasRow(settings, sources, liveProvider);
     return {
       label: "Current session preview",
-      ctx: { capability: live.capability, runtime: { ...live.runtime, activeProviderHasRow } },
+      ctx: { capability: live.capability, runtime: { ...live.runtime, activeProviderHasRow,
+        sessionPlaceholder: activeProviderHasRow ? "" : live.runtime.sessionPlaceholder ?? (liveProvider && live.capability && live.capability.quotaSupport !== "none" ? missingUsageLabel(settings, liveProvider) : ""),
+      } },
       sources,
     };
   }
@@ -170,7 +168,9 @@ function resolveCurrentPreview(input: PreviewInput): { label: string; ctx: Resol
   // so e.g. OpenAI shows no 5h session. The provider rows still show every tracked provider, so
   // per-window display settings for the edited provider are visible on its own row.
   const cap = providers.capabilities[target];
-  const windows = providers.windows?.[target] ?? [];
+  const accounts = providers.accounts?.[target];
+  const activeAccount = accounts?.accounts.find((account) => account.active);
+  const windows = accounts ? accountWindows(settings, target, activeAccount, live.runtime.now) : providers.windows?.[target] ?? [];
   const displayName = providers.descriptors.find((d) => d.id === target)?.displayName ?? target;
   const activeProviderHasRow = providerHasRow(settings, sources, target);
   const ctx: ResolutionContext = {
@@ -183,6 +183,7 @@ function resolveCurrentPreview(input: PreviewInput): { label: string; ctx: Resol
       activeProvider: target,
       model: { id: displayName, provider: target, baseUrl: providers.descriptors.find((d) => d.id === target)?.models[0]?.baseUrl },
       sessionWindows: [...windows],
+      sessionFreshness: accounts ? usageFreshness(activeAccount?.updatedAt ?? 0, true, live.runtime.now) : undefined,
       activeProviderHasRow,
     },
   };
@@ -204,7 +205,7 @@ export function renderPreview(input: PreviewInput): string[] {
     const now = ctx.runtime.now ?? Date.now();
     const main = composeFooterLine(settings, ctx, width, theme);
     const rows = renderProviderRows(settings, sources, theme, now, width);
-    return [label, main, ...rows];
+    return [label, ...arrangeFooterLines(settings, main, rows)];
   }
   const fixture = PREVIEW_FIXTURES[mode as "local" | "subscription" | "api" | "narrow"];
   if (!settings.enabled) return [`${fixture.label} preview`, "Statusline disabled"];

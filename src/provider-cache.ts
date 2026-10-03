@@ -5,7 +5,7 @@ import { lockSync } from "proper-lockfile";
 import { parseStoredRateLimits } from "./ratelimit.ts";
 import { PROVIDER_MAX_AGE_MS, PROVIDER_REFRESH_MS, RateLimitedError, UsageUnavailableError, type ProviderUsage } from "./providers.ts";
 
-export const PROVIDER_CACHE_DIR = join(homedir(), ".pi", "agent", "statusline", "provider-usage");
+export const PROVIDER_CACHE_DIR = join(process.env.PI_CODING_AGENT_DIR || join(homedir(), ".pi", "agent"), "statusline", "provider-usage");
 const LOCK_MS = 10_000;
 // When a provider's usage endpoint returns 429, back off with a growing delay shared across
 // every session and every caller (persisted in the cache file). Anthropic's usage endpoint sends
@@ -104,6 +104,10 @@ export class ProviderUsageCache {
       if (policy?.useCache !== false && current?.limits.length && this.now() - current.updatedAt < Math.min(refreshMs, policy?.maxAgeMs ?? PROVIDER_MAX_AGE_MS)) {
         return { limits: current.limits, updatedAt: current.updatedAt, cached: true };
       }
+      // Reserve the next attempt even when the endpoint returns no usable data. Otherwise
+      // missing/failed usage bypasses the interval and every process retries immediately.
+      this.save(provider, { limits: current?.limits ?? [], updatedAt: current?.updatedAt ?? 0,
+        retryAt: this.now() + refreshMs, ...(current?.backoffStep === undefined ? {} : { backoffStep: current.backoffStep }) });
       try {
         const usage = await fetchFresh();
         if (usage?.limits.length) {
@@ -115,12 +119,12 @@ export class ProviderUsageCache {
       } catch (error) {
         if (UsageUnavailableError.is(error)) {
           // A denied account must not keep re-serving last-known quota across sessions.
-          this.save(provider, { limits: [], updatedAt: this.now() });
+          this.save(provider, { limits: [], updatedAt: this.now(), retryAt: this.now() + refreshMs });
           throw error;
         }
         if (RateLimitedError.is(error)) {
           // 429: persist a growing backoff so every session and every caller backs off.
-          this.applyBackoff(provider, current);
+          this.applyBackoff(provider, current, refreshMs);
         } else if (!current?.limits.length) {
           throw error;
         }
@@ -131,9 +135,9 @@ export class ProviderUsageCache {
     }
   }
 
-  private applyBackoff(provider: string, current: CachedUsage | undefined): void {
+  private applyBackoff(provider: string, current: CachedUsage | undefined, minimumMs: number): void {
     const step = current?.backoffStep ?? 0;
-    const delay = BACKOFF_STEPS_MS[Math.min(step, BACKOFF_STEPS_MS.length - 1)];
+    const delay = Math.max(minimumMs, BACKOFF_STEPS_MS[Math.min(step, BACKOFF_STEPS_MS.length - 1)]);
     const hasUsage = current?.limits.length;
     this.save(provider, {
       limits: hasUsage ? current!.limits : [],

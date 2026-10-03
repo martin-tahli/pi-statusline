@@ -32,6 +32,7 @@ export function migrateLegacySettings(legacy: unknown): Partial<StatuslineSettin
   const providers: StatuslineSettings["providers"] = {
     enabled: merged.providerTracking.enabled,
     scope: "selected",
+    accountScope: "active",
     order: [...merged.providerTracking.order],
     defaults: structuredClone(DEFAULT_STATUSLINE_SETTINGS.providers.defaults),
     records: {},

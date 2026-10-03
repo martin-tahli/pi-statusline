@@ -78,13 +78,17 @@ export function resolveRefreshEligibility(
   capability: ProviderCapability,
   inputs: EligibilityInputs,
 ): boolean {
-  const policy = resolveProviderRefreshPolicy(settings, _providerId, capability);
-  if (!settings.providers.enabled) return false;
-  if (!inputs.providerEnabled && !policy.refreshDisabledProvider) return false;
-  if (!capability.available || !capability.authenticated) return false;
-  if (capability.quotaSupport === "none") return false;
-  if (inputs.isActive && !policy.refreshWhileActive) return false;
-  return true;
+  if (!capability.available || !capability.authenticated || capability.quotaSupport === "none") return false;
+  return providerRefreshEnabled(settings, _providerId, inputs.isActive, inputs.providerEnabled);
+}
+
+export function providerRefreshEnabled(settings: StatuslineSettings, provider: string, active: boolean, enabled = settings.providers.records[provider]?.enabled !== false): boolean {
+  if (!settings.enabled) return false;
+  const policy = resolveProviderRefreshPolicy(settings, provider);
+  const row = settings.providers.enabled && (enabled || policy.refreshDisabledProvider);
+  const override = settings.providers.records[provider]?.activeModel.session;
+  const session = override === "on" || (override !== "off" && settings.segments.session !== false);
+  return active ? policy.refreshWhileActive && (session || row) : row && settings.providers.scope === "selected";
 }
 
 /**
@@ -101,7 +105,7 @@ export function resolveRefreshHealth(
     return { state: "unknown", reason: "no usage data yet" };
   }
   const age = now - previousFreshAt;
-  if (age <= policy.maxAgeMs) return { state: "fresh" };
+  if (age >= 0 && age <= policy.maxAgeMs) return { state: "fresh" };
   return policy.keepAfterFailure
     ? { state: "stale", reason: "usage data is stale" }
     : { state: "unknown", reason: "usage data is stale" };

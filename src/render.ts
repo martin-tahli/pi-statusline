@@ -15,6 +15,7 @@ import { gitBranchSymbol, gitStatusTokens, type GitStatusState, type GitTokenKin
 import { estimateTokens, type ThroughputLevel } from "./throughput.ts";
 import type { RateLimitWindow } from "./ratelimit.ts";
 import type { ResetFormat, StatuslineSettings } from "./settings/schema.ts";
+import { resolveProviderMissingDataPolicy } from "./settings/refresh.ts";
 import type { ThemeColor } from "@earendil-works/pi-coding-agent";
 
 /**
@@ -133,7 +134,7 @@ function blockBar(used: number, settings: StatuslineSettings, theme: RenderTheme
   const w = Math.max(2, Math.floor(Number.isFinite(width) ? width : 12));
   const filled = Math.round(used * w);
   const paint = (r: ThemeColor, text: string) => (theme?.fg ? theme.fg(r, text) : text);
-  const bar = paint(barRole(settings, used), `${settings.bars.capLeft || "["}${(settings.bars.fill || "█").repeat(filled)}${(settings.bars.empty || "░").repeat(w - filled)}${settings.bars.capRight || "]"}`);
+  const bar = paint(barRole(settings, used), `${settings.bars.capLeft}${(settings.bars.fill || " ").repeat(filled)}${(settings.bars.empty || " ").repeat(w - filled)}${settings.bars.capRight}`);
   return showPercent ? `${bar} ${Math.round(used * 100)}%` : bar;
 }
 
@@ -150,6 +151,8 @@ export interface ResolvedWindowDisplay {
   showReset: boolean;
   resetFormat: ResetFormat;
   width: number;
+  showUsed: boolean;
+  showRemaining: boolean;
 }
 
 /** Resolve a quota window's effective display settings (per-window config wins over global bars). */
@@ -162,13 +165,15 @@ export function resolveWindowDisplay(
   const cfg = { ...windows?.default, ...windows?.[window.key ?? ""] };
   const width = cfg?.width && cfg.width > 0 ? cfg.width : settings.bars.width;
   return {
-    visible: cfg?.visible ?? true,
+    visible: (cfg?.visible ?? true) && (window.used !== 0 || (cfg?.showZero ?? true)),
     label: cfg?.label ? cfg.label : window.label,
     showBar: cfg?.showBar ?? settings.bars.format !== "percent",
     showPercent: cfg?.showPercent ?? settings.bars.showPercent,
     showReset: cfg?.showReset ?? true,
     resetFormat: cfg?.resetFormat ?? "countdown",
     width,
+    showUsed: cfg?.showUsed ?? true,
+    showRemaining: cfg?.showRemaining ?? true,
   };
 }
 
@@ -188,16 +193,19 @@ function renderSessionBar(settings: StatuslineSettings, provider: string | undef
   const display = resolveWindowDisplay(settings, provider, window);
   const used = Math.max(0, Math.min(1, window.used));
   const bar = !display.showBar ? (display.showPercent ? `${Math.round(used * 100)}%` : "")
-    : settings.icons.style === "ascii"
+    : (settings.icons.style === "ascii" || settings.bars.style === "ascii")
       ? `${"#".repeat(Math.round(used * display.width))}${"-".repeat(display.width - Math.round(used * display.width))}${display.showPercent ? ` ${Math.round(used * 100)}%` : ""}`
     : isLineBarStyle(settings.bars.style)
       ? renderBar(used, display.width, barStyleFactory(settings, used, theme, DEFAULT_STOPS), DEFAULT_STOPS, display.showPercent)
       : blockBar(used, settings, theme, display.width, display.showPercent);
   const reset = display.showReset && window.resetAt !== undefined ? paint("dim", ` ${settings.icons.style === "ascii" ? "reset" : "↻"} ${formatReset(window.resetAt, display.resetFormat, now)}`) : "";
-  const detail = settings.bars.format === "detailed" && window.unit === "USD"
-    ? ` $${window.usedAmount?.toFixed(2) ?? "?"} used / $${window.remainingAmount?.toFixed(2) ?? "?"} left` : "";
+  const amounts = window.unit === "USD" ? [
+    display.showUsed && window.usedAmount !== undefined ? `$${window.usedAmount.toFixed(2)} used` : "",
+    display.showRemaining && window.remainingAmount !== undefined ? `$${window.remainingAmount.toFixed(2)} left` : "",
+  ].filter(Boolean).join(" / ") : "";
+  const detail = settings.bars.format === "detailed" && amounts ? ` ${amounts}` : "";
   if (!bar && !reset && !detail) return "";
-  return `${paint("muted", `${display.label} `)}${bar}${display.showPercent ? " used" : ""}${reset}${detail}`.trim();
+  return `${paint("muted", `${display.label}${settings.separators.labelValue}`)}${bar}${display.showPercent ? " used" : ""}${reset}${detail}`.trim();
 }
 
 /** Compact no-bar form of one window: the numbers the reader actually needs (label, %, ↻ reset). */
@@ -208,10 +216,23 @@ function compactSessionBar(settings: StatuslineSettings, provider: string | unde
   const pct = display.showPercent ? `${Math.round(used * 100)}% used` : "";
   const reset = display.showReset && window.resetAt !== undefined ? paint("dim", ` ${settings.icons.style === "ascii" ? "reset" : "↻"} ${formatReset(window.resetAt, display.resetFormat, now)}`) : "";
   const body = `${pct}${reset}`.replace(/^\s+/, "");
-  return body ? `${paint("muted", `${display.label} `)}${body}` : "";
+  return body ? `${paint("muted", `${display.label}${settings.separators.labelValue}`)}${body}` : "";
 }
 
-const WINDOW_SEPARATOR = " >";
+/** Missing values never masquerade as a zero quota. */
+export function missingUsageLabel(settings: StatuslineSettings, provider: string, reason = "usage unavailable"): string {
+  switch (resolveProviderMissingDataPolicy(settings, provider)) {
+    case "hide": return "";
+    case "na": return "N/A";
+    case "warning": return `! ${reason}`;
+    case "provider-name": return "usage unavailable";
+    default: return reason;
+  }
+}
+
+export function usageFreshness(updatedAt: number, cached: boolean, now = Date.now()): string | undefined {
+  return updatedAt && cached ? `${Math.max(0, Math.floor((now - updatedAt) / 60_000))}m` : undefined;
+}
 
 /**
  * Render a provider's quota windows to fit `budget` visible columns. Full bars when they fit;
@@ -227,7 +248,7 @@ export function renderSessionWindows(
   now: number,
   budget?: number,
 ): string {
-  const sep = theme?.fg ? theme.fg("dim", WINDOW_SEPARATOR) : WINDOW_SEPARATOR;
+  const sep = theme?.fg ? theme.fg("dim", settings.separators.window) : settings.separators.window;
   windows = windows.filter((window) => resolveWindowDisplay(settings, provider, window).visible);
   const full = windows.map((window) => renderSessionBar(settings, provider, window, theme, now)).filter(Boolean).join(sep);
   if (budget === undefined || visibleWidth(full) <= budget) return full;
@@ -247,6 +268,9 @@ export function renderSessionWindows(
 /** One provider's data for a tracking row (caller pre-filters order/enabled/health). */
 export interface ProviderRowSource {
   provider: string;
+  /** Account-aware rows keep the real provider ID for display settings. */
+  label?: string;
+  active?: boolean;
   windows: readonly RateLimitWindow[];
   /** Static affordance shown before a subscription provider's windows load (e.g. "5h — wk —"). */
   placeholder?: string;
@@ -265,8 +289,8 @@ export function providerHasRow(
   sources: readonly ProviderRowSource[],
   provider: string | undefined,
 ): boolean {
-  if (!settings.providers.enabled || !provider) return false;
-  return sources.some((source) => source.provider === provider && sourceRenders(settings, source));
+  if (!settings.providers.enabled || !provider || settings.providers.records[provider]?.enabled === false) return false;
+  return sources.some((source) => source.provider === provider && source.active !== false && sourceRenders(settings, source));
 }
 
 /**
@@ -281,12 +305,14 @@ export function renderProviderRows(
   width?: number,
 ): string[] {
   if (!settings.providers.enabled) return [];
+  width = settings.layout.maxWidth > 0 ? Math.min(width ?? Infinity, settings.layout.maxWidth) : width;
   const paint = (r: ThemeColor, text: string) => (theme?.fg ? theme.fg(r, text) : text);
-  const sep = paint("dim", WINDOW_SEPARATOR);
   const lines: string[] = [];
   for (const source of sources) {
     if (settings.providers.records[source.provider]?.enabled === false) continue;
-    const prefix = paint("muted", `${source.provider}${source.freshness ? ` (${source.freshness})` : ""} `);
+    const glyph = providerIcon(settings, source.provider);
+    const label = `${glyph ? `${glyph}${settings.separators.iconLabel || " "}` : ""}${source.label ?? source.provider}`;
+    const prefix = paint("muted", `${label}${source.freshness ? ` (${source.freshness})` : ""} `);
     const visible = source.windows.filter((window) => resolveWindowDisplay(settings, source.provider, window).visible);
     if (visible.length) {
       // Width-aware: degrade in place (bars, then extra windows) instead of being chopped mid-bar.
@@ -294,10 +320,24 @@ export function renderProviderRows(
       const rendered = renderSessionWindows(settings, source.provider, visible, theme, now, budget);
       if (rendered.trim().length > 0) lines.push(`${prefix}${rendered}`);
     } else if (source.placeholder) {
-      lines.push(paint("muted", `${source.provider} ${source.placeholder}`));
+      lines.push(paint("muted", `${label} ${source.placeholder}`));
     }
   }
+  if (settings.layout.providerRows !== "newline") {
+    const separator = settings.separators.provider === "\n" ? " | " : settings.separators.provider;
+    const grouped: string[] = [];
+    for (const line of lines) {
+      const last = grouped.length - 1;
+      if (last >= 0 && (settings.layout.providerRows === "inline" || width === undefined || visibleWidth(grouped[last] + separator + line) <= width)) grouped[last] += separator + line;
+      else grouped.push(line);
+    }
+    return width === undefined ? grouped : grouped.map((line) => truncateToWidth(line, width, ""));
+  }
   return width === undefined ? lines : lines.map((line) => truncateToWidth(line, width, ""));
+}
+
+export function arrangeFooterLines(settings: StatuslineSettings, main: string, providers: string[]): string[] {
+  return settings.layout.placement === "above" ? [...providers, main] : [main, ...providers];
 }
 
 /** Render the single main statusline line. Pure: no I/O, no mutation. */
@@ -312,9 +352,10 @@ export function renderMainLine(
   const extras = settings.extras;
 
   const context = deriveContext(snap.contextUsage);
+  const thresholds = (snap.model?.provider && settings.providers.records[snap.model.provider]?.thresholds) || settings.thresholds;
   const contextRole = (ctx: { percent: number; tokens: number | null }): ThemeColor => {
-    if (ctx.percent >= settings.thresholds.contextCrit) return "error";
-    if (ctx.percent >= settings.thresholds.contextWarn) return "warning";
+    if (ctx.percent >= thresholds.contextCrit) return "error";
+    if (ctx.percent >= thresholds.contextWarn) return "warning";
     return "success";
   };
   const branch = extras.branch ? snap.gitBranch : undefined;
@@ -331,7 +372,7 @@ export function renderMainLine(
   const effort = deriveEffort(snap.thinkingLevel ?? "off", snap.model);
   const localModel = isLocalEndpoint(snap.model?.baseUrl);
   const mode = billingMode(localModel, snap.subscription ?? false);
-  const needTotals = extras.cost || (mode === "api" && !snap.turnActive);
+  const needTotals = extras.cost || mode === "api";
   const totals = needTotals ? snap.totals : undefined;
   const cost = extras.cost ? totals?.cost : undefined;
 
@@ -340,19 +381,19 @@ export function renderMainLine(
   const down = settings.icons.style === "ascii" ? "out " : "↓";
   const up = settings.icons.style === "ascii" ? "in " : "↑";
   const outputRate = liveOutputRate ?? m.avgOutputRate;
-  const outputRateLabel = () => outputRate === undefined ? "" : paint(m.outputLevel ?? "muted", `${down}${m.outputEstimated ? "~" : ""}${formatRate(outputRate)}`);
+  const outputRateLabel = () => outputRate === undefined ? "" : paint(m.outputLevel ?? "muted", `${down}~${formatRate(outputRate)}`);
   const throughputIcon = icon(settings, "throughput");
   // The ⚡ segment adapts to the billing model (see README "Throughput and time").
   const throughput = (() => {
     if (mode === "local") {
       const promptRate = m.waitingMs && snap.lastContextChars ? estimateTokens(snap.lastContextChars) / (m.waitingMs / 1_000) : undefined;
       const inputRate = promptRate ?? m.avgInputRate;
-      const input = inputRate === undefined ? "" : paint(m.inputLevel ?? "muted", `${up}${promptRate !== undefined || m.inputEstimated ? "~" : ""}${formatRate(inputRate)}`);
+      const input = inputRate === undefined ? "" : paint(m.inputLevel ?? "muted", `${up}~${formatRate(inputRate)}`);
       if (m.tools) return "tools";
       const rates = [input, outputRateLabel()].filter(Boolean).join(" ");
       return rates ? `${paint("muted", throughputIcon)}${rates}${paint("muted", " t/s")}` : "";
     }
-    if (snap.turnActive) return m.tools ? "tools" : outputRateLabel() ? `${paint("muted", throughputIcon)}${outputRateLabel()}${paint("muted", " t/s")}` : "";
+    // Hosted streams do not expose token arrival timing: character estimates are not token speed.
     if (mode === "subscription") return "";
     if (!totals || (!totals.input && !totals.output)) return "";
     const cache = settings.bars.format === "detailed" ? ` cache r${formatWindow(totals.cacheRead ?? 0)} w${formatWindow(totals.cacheWrite ?? 0)}` : "";
@@ -361,7 +402,7 @@ export function renderMainLine(
 
   const activeMs = m.activeMs ?? 0;
   const time = activeMs > 0 || m.lastTurnMs !== undefined || (extras.sessionElapsed && m.elapsedMs !== undefined)
-    ? formatTime(activeMs, extras.sessionElapsed ? m.elapsedMs : undefined, extras.lastTurn ? m.lastTurnMs : undefined, icon(settings, "time"))
+    ? formatTime(activeMs, extras.sessionElapsed ? m.elapsedMs : undefined, extras.lastTurn ? m.lastTurnMs : undefined, icon(settings, "time"), settings.separators.iconLabel || " ")
     : "";
 
   const sessionWindows = snap.activeProviderHasRow ? [] : (snap.sessionWindows ?? []);
@@ -375,7 +416,7 @@ export function renderMainLine(
 
   const withSpace = (name: string, value: string) => {
     const glyph = icon(settings, name);
-    return glyph ? `${glyph} ${value}` : value;
+    return glyph ? `${glyph}${settings.separators.iconLabel || " "}${value}` : value;
   };
 
   const visibility = { ...settings.segments };
@@ -408,7 +449,7 @@ export function renderMainLine(
     context: () => {
       if (!context) return "";
       const glyph = icon(settings, "context");
-      const head = paint("muted", glyph ? `${glyph}  ` : "");
+      const head = paint("muted", glyph ? `${glyph}${settings.separators.iconLabel || "  "}` : "");
       return `${head}${paint(contextRole(context), context.label)}`;
     },
     session,

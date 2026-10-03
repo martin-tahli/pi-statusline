@@ -98,7 +98,7 @@ test("hides Z.AI usage on any unexpected shape rather than guessing", () => {
 
 test("restores only valid saved windows", () => {
   assert.deepEqual(parseStoredRateLimits([
-    { key: "saved-five-hour", label: "5h", used: 0.23, resetAt: 1_784_246_400 },
+    { key: "saved-five-hour", label: "5h", used: 0.23, resetAt: 1_784_246_400_000 },
     { key: "saved-week", label: "wk", used: 0.41 },
     { key: "bad", label: "bad", used: 2 },
     null,

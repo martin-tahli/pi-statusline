@@ -126,10 +126,10 @@ export function resolveBarConfig(settings: StatuslineSettings): ResolvedBar {
   const bars = settings.bars;
   return {
     width: Math.max(2, Math.floor(Number.isFinite(bars.width) ? bars.width : 12)),
-    fill: bars.fill || "█",
-    empty: bars.empty || "░",
-    capLeft: bars.capLeft || "╟",
-    capRight: bars.capRight || "╢",
+    fill: bars.fill || " ",
+    empty: bars.empty || " ",
+    capLeft: bars.capLeft,
+    capRight: bars.capRight,
     showPercent: bars.showPercent,
     style: bars.style,
   };

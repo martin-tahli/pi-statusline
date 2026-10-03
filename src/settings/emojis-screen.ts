@@ -2,6 +2,7 @@ import { DEFAULT_STATUSLINE_SETTINGS } from "./defaults.ts";
 import { setProviderIcon } from "./provider-ui.ts";
 import type { StatuslineSettings } from "./schema.ts";
 import { parseStatuslineSettings } from "./validation.ts";
+import { isTextInput, editText } from "./text.ts";
 
 export interface EmojisScreenRow {
   id: string;
@@ -15,7 +16,7 @@ type Row = EmojisScreenRow & (
   | { kind: "reset" }
 );
 
-export const ICON_SYMBOLS = ["project", "model", "thinking", "context", "throughput"] as const;
+export const ICON_SYMBOLS = ["project", "model", "thinking", "context", "throughput", "time", "ledger"] as const;
 
 const ICON_STYLES = ["emoji", "unicode", "ascii", "nerdfont", "minimal", "none", "custom"] as const;
 // "default" already renders no provider glyph, so exposing "hidden" would be a duplicate control.
@@ -51,30 +52,24 @@ function cycle<T>(values: readonly T[], current: T, backwards: boolean): T {
   return values[(index + (backwards ? values.length - 1 : 1)) % values.length];
 }
 
-// ponytail: allowlist, not denylist — a denylist leaks unknown named keys (Ctrl+ArrowUp, Tab, F1) into the field as literal text.
-function isTextInput(key: string): boolean {
-  if (key === "Backspace" || key === "Space" || key === " ") return true;
-  return key.length === 1 && key.charCodeAt(0) >= 0x20 && key.charCodeAt(0) !== 0x7f;
-}
-
 export function routeEmojisKey(
   draft: StatuslineSettings,
   selected: number,
   key: string,
   providerIds: readonly string[] = [],
+  group?: string,
 ): { draft: StatuslineSettings; selected: number } {
-  const screenRows = rows(draft, providerIds);
+  const screenRows = rows(draft, providerIds).filter((row) => !group || (group === "symbols" ? !row.id.startsWith("icons.providers.") : row.id.startsWith(`icons.providers.${group}.`)));
   const row = screenRows[selected];
   if (!row) return { draft, selected };
   if ((row.kind === "symbol" || row.kind === "provider-value") && isTextInput(key)) {
     const next = structuredClone(draft);
-    const ch = key === "Space" ? " " : key;
     if (row.kind === "symbol") {
       const value = next.icons.symbols[row.symbol] ?? "";
-      next.icons.symbols[row.symbol] = key === "Backspace" ? value.slice(0, -1) : value + ch;
+      next.icons.symbols[row.symbol] = editText(value, key);
     } else {
       const icon = next.icons.providers[row.providerId] ?? { mode: "default", value: "" };
-      const value = key === "Backspace" ? icon.value.slice(0, -1) : icon.value + ch;
+      const value = editText(icon.value, key);
       setProviderIcon(next, row.providerId, { mode: "custom", value });
     }
     next.icons = parseStatuslineSettings({ ...DEFAULT_STATUSLINE_SETTINGS, icons: next.icons }).settings.icons;

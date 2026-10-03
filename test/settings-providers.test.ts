@@ -100,11 +100,11 @@ test("capabilities: local endpoint -> local billing with local speed", () => {
   assert.equal(cap.quotaSupport, "none");
 });
 
-test("capabilities: OAuth hosted -> subscription billing with hosted speed", () => {
+test("capabilities: OAuth hosted -> subscription billing without fabricated speed", () => {
   const [provider] = discoverProviders(registry([{ provider: "anthropic", baseUrl: "https://api.anthropic.com" }]));
   const cap = deriveCapability(provider, { oauth: true });
   assert.equal(cap.billing, "subscription");
-  assert.equal(cap.hostedSpeed, true);
+  assert.equal(cap.hostedSpeed, false);
   assert.equal(cap.localSpeed, false);
   assert.equal(cap.quotaSupport, "official");
   assert.equal(cap.quotaReliability, "high");
@@ -116,7 +116,7 @@ test("capabilities: api-key hosted -> api billing with token + cost ledger", () 
   assert.equal(cap.billing, "api");
   assert.equal(cap.tokenLedger, true);
   assert.equal(cap.costLedger, true);
-  assert.equal(cap.hostedSpeed, true);
+  assert.equal(cap.hostedSpeed, false);
   assert.equal(cap.quotaSupport, "official");
   assert.equal(cap.unavailableReason, undefined);
 });

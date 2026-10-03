@@ -1,4 +1,5 @@
 import { basename } from "node:path";
+import { isIP } from "node:net";
 import { formatContextPercent, formatWindow } from "./format.ts";
 
 export interface ContextUsage {
@@ -32,9 +33,8 @@ export function isLocalEndpoint(baseUrl?: string): boolean {
     || host === "::1"
     || host === "0.0.0.0"
     || host.endsWith(".local")
-    || /^10\./.test(host)
-    || /^192\.168\./.test(host)
-    || /^172\.(1[6-9]|2\d|3[01])\./.test(host);
+    || (isIP(host) === 4 && (/^127\./.test(host) || /^10\./.test(host)
+      || /^192\.168\./.test(host) || /^172\.(1[6-9]|2\d|3[01])\./.test(host)));
 }
 
 // The throughput segment means different things per billing model: on local inference the ↑/↓
@@ -52,11 +52,11 @@ export function deriveEffort(
   level: string,
   model?: { reasoning?: boolean },
 ): string {
-  return level === "off" && model?.reasoning === false ? "" : level;
+  return model?.reasoning !== true ? "" : level;
 }
 
 export function deriveContext(usage?: ContextUsage): { label: string; percent: number; tokens: number | null } | undefined {
-  if (!usage || usage.percent === null || !Number.isFinite(usage.percent) || !Number.isFinite(usage.contextWindow) || usage.contextWindow <= 0) return undefined;
+  if (!usage || usage.percent === null || usage.percent < 0 || !Number.isFinite(usage.percent) || !Number.isFinite(usage.contextWindow) || usage.contextWindow <= 0) return undefined;
   return {
     label: `${formatContextPercent(usage.percent)}/${formatWindow(usage.contextWindow)}`,
     percent: usage.percent,

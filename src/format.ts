@@ -33,10 +33,10 @@ export function formatResetCountdown(resetAt: number, now = Date.now()): string 
   return `${Math.floor(hours / 24)}d${hours % 24 ? `${hours % 24}h` : ""}`;
 }
 
-export function formatTime(activeMs: number, elapsedMs?: number, lastTurnMs?: number, glyph = "⏳"): string {
+export function formatTime(activeMs: number, elapsedMs?: number, lastTurnMs?: number, glyph = "⏳", iconSeparator = " "): string {
   const extras = [
     elapsedMs === undefined ? "" : `elapsed ${formatDuration(elapsedMs)}`,
     lastTurnMs === undefined ? "" : `last ${formatDuration(lastTurnMs)}`,
   ].filter(Boolean);
-  return `${glyph ? `${glyph} ` : ""}${formatDuration(activeMs)}${extras.length ? ` (${extras.join(", ")})` : ""}`;
+  return `${glyph ? `${glyph}${iconSeparator}` : ""}${formatDuration(activeMs)}${extras.length ? ` (${extras.join(", ")})` : ""}`;
 }

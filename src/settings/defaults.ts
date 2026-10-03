@@ -28,7 +28,7 @@ function defaultWindowConfig(): WindowConfiguration {
     resetFormat: "countdown",
     showUsed: true,
     showRemaining: true,
-    showZero: false,
+    showZero: true,
     width: 12,
   };
 }
@@ -134,6 +134,7 @@ const DEFAULT_LAYOUT = {
 /** Default providers group. */
 const DEFAULT_PROVIDERS = {
   scope: "active" as const,
+  accountScope: "active" as const,
   enabled: true,
   order: [] as string[],
   defaults: DEFAULT_PROVIDER_DEFAULTS,

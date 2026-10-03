@@ -109,7 +109,7 @@ test("presets, auto visibility and icon styles keep idle output minimal", () => 
   const balanced = applyPreset(settings, "balanced");
   assert.equal(balanced.providers.scope, "active");
   assert.doesNotMatch(renderMainLine(balanced, snapshot, 500), /t\/s|~\$/);
-  assert.match(renderMainLine(balanced, { ...snapshot, turnActive: true, meter: { activeMs: 1000, outputRate: 15, outputEstimated: true } }, 500), /~15/);
+  assert.doesNotMatch(renderMainLine(balanced, { ...snapshot, turnActive: true, meter: { activeMs: 1000, outputRate: 15, outputEstimated: true } }, 500), /t\/s|~15/);
   assert.equal(applyPreset(settings, "minimal").segments.project, false);
 });
 
@@ -132,10 +132,10 @@ test("generation timing freezes at message end and git conflicts override clean"
 test("Z.AI controls use quota capability, not API billing", () => {
   const descriptors = discoverProviders({ getAvailable: () => [{ provider: "zai", baseUrl: "https://api.z.ai" }] });
   const capabilities = { zai: deriveCapability(descriptors[0]) };
-  const state = createSettingsUi(defaults()); state.openRow = "providers"; state.selectedProviderId = "zai";
+  const state = createSettingsUi(defaults()); state.openRow = "providers"; state.selectedProviderId = "zai"; state.section = "window:five-hour";
   const lines = renderSettingsUi(state, { width: 100, providers: { descriptors, capabilities, windows: { zai: windows }, health: { zai: { state: "fresh", cached: true, updatedAt: 1000 } } } }).join("\n");
-  assert.match(lines, /Bar:/); assert.match(lines, /Refresh usage now/);
-  assert.match(lines, /shared cache/); assert.match(lines, /1970-01-01/);
+  assert.match(lines, /Bar:/);
+  assert.match(lines, /cached usage/); assert.match(lines, /1970-01-01/);
 });
 
 test("OpenRouter reports finite key budgets only, using the regular key endpoint", async () => {
@@ -158,7 +158,7 @@ test("all presets and built-in icon styles stay within 1–240 columns", () => {
     for (const style of ["emoji", "unicode", "ascii", "nerdfont", "minimal", "none"] as const) {
       const settings = applyPreset(defaults(), preset); settings.icons.style = style;
       for (let width = 1; width <= 240; width++) {
-        const snapshot = { cwd: "/tmp/项目", model: { id: "long-model-name", provider: "test" }, contextUsage: { tokens: 95000, contextWindow: 100000, percent: 95 }, sessionWindows: windows, sessionFreshness: "cached 2m", turnActive: true, meter: { activeMs: 1000, outputRate: 100, outputEstimated: true } };
+        const snapshot = { cwd: "/tmp/project-📁", model: { id: "long-model-name", provider: "test" }, contextUsage: { tokens: 95000, contextWindow: 100000, percent: 95 }, sessionWindows: windows, sessionFreshness: "cached 2m", turnActive: true, meter: { activeMs: 1000, outputRate: 100, outputEstimated: true } };
         assert.ok(visibleWidth(renderMainLine(settings, snapshot, width)) <= width);
         const rows = renderProviderRows(settings, [{ provider: "test", windows, freshness: "cached 2m" }], undefined, 0, width);
         for (const line of rows) assert.ok(visibleWidth(line) <= width);

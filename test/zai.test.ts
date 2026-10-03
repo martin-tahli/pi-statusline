@@ -7,6 +7,8 @@ import { initTheme } from "@earendil-works/pi-coding-agent";
 import statusline from "../extensions/statusline.ts";
 import { ProviderUsageCache } from "../src/provider-cache.ts";
 import { UsageUnavailableError } from "../src/providers.ts";
+import { credentialFingerprint } from "../src/accounts.ts";
+const cacheKey = `zai:${credentialFingerprint("zai", "test-key")}`;
 
 initTheme();
 test("recognizes explicit denials across Pi's uncached extension imports", () => {
@@ -43,7 +45,7 @@ for (const tracking of [true, false]) {
       globalThis.fetch = (async () => {
         if (state === "outage") throw new Error("network outage with secret details");
         return new Response(JSON.stringify(state === "ok" ? payload : {
-          code: 500, msg: "当前用户不存在coding plan", success: false,
+          code: 500, msg: "No coding plan exists for this user", success: false,
           // Even if a denial includes old data, it must not render as usable quota.
           data: payload.data,
         }), { status: state === "denied" ? denial : 200 });
@@ -90,7 +92,7 @@ for (const tracking of [true, false]) {
         await settle();
       };
       try {
-        await cache.refresh("zai", async () => ({ limits }));
+        await cache.refresh(cacheKey, async () => ({ limits }));
         clock += 20_000;
         statusline(pi, cache, config);
         await handlers.get("session_start")!({}, ctx);
@@ -106,8 +108,8 @@ for (const tracking of [true, false]) {
         await poll();
         assert.doesNotMatch(render(), /6%|23%|secret|coding plan/);
         if (tracking) assert.match(render(), /zai usage unavailable/);
-        assert.equal(cache.get("zai"), undefined);
-        assert.equal(new ProviderUsageCache(dir, 10_000, 10_000, () => clock).get("zai"), undefined,
+        assert.deepEqual(cache.get(cacheKey)?.limits ?? [], []);
+        assert.deepEqual(new ProviderUsageCache(dir, 10_000, 10_000, () => clock).get(cacheKey)?.limits ?? [], [],
           "another session must not restore denied quota");
 
         state = "ok";

@@ -55,7 +55,7 @@ test("eligibility: requires global providers enabled", () => {
 
 test("eligibility: requires the provider's own row enabled (unless refreshDisabledProvider)", () => {
   assert.equal(resolveRefreshEligibility(DEFAULT_STATUSLINE_SETTINGS, "anthropic", officialCap, { providerEnabled: false, isActive: false }), false);
-  const allow = settingsWith({ providers: { ...DEFAULT_STATUSLINE_SETTINGS.providers, defaults: { ...DEFAULT_STATUSLINE_SETTINGS.providers.defaults, refreshDisabledProvider: true } } });
+  const allow = settingsWith({ providers: { ...DEFAULT_STATUSLINE_SETTINGS.providers, scope: "selected", defaults: { ...DEFAULT_STATUSLINE_SETTINGS.providers.defaults, refreshDisabledProvider: true } } });
   assert.equal(resolveRefreshEligibility(allow, "anthropic", officialCap, { providerEnabled: false, isActive: false }), true);
 });
 
@@ -67,8 +67,9 @@ test("eligibility: unauthenticated provider is never eligible", () => {
   assert.equal(resolveRefreshEligibility(DEFAULT_STATUSLINE_SETTINGS, "anthropic", unauthCap, { providerEnabled: true, isActive: false }), false);
 });
 
-test("eligibility: supported authenticated enabled provider is eligible", () => {
-  assert.equal(resolveRefreshEligibility(DEFAULT_STATUSLINE_SETTINGS, "anthropic", officialCap, { providerEnabled: true, isActive: false }), true);
+test("eligibility: active scope only refreshes the active provider", () => {
+  assert.equal(resolveRefreshEligibility(DEFAULT_STATUSLINE_SETTINGS, "anthropic", officialCap, { providerEnabled: true, isActive: false }), false);
+  assert.equal(resolveRefreshEligibility(DEFAULT_STATUSLINE_SETTINGS, "anthropic", officialCap, { providerEnabled: true, isActive: true }), true);
 });
 
 test("health: unknown when never refreshed", () => {
@@ -120,6 +121,7 @@ test("policy: sparse provider overrides resolve over globals and stay bounded", 
 
 test("eligibility uses sparse provider refresh overrides", () => {
   const s = structuredClone(DEFAULT_STATUSLINE_SETTINGS);
+  s.providers.scope = "selected";
   s.providers.records.dynamic = {
     ...createProviderConfig(), enabled: false,
     refresh: { refreshDisabledProvider: true, refreshWhileActive: false },

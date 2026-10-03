@@ -178,7 +178,7 @@ export class TurnMeter {
       : undefined;
     // While streaming, override the last-turn rate with a live one so the UI updates continuously
     // instead of freezing until the turn finishes.
-    const liveOutputRate = turnRunning && this.firstUpdateAt !== undefined
+    const liveOutputRate = turnRunning && this.liveOutputChars > 0 && this.firstUpdateAt !== undefined && (this.messageEndedAt ?? now) > this.firstUpdateAt
       ? fallbackRate(estimateTokens(this.liveOutputChars), (this.messageEndedAt ?? now) - this.firstUpdateAt, 0)
       : undefined;
     return {

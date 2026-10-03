@@ -65,7 +65,7 @@ export function deriveCapability(
   else billing = "unknown";
 
   const localSpeed = billing === "local";
-  const hostedSpeed = billing === "subscription" || billing === "api";
+  const hostedSpeed = false; // Streamed characters are not a hosted token-speed measurement.
   const tokenLedger = billing === "api";
   const costLedger = billing === "api";
 
